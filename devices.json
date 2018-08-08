@@ -1,0 +1,10 @@
+{
+	"master_bedroom": {
+		"aircon": "daikin"
+	},
+	"office": {
+		"aircon": "daikin",
+		"tv": "panasonic",
+		"set_top_box": "starhub"
+	}
+}
