@@ -1,6 +1,11 @@
-from enum import Enum
+from enum import IntEnum
 
 import broadlink
+
+from iot.devices.errors import (
+    DeviceException, CommandNotFound,
+    BrandNotFound
+)
 
 
 ## TODO: Make it a class able to return back a single class to call instead
@@ -8,58 +13,58 @@ def populate_devices():
     return broadlink.discover(timeout=5)
 
 
-class Room(object):
-
-    DEVICES = {}
-
-    def __init__(self, blackbean):
-        self.blackbean = blackbean
-
-    def blackbean_info(self):
-        return {
-            "host": self.blackbean.host,
-            "mac": ''.join(format(x, '02x') for x in reversed(self.blackbean.mac)),
-            "type": self.blackbean.type
-        }
-
-    def add_device(self, device):
-        pass
-
-    def get_device(self, device_id):
-        pass
-
-
-class DeviceType(Enum):
+class DeviceType(IntEnum):
     AIRCON = 1
     TV = 2
     SET_TOP_BOX = 3
 
 
-class BaseDevice(object):
+class BaseDevice:
     """
     All command methods will return payload for blackbean to send
 
-    `id` - <room>-<device_type>-<brand>-<model / location # eg. office-tv-pansonic-wall
+    `room` - Room object
+    `id` - User-define name
     """
 
-    OPTIONAL_COMMAND = {}
+    commands = {}
+
+    # Custom multi commands
+    optional_commands = {}
 
     device_type = None
     last_command = None
 
-    def __init__(self, id, brand, model):
-        pass
+    def __init__(self, room, id, brand, model):
+        self.room = room
+
+        self.id = id
+        self.brand = brand
+        self.model = model
+
+        #self.populate_device_command()
+
+    def populate_device_commands(self, commands):
+        self.commands = commands
+
+    def get_command(self, action):
+        if action not in self.commands:
+            raise CommandNotFound()
+
+        return self.commands.get(action)
 
     def power_on(self):
-        raise NotImplementedError
+        key = "power_on"
+        self.set_action(key)
 
     def power_off(self):
-        raise NotImplementedError
+        key = "power_off"
+        self.set_action(key)
 
-    def run_command(self, option):
-        # TODO: Make exceptions special
-        if option not in self.OPTIONAL_COMMAND:
-            raise Exception()
+    def set_action(self, action):
+        command = self.get_command(action)
+        if command:
+            self.room.send(command)
 
     def return_state(self):
         raise NotImplementedError

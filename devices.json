@@ -1,10 +1,14 @@
 {
-	"master_bedroom": {
-		"aircon": "daikin"
-	},
 	"office": {
-		"aircon": "daikin",
-		"tv": "panasonic",
-		"set_top_box": "starhub"
+		"mac_address": "780f771a192e",
+		"blackbean_type": "RM2",
+		"devices": [
+			{
+				"type": 1,
+				"id": "office-aircon",
+				"brand": "daikin",
+				"model": "super-multi-nx"
+			}
+		]
 	}
 }
