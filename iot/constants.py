@@ -15,9 +15,10 @@ Future:
 /d <device> temp <number>
 /d <device> volume <up/down>
 /d <device> <option> <action>
+/c <custom-action>
 /listusers
-/adduser <user_name> <user_code>
-/removeuser <user_name> <user_code>
+/adduser <user-name> <user-code>
+/removeuser <user-name> <user-code>
 /listtriggers
 /newtrigger
 /updatetrigger
@@ -26,6 +27,15 @@ Future:
 /switchhouse - prompts house?
 '''
 
+PONG_MESSAGE = '''
+PONG
+Hi {}, your user_id is {}
+'''
+
 DEVICE_NOT_FOUND = '''
-Device *{}* not found, _/list_ to list the device id and try again
+Device *{}* not found, /list to list the device id and try again
+'''
+
+USER_NOT_ALLOWED = '''
+Please request permission from admin
 '''

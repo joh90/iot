@@ -13,7 +13,9 @@ from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, Rege
 from iot import constants
 from iot.devices import BaseDevice, populate_devices
 from iot.rooms import Room
-from iot.utils.decorators import valid_device
+from iot.utils.decorators import (
+    valid_user, valid_device
+)
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,7 @@ BOT_SECRET: str = ""
 
 ROOM_DEVICES_FILE_PATH: str = ""
 COMMANDS_FILE_PATH: str = ""
+USERS_FILE_PATH: str = ""
 
 
 class TelegramIOTServer:
@@ -51,6 +54,7 @@ class TelegramIOTServer:
 
         self.reload_commands()
         self.reload_rooms_and_devices()
+        self.reload_users()
 
         self.init_telegram_server()
 
@@ -67,6 +71,9 @@ class TelegramIOTServer:
         self.dp.add_handler(CommandHandler(
             "on", self.command_on, pass_args=True
         ))
+        self.dp.add_handler(CommandHandler(
+            "off", self.command_off, pass_args=True
+        ))
         #self.dp.add_handler(CommandHandler("debug", debug))
 
         self.dp.add_error_handler(self.error)
@@ -82,7 +89,7 @@ class TelegramIOTServer:
             try:
                 data: dict = json.load(f)
             except (ValueError, TypeError) as e:
-                logger.error("Decoding Command json file failed: %s", e)
+                logger.error("Decoding devices json file failed: %s", e)
                 return
             else:
                 for room_name, value in data.items():
@@ -129,7 +136,7 @@ class TelegramIOTServer:
             try:
                 data: dict = json.load(f)
             except (ValueError, TypeError) as e:
-                logger.error("Decoding Command json file failed: %s", e)
+                logger.error("Decoding commands json file failed: %s", e)
                 return
             else:
                 self.commands = data
@@ -147,18 +154,33 @@ class TelegramIOTServer:
                 device_type, brand, model)
             return {}
 
+    def reload_users(self):
+        with open(USERS_FILE_PATH) as f:
+            try:
+                data: dict[str, str] = json.load(f)
+            except (ValueError, TypeError) as e:
+                logger.error("Decoding users json file failed: %s", e)
+                return
+            else:
+                self.approved_users = data
+
     def error(self, bot, update, error):
         """Log Errors caused by Updates."""
         logger.warning('Update "%s" caused error "%s"', update, error)
 
+    @valid_user
     def command_start(self, bot, update):
         """Send a message when the command `/start` is issued."""
         update.message.reply_markdown(constants.START_MESSAGE)
 
     def command_ping(self, bot, update):
-        """Sends message `pong` back"""
-        update.message.reply_text("pong")
+        """Sends message `pong` and user's id, name"""
+        user = update.effective_user
+        update.message.reply_text(constants.PONG_MESSAGE.format(
+            user.username, user.id
+        ))
 
+    @valid_user
     def command_status(self, bot, update):
         """Sends server status back"""
         print(datetime.now() - self.start_time)
@@ -175,11 +197,17 @@ class TelegramIOTServer:
             start time, last command, approved users"
         )
 
+    @valid_user
     @valid_device
     def command_on(self, bot, update, device, *args, **kwargs):
-        """Turn on targeted device if device id can be found"""
-        # simulate set powerful for now
-        device.set_powerful()
+        """Turn ON targeted device if device id can be found"""
+        device.power_on()
+
+    @valid_user
+    @valid_device
+    def command_off(self, bot, update, device, *args, **kwargs):
+        """Turn OFF targeted device if device id can be found"""
+        device.power_off()
 
     def stop_server(self):
         pass
