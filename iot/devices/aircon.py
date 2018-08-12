@@ -4,7 +4,7 @@ from iot.devices import (
     DeviceType, BaseDevice
 )
 from iot.devices.errors import (
-    AirconException, BrandNotFound
+    BrandNotFound
 )
 
 
@@ -26,7 +26,7 @@ class AirconFactory:
         kls = self.get_brand(brand)
 
         if kls is None:
-            raise BrandNotFound()
+            raise BrandNotFound
 
         aircon = kls(room, id, brand, model)
 
@@ -37,8 +37,10 @@ class BaseAircon(BaseDevice):
 
     device_type = DeviceType.AIRCON
 
-    def set_powerful(self):
-        raise NotImplementedError
+    def powerful(self):
+        print("haha sneidng powerrrr")
+        key = "powerful"
+        self.set_action(key)
 
     def temp_up(self):
         raise NotImplementedError
@@ -57,7 +59,4 @@ class BaseAircon(BaseDevice):
 
 
 class Daikin(BaseAircon):
-    def set_powerful(self):
-        print("haha sneidng powerrrr")
-        key = "powerful"
-        self.set_action(key)
+    pass

@@ -1,3 +1,4 @@
+from iot.devices.errors import DeviceTypeNotFound
 from iot.devices.factory import DeviceFactory
 
 
@@ -27,12 +28,15 @@ class Room:
 
         for d in devices:
             if d["id"] not in self.DEVICES:
-                dev = d_factory.create_device(
-                    d["type"], self, d["id"], d["brand"], d["model"]
-                )
+                try:
+                    dev = d_factory.create_device(
+                        d["type"], self, d["id"], d["brand"], d["model"]
+                    )
 
-                self.add_device(dev)
-                populated.append(dev)
+                    self.add_device(dev)
+                    populated.append(dev)
+                except DeviceTypeNotFound:
+                    continue
 
         return populated
 

@@ -1,3 +1,4 @@
+# TODO: Write docstring for all errors
 
 class DeviceException(Exception):
     """BaseDeviceException"""
@@ -6,6 +7,10 @@ class DeviceException(Exception):
 
 class CommandNotFound(DeviceException):
     """Command not found for device"""
+    pass
+
+
+class InvalidArgument(DeviceException):
     pass
 
 
