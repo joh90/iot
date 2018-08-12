@@ -8,6 +8,18 @@
 				"id": "office-aircon",
 				"brand": "daikin",
 				"model": "super-multi-nx"
+			},
+			{
+				"type": 2,
+				"id": "office-tv",
+				"brand": "panasonic",
+				"model": "th-42lf5"
+			},
+			{
+				"type": 3,
+				"id": "office-starhub",
+				"brand": "samsung",
+				"model": "gx-sh530cf"
 			}
 		]
 	}

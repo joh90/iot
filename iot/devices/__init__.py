@@ -19,6 +19,7 @@ class DeviceType(IntEnum):
     SET_TOP_BOX = 3
 
 
+# TODO: create a generic multimedia device
 class BaseDevice:
     """
     All command methods will return payload for blackbean to send
@@ -49,7 +50,7 @@ class BaseDevice:
 
     def get_command(self, action):
         if action not in self.commands:
-            raise CommandNotFound()
+            raise CommandNotFound
 
         return self.commands.get(action)
 

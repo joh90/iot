@@ -12,9 +12,13 @@ from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters, Rege
 
 from iot import constants
 from iot.devices import BaseDevice, populate_devices
+from iot.devices.errors import (
+    CommandNotFound, InvalidArgument
+)
 from iot.rooms import Room
 from iot.utils.decorators import (
-    valid_user, valid_device
+    valid_device, valid_device_feature,
+    valid_user
 )
 
 
@@ -74,6 +78,9 @@ class TelegramIOTServer:
         self.dp.add_handler(CommandHandler(
             "off", self.command_off, pass_args=True
         ))
+        self.dp.add_handler(CommandHandler(
+            "d", self.command_device, pass_args=True
+        ))
         #self.dp.add_handler(CommandHandler("debug", debug))
 
         self.dp.add_error_handler(self.error)
@@ -107,6 +114,7 @@ class TelegramIOTServer:
                                     value.get("devices", []))
 
                                 self.rooms[room_name] = r
+
                                 for pd in pop_device:
                                     commands: Dict = self.get_commands(
                                         pd.device_type.value,
@@ -120,7 +128,7 @@ class TelegramIOTServer:
 
                         except Exception as e:
                             logger.error("Error While reloading rooms and devices: %s", e)
-                            raise
+                            continue
 
     def find_blackbean_device(self, mac, bb_type):
             bb = self.blackbean_devices.get(mac)
@@ -143,6 +151,7 @@ class TelegramIOTServer:
 
     def get_commands(self, device_type, brand, model) -> Dict[str, str]:
         # TODO: Search for model next time
+
         # Always convert device_type to String,
         # as populated command dict key is in String
         device_type = str(device_type)
@@ -157,7 +166,7 @@ class TelegramIOTServer:
     def reload_users(self):
         with open(USERS_FILE_PATH) as f:
             try:
-                data: dict[str, str] = json.load(f)
+                data: Dict[str, str] = json.load(f)
             except (ValueError, TypeError) as e:
                 logger.error("Decoding users json file failed: %s", e)
                 return
@@ -176,7 +185,7 @@ class TelegramIOTServer:
     def command_ping(self, bot, update):
         """Sends message `pong` and user's id, name"""
         user = update.effective_user
-        update.message.reply_text(constants.PONG_MESSAGE.format(
+        update.message.reply_markdown(constants.PONG_MESSAGE.format(
             user.username, user.id
         ))
 
@@ -208,6 +217,41 @@ class TelegramIOTServer:
     def command_off(self, bot, update, device, *args, **kwargs):
         """Turn OFF targeted device if device id can be found"""
         device.power_off()
+
+    @valid_user
+    @valid_device_feature
+    def command_device(self, bot, update, device, feature,
+            action=None, *args, **kwargs
+        ):
+        """
+        Command device specific feature if device_id, feature and
+        action can be found
+        """
+        print(device, feature, action)
+        func = getattr(device, feature)
+
+        print('args', args)
+        new_args = args
+
+        if action:
+            new_args = (action,)
+
+        print('na', new_args)
+        print('na_type', type(new_args))
+
+        try:
+            func(*new_args)
+        except (NotImplementedError, CommandNotFound):
+            action = '' if not action else action
+
+            update.message.reply_markdown(
+                constants.DEVICE_COMMAND_NOT_IMPLEMENTED.format(
+                    device.id, feature, action
+                )
+            )
+        except (TypeError, InvalidArgument):
+            update.message.reply_text(constants.ARGS_ERROR)
+
 
     def stop_server(self):
         pass
