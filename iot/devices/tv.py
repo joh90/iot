@@ -49,19 +49,24 @@ class BaseTV(BaseDevice):
         self.set_action(key)
 
     def channel(self, chan_number):
+        # TODO: Take from Set Top Box, ideally make a new generic mm class
         raise NotImplementedError
 
     def channel_up(self):
-        raise NotImplementedError
+        key = "channel_up"
+        self.set_action(key)
 
     def channel_down(self):
-        raise NotImplementedError
+        key = "channel_down"
+        self.set_action(key)
 
     def volume_up(self):
-        raise NotImplementedError
+        key = "volume_up"
+        self.set_action(key)
 
     def volume_down(self):
-        raise NotImplementedError
+        key = "volume_down"
+        self.set_action(key)
 
 
 class Panasonic(BaseTV):

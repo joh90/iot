@@ -31,7 +31,7 @@ def valid_device_feature(func):
         # and send what is possible feature commands to send next time
         user_params = kwargs.get("args")
 
-        # Only device_id is sent
+        # device_id and at least one other params is sent
         if len(user_params) > 1:
             device_id = user_params[0]
 
