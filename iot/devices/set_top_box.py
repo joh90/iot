@@ -91,16 +91,20 @@ class BaseSetTopBox(BaseDevice):
             raise InvalidArgument
 
     def channel_up(self):
-        raise NotImplementedError
+        key = "channel_up"
+        self.set_action(key)
 
     def channel_down(self):
-        raise NotImplementedError
+        key = "channel_down"
+        self.set_action(key)
 
     def volume_up(self):
-        raise NotImplementedError
+        key = "volume_up"
+        self.set_action(key)
 
     def volume_down(self):
-        raise NotImplementedError
+        key = "volume_down"
+        self.set_action(key)
 
 
 class Samsung(BaseSetTopBox):
