@@ -7,9 +7,9 @@ START_MESSAGE = '''
 
 List of possible commands:
 /ping - returns pong and your user info
-/status - returns list of BL devices connected
-/keyboard <room> - returns keyboard access to rooms / devices and commands
+/status - returns server information
 /list - returns the list of rooms and devices commands
+/keyboard <room> - returns keyboard access to rooms / devices and commands
 /on <device> - Turns on the targeted device
 /off <device> - Turns on the targeted device
 /d <device> <feature> <action or empty> (eg. `/d aircon temp up`, `/d tv mute`)
@@ -30,6 +30,23 @@ Future:
 PONG_MESSAGE = '''
 PONG
 Hi *{}*, your user id is {}
+'''
+
+STATUS_MESSAGE = '''
+Server Uptime: {}
+Server last handled command: {}
+
+Blackbean Devices:
+{}
+
+Room(s): {}
+Device(s): {}
+
+Approved Users: {}
+
+Future:
+Room's Last command handled
+Version
 '''
 
 DEVICE_NOT_FOUND = '''

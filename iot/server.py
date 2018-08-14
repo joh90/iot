@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 
@@ -48,6 +48,7 @@ class TelegramIOTServer:
         self.approved_users = {}
 
         self.start_time: datetime = None
+        self.last_command_handled = None
 
     def start_server(self):
         # TODO: It should discover and check against the mac address of the device
@@ -177,6 +178,31 @@ class TelegramIOTServer:
         """Log Errors caused by Updates."""
         logger.warning('Update "%s" caused error "%s"', update, error)
 
+    @property
+    def uptime(self):
+        now = datetime.now()
+        uptime = str(
+            timedelta(
+                seconds=(now-self.start_time).total_seconds()
+            )
+        )
+
+        return uptime
+
+    @property
+    def blackbean_devices_info(self):
+        all_bb_info = []
+
+        # TODO: move mac conversion to utils
+        for bb in self.blackbean_devices.values():
+            bb_info = "Type: {}, IP: {}, Mac: {}".format(
+                bb.type, bb.host[0],
+                ''.join(format(x, '02x') for x in reversed(bb.mac))
+            )
+            all_bb_info.append(bb_info)
+
+        return '\n'.join(all_bb_info)
+
     @valid_user
     def command_start(self, bot, update):
         """Send a message when the command `/start` is issued."""
@@ -201,10 +227,16 @@ class TelegramIOTServer:
         # self.blackbean_devices["780f771a192e"].send_data(
         #     bytearray.fromhex(''.join("26006c000f0717120707080d0613070d0707080805140613070d071306080709041a060e06000b820f06070905150608050f0713060e060805230713060e061307070529070d07000b810f06070905150607070e0713060e0607070805150713060e061307060709051a070d07000d05000000000000000000000000"))
         # )
-        update.message.reply_text(
-            "List of bb devices and server info, uptime, \
-            start time, last command, approved users"
+        server_info = constants.STATUS_MESSAGE.format(
+            self.uptime,
+            self.last_command_handled,
+            self.blackbean_devices_info,
+            len(self.rooms),
+            len(self.devices),
+            ", ".join(self.approved_users.values())
         )
+
+        update.message.reply_text(server_info)
 
     @valid_user
     @valid_device
