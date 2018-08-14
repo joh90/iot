@@ -104,6 +104,10 @@ def valid_user(func):
             user_id in server.approved_users and
             server.approved_users[user_id] == user_name
         ):
+            # Update server last command handled, other than status
+            if not func.__name__ == "command_status":
+                server.last_command_handled = (func.__name__, args, kwargs)
+
             return func(server, bot, update, *args, **kwargs)
 
         update.message.reply_text(USER_NOT_ALLOWED)
