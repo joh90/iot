@@ -228,6 +228,7 @@ class TelegramIOTServer:
         #     bytearray.fromhex(''.join("26006c000f0717120707080d0613070d0707080805140613070d071306080709041a060e06000b820f06070905150608050f0713060e060805230713060e061307070529070d07000b810f06070905150607070e0713060e0607070805150713060e061307060709051a070d07000d05000000000000000000000000"))
         # )
         server_info = constants.STATUS_MESSAGE.format(
+            str(datetime.now()).split(".")[0],
             self.uptime,
             self.last_command_handled,
             self.blackbean_devices_info,
