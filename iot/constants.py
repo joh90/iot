@@ -33,6 +33,7 @@ Hi *{}*, your user id is {}
 '''
 
 STATUS_MESSAGE = '''
+Server Time: {}
 Server Uptime: {}
 Server last handled command: {}
 
