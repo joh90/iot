@@ -16,6 +16,7 @@ from iot.devices.errors import (
     CommandNotFound, InvalidArgument
 )
 from iot.rooms import Room
+from iot.utils import return_mac
 from iot.utils.decorators import (
     valid_device, valid_device_feature,
     valid_user
@@ -73,6 +74,7 @@ class TelegramIOTServer:
         self.dp.add_handler(CommandHandler("start", self.command_start))
         self.dp.add_handler(CommandHandler("ping", self.command_ping))
         self.dp.add_handler(CommandHandler("status", self.command_status))
+        self.dp.add_handler(CommandHandler("list", self.command_list))
         self.dp.add_handler(CommandHandler(
             "on", self.command_on, pass_args=True
         ))
@@ -197,7 +199,7 @@ class TelegramIOTServer:
         for bb in self.blackbean_devices.values():
             bb_info = "Type: {}, IP: {}, Mac: {}".format(
                 bb.type, bb.host[0],
-                ''.join(format(x, '02x') for x in reversed(bb.mac))
+                return_mac(bb.mac)
             )
             all_bb_info.append(bb_info)
 
@@ -238,6 +240,14 @@ class TelegramIOTServer:
         )
 
         update.message.reply_text(server_info)
+
+    @valid_user
+    def command_list(self, bot, update):
+        rooms_info = [str(r.room_list_info()) for r in self.rooms.values()]
+
+        update.message.reply_markdown(constants.LIST_MESSAGE.format(
+            "\n\n".join(rooms_info)
+        ))
 
     @valid_user
     @valid_device

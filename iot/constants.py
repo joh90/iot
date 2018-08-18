@@ -50,6 +50,19 @@ Room's Last command handled
 Version
 '''
 
+ROOM_LIST_MESSAGE = '''
+{}
+====================================
+Blackbean:
+{}
+{}
+'''
+
+LIST_MESSAGE = '''
+Rooms:
+{}
+'''
+
 DEVICE_NOT_FOUND = '''
 Device *{}* not found, /list to list the device id and try again
 '''

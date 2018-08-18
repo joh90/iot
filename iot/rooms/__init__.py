@@ -1,3 +1,7 @@
+from iot.constants import ROOM_LIST_MESSAGE
+from iot.utils import return_mac
+
+from iot.devices import DeviceType
 from iot.devices.errors import DeviceTypeNotFound
 from iot.devices.factory import DeviceFactory
 
@@ -13,15 +17,32 @@ class Room:
     def __init__(self, name, blackbean):
         self.name = name
         self.blackbean = blackbean
+        self.last_action = None
 
     def room_info(self):
         return {
             "name": self.name,
             "host": self.blackbean.host,
-            "mac": ''.join(format(x, '02x') for x in reversed(self.blackbean.mac)),
+            "mac": return_mac(self.blackbean.mac),
             "type": self.blackbean.type,
             "devices": self.DEVICES
         }
+
+    def room_list_info(self):
+        info = self.room_info()
+
+        room_devices = [
+            "*{}* | Type: {}".format(d.id, DeviceType(d.device_type).name) \
+            for d in info["devices"].values()
+        ]
+
+        return ROOM_LIST_MESSAGE.format(
+            info["name"],
+            "Type: {}, IP: {}, Mac: {}".format(
+                info["type"], info["host"][0], info["mac"]),
+            "\n".join(room_devices)
+        )
+
 
     def populate_devices(self, devices):
         populated = []
