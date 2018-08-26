@@ -1,7 +1,7 @@
 from enum import Enum
 
 from iot.devices import (
-    DeviceType, BaseDevice
+    DeviceType, BaseDeviceKeyboardInterface, BaseDevice
 )
 from iot.devices.errors import (
     BrandNotFound
@@ -33,7 +33,27 @@ class AirconFactory:
         return aircon
 
 
-class BaseAircon(BaseDevice):
+class AirconKeyboardInterface(BaseDeviceKeyboardInterface):
+    def powerful(self):
+        pass
+
+    def temp_up(self):
+        pass
+
+    def temp_down(self):
+        pass
+
+    def toggle_mode(self):
+        pass
+
+    def toggle_fan(self):
+        pass
+
+    def toggle_swing(self):
+        pass
+
+
+class BaseAircon(BaseDevice, AirconKeyboardInterface):
 
     device_type = DeviceType.AIRCON
 
