@@ -19,8 +19,16 @@ class DeviceType(IntEnum):
     SET_TOP_BOX = 3
 
 
+class BaseDeviceKeyboardInterface:
+    def power_on(self):
+        raise NotImplementedError
+
+    def power_off(self):
+        raise NotImplementedError
+
+
 # TODO: create a generic multimedia device
-class BaseDevice:
+class BaseDevice(BaseDeviceKeyboardInterface):
     """
     All command methods will return payload for blackbean to send
 

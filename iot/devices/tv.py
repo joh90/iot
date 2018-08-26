@@ -1,7 +1,7 @@
 from enum import Enum
 
 from iot.devices import (
-    DeviceType, BaseDevice
+    DeviceType, BaseDeviceKeyboardInterface, BaseDevice
 )
 from iot.devices.errors import (
     BrandNotFound
@@ -33,7 +33,30 @@ class TVFactory:
         return tv
 
 
-class BaseTV(BaseDevice):
+class TVKeyboardInterface(BaseDeviceKeyboardInterface):
+    def change_input(self):
+        pass
+
+    def mute(self):
+        pass
+
+    def unmute(self):
+        pass
+
+    def channel_up(self):
+        pass
+
+    def channel_down(self):
+        pass
+
+    def volume_up(self):
+        pass
+
+    def volume_down(self):
+        pass
+
+
+class BaseTV(BaseDevice, TVKeyboardInterface):
 
     device_type = DeviceType.TV
 

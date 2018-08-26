@@ -4,7 +4,7 @@ import time
 from enum import Enum
 
 from iot.devices import (
-    DeviceType, BaseDevice
+    DeviceType, BaseDeviceKeyboardInterface, BaseDevice
 )
 from iot.devices.errors import (
     CommandNotFound, InvalidArgument,
@@ -40,7 +40,27 @@ class SetTopBoxFactory:
         return stb
 
 
-class BaseSetTopBox(BaseDevice):
+class SetTopBoxKeyboardInterface(BaseDeviceKeyboardInterface):
+    def mute(self):
+        pass
+
+    def unmute(self):
+        pass
+
+    def channel_up(self):
+        pass
+
+    def channel_down(self):
+        pass
+
+    def volume_up(self):
+        pass
+
+    def volume_down(self):
+        pass
+
+
+class BaseSetTopBox(BaseDevice, SetTopBoxKeyboardInterface):
 
     # TODO: Network provider channel mappings
     # Maybe curl from this to create mapping?

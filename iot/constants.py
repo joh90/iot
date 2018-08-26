@@ -9,7 +9,7 @@ List of possible commands:
 /ping - returns pong and your user info
 /status - returns server information
 /list - returns the list of rooms and devices commands
-/keyboard <room> - returns keyboard access to rooms / devices and commands
+/keyboard <room / device> - returns keyboard access to room / device commands
 /on <device> - Turns on the targeted device
 /off <device> - Turns on the targeted device
 /d <device> <feature> <action or empty> (eg. `/d aircon temp up`, `/d tv mute`)
@@ -65,6 +65,10 @@ Rooms:
 
 DEVICE_NOT_FOUND = '''
 Device *{}* not found, /list to list the device id and try again
+'''
+
+ROOM_OR_DEVICE_NOT_FOUND = '''
+Room / Device *{}* not found, /list and try again
 '''
 
 ARGS_ERROR = '''
