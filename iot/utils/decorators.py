@@ -2,7 +2,8 @@ from functools import wraps
 
 from iot.constants import (
     ON_OFF,
-    DEVICE_NOT_FOUND, ARGS_ERROR,
+    DEVICE_NOT_FOUND, ROOM_OR_DEVICE_NOT_FOUND,
+    ARGS_ERROR,
     DEVICE_FEATURE_ACTION_NOT_FOUND,
     USER_NOT_ALLOWED
 )
@@ -22,6 +23,36 @@ def valid_device(func):
         return func(server, bot, update, device, *args, **kwargs)
 
     return wrapper
+
+
+def valid_device_or_room(compulsory=True):
+    def _inner(func, *args, **kwargs):
+        @wraps(func)
+        def wrapper(server, bot, update, *args, **kwargs):
+            user_params = "".join(kwargs.get("args"))
+            room = None
+            device = None
+
+            if user_params in server.rooms:
+                room = server.rooms[user_params]
+            elif user_params in server.devices:
+                device = server.devices[user_params]
+            else:
+                if compulsory:
+                    update.message.reply_markdown(
+                        ROOM_OR_DEVICE_NOT_FOUND.format(user_params)
+                    )
+
+                    return
+
+            return func(
+                server, bot, update,
+                room=room, device=device, *args, **kwargs
+            )
+
+        return wrapper
+
+    return _inner
 
 
 def valid_device_feature(func):
