@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from iot import constants
-from iot.devices import BaseDevice, populate_devices
+from iot.devices.base import BaseDevice
 from iot.devices.errors import (
     CommandNotFound, InvalidArgument
 )
@@ -282,6 +282,7 @@ class TelegramIOTServer:
         update.message.reply_text(text, reply_markup=reply_markup)
 
     def handle_keyboard_response(self, bot, update):
+        # TODO: This function might be redundant
         query = update.callback_query
         print(query)
         print(query.data)

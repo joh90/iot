@@ -1,7 +1,8 @@
 from enum import Enum
 
-from iot.devices import (
-    DeviceType, BaseDeviceKeyboardInterface, BaseDevice
+from iot.devices import DeviceType
+from iot.devices.base import (
+    BaseDeviceKeyboardInterface, BaseDevice
 )
 from iot.devices.errors import (
     BrandNotFound

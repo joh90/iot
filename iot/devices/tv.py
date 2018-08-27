@@ -1,7 +1,9 @@
 from enum import Enum
 
-from iot.devices import (
-    DeviceType, BaseDeviceKeyboardInterface, BaseDevice
+from iot.devices import DeviceType
+from iot.devices.base.multimedia import (
+    MultimediaKeyboardInterface,
+    MultimediaDevice
 )
 from iot.devices.errors import (
     BrandNotFound
@@ -33,63 +35,21 @@ class TVFactory:
         return tv
 
 
-class TVKeyboardInterface(BaseDeviceKeyboardInterface):
+class TVKeyboardInterface(MultimediaKeyboardInterface):
     def change_input(self):
         pass
 
-    def mute(self):
-        pass
 
-    def unmute(self):
-        pass
-
-    def channel_up(self):
-        pass
-
-    def channel_down(self):
-        pass
-
-    def volume_up(self):
-        pass
-
-    def volume_down(self):
-        pass
-
-
-class BaseTV(BaseDevice, TVKeyboardInterface):
+class BaseTV(MultimediaDevice, TVKeyboardInterface):
 
     device_type = DeviceType.TV
 
     def change_input(self):
         raise NotImplementedError
 
-    def mute(self):
-        key = "mute"
-        self.set_action(key)
-
-    def unmute(self):
-        key = "mute"
-        self.set_action(key)
-
     def channel(self, chan_number):
         # TODO: Take from Set Top Box, ideally make a new generic mm class
         raise NotImplementedError
-
-    def channel_up(self):
-        key = "channel_up"
-        self.set_action(key)
-
-    def channel_down(self):
-        key = "channel_down"
-        self.set_action(key)
-
-    def volume_up(self):
-        key = "volume_up"
-        self.set_action(key)
-
-    def volume_down(self):
-        key = "volume_down"
-        self.set_action(key)
 
 
 class Panasonic(BaseTV):
