@@ -3,8 +3,10 @@ import time
 
 from enum import Enum
 
-from iot.devices import (
-    DeviceType, BaseDeviceKeyboardInterface, BaseDevice
+from iot.devices import DeviceType
+from iot.devices.base.multimedia import (
+    MultimediaKeyboardInterface,
+    MultimediaDevice
 )
 from iot.devices.errors import (
     CommandNotFound, InvalidArgument,
@@ -40,7 +42,7 @@ class SetTopBoxFactory:
         return stb
 
 
-class SetTopBoxKeyboardInterface(BaseDeviceKeyboardInterface):
+class SetTopBoxKeyboardInterface(MultimediaKeyboardInterface):
     def mute(self):
         pass
 
@@ -60,7 +62,7 @@ class SetTopBoxKeyboardInterface(BaseDeviceKeyboardInterface):
         pass
 
 
-class BaseSetTopBox(BaseDevice, SetTopBoxKeyboardInterface):
+class BaseSetTopBox(MultimediaDevice, SetTopBoxKeyboardInterface):
 
     # TODO: Network provider channel mappings
     # Maybe curl from this to create mapping?
@@ -78,14 +80,6 @@ class BaseSetTopBox(BaseDevice, SetTopBoxKeyboardInterface):
             raise CommandNotFound
 
         return digits[digit]
-
-    def mute(self):
-        key = "mute"
-        self.set_action(key)
-
-    def unmute(self):
-        key = "mute"
-        self.set_action(key)
 
     def channel(self, chan_number):
         """Experimental function, may not work in some cases"""
@@ -109,22 +103,6 @@ class BaseSetTopBox(BaseDevice, SetTopBoxKeyboardInterface):
                 time.sleep(2.25)
         else:
             raise InvalidArgument
-
-    def channel_up(self):
-        key = "channel_up"
-        self.set_action(key)
-
-    def channel_down(self):
-        key = "channel_down"
-        self.set_action(key)
-
-    def volume_up(self):
-        key = "volume_up"
-        self.set_action(key)
-
-    def volume_down(self):
-        key = "volume_down"
-        self.set_action(key)
 
 
 class Samsung(BaseSetTopBox):
