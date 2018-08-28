@@ -1,0 +1,32 @@
+{
+	"study": {
+		"mac_address": "780f771abcde",
+		"blackbean_type": "RM2",
+		"devices": [
+			{
+				"type": 1,
+				"id": "study-aircon",
+				"brand": "daikin",
+				"model": "super-multi-nx"
+            },
+			{
+				"type": 2,
+				"id": "study-tv",
+				"brand": "panasonic",
+				"model": "viera"
+			}
+		]
+	},
+	"living-room": {
+		"mac_address": "780f771aedcb",
+		"blackbean_type": "RM2",
+		"devices": [
+			{
+				"type": 2,
+				"id": "living-tv",
+				"brand": "sony",
+				"model": "vega"
+			}
+		]
+	}
+}
