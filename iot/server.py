@@ -61,9 +61,7 @@ class TelegramIOTServer:
     def start_server(self):
         # TODO: It should discover and check against the mac address of the device
         # hard code mac addr for now
-        bb_devices: list = broadlink.discover(timeout=5)
-        bb_devices[0].auth()
-        self.blackbean_devices["780f771a192e"] = bb_devices[0]
+        self.discover_blackbean_device()
 
         self.reload_commands()
         self.reload_rooms_and_devices()
@@ -153,7 +151,14 @@ class TelegramIOTServer:
                 return bb
 
     def discover_blackbean_device(self):
-        pass
+        logger.info("Discovering Blackbean devices...")
+        bb_devices: list = broadlink.discover(timeout=5)
+
+        for bb in bb_devices:
+            bb.auth()
+            mac = return_mac(bb.mac)
+            self.blackbean_devices[mac] = bb
+            logger.info("Discovered %s device with %s mac", bb.type, mac)
 
     def reload_commands(self):
         with open(COMMANDS_FILE_PATH) as f:
