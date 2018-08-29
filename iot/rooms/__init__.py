@@ -12,11 +12,10 @@ d_factory = DeviceFactory()
 # We assume one blackbean per room for now
 class Room:
 
-    DEVICES = {}
-
     def __init__(self, name, blackbean):
         self.name = name
         self.blackbean = blackbean
+        self.DEVICES = {}
         self.last_action = None
 
     def room_info(self):

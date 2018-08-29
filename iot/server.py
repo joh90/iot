@@ -242,7 +242,8 @@ class TelegramIOTServer:
         print(self.rooms)
         print(self.devices)
         #print(self.commands)
-        print(self.rooms["office"].room_info())
+        # print(self.rooms["office"].room_info())
+        # print(self.rooms["bedroom"].room_info())
         # self.blackbean_devices["780f771a192e"].send_data(
         #     bytearray.fromhex(''.join("26006c000f0717120707080d0613070d0707080805140613070d071306080709041a060e06000b820f06070905150608050f0713060e060805230713060e061307070529070d07000b810f06070905150607070e0713060e0607070805150713060e061307060709051a070d07000d05000000000000000000000000"))
         # )
@@ -263,7 +264,7 @@ class TelegramIOTServer:
         rooms_info = [str(r.room_list_info()) for r in self.rooms.values()]
 
         update.message.reply_markdown(constants.LIST_MESSAGE.format(
-            "\n\n".join(rooms_info)
+            "\n".join(rooms_info)
         ))
 
     @valid_user

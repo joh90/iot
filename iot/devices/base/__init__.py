@@ -22,8 +22,6 @@ class BaseDevice(BaseDeviceKeyboardInterface):
     `model` - Model number of the device
     """
 
-    commands = {}
-
     device_type = None
     last_action = None
 
@@ -33,6 +31,7 @@ class BaseDevice(BaseDeviceKeyboardInterface):
         self.id = id
         self.brand = brand
         self.model = model
+        self.commmands = {}
 
         #self.populate_device_command()
 

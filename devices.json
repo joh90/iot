@@ -22,5 +22,17 @@
 				"model": "gx-sh530cf"
 			}
 		]
+	},
+	"bedroom": {
+		"mac_address": "780f771a1926",
+		"blackbean_type": "RM2",
+		"devices": [
+			{
+				"type": 1,
+				"id": "bedroom-aircon",
+				"brand": "daikin",
+				"model": "super-multi-nx"
+			}
+		]
 	}
 }
