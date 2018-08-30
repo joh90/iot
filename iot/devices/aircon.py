@@ -11,14 +11,32 @@ from iot.devices.errors import (
 
 class AirconBrands(Enum):
     DAIKIN = "daikin"
+    FUJITSU = "fujitsu"
+    LG = "lg"
+    MITSUBISHI = "mitsubishi"
+    PANASONIC = "panasonic"
+    SAMSUNG = "samsung"
+    SANYO = "sanyo"
+    TOSHIBA = "toshiba"
 
 
 class AirconFactory:
 
     def __init__(self):
-        self.mappings = {
-            AirconBrands.DAIKIN.value: Daikin
-        }
+        self.mappings = {}
+        self.populate_mappings()
+
+    def populate_mappings(self):
+        # TODO: Check if brand's class exist,
+        # if not just create default BaseAircon
+        # class, in special cases we may need to overwrite or
+        # add certain methods for an aircon brand
+        # Refer to http://www.diveintopython.net/file_handling/more_on_modules.html
+
+        # Dynamically create aircon brand classes
+        for brand in AirconBrands:
+            kls = type(brand.value, (BaseAircon,), {})
+            self.mappings[brand.value] = kls
 
     def get_brand(self, brand):
         return self.mappings.get(brand.lower(), None)
@@ -59,7 +77,6 @@ class BaseAircon(BaseDevice, AirconKeyboardInterface):
     device_type = DeviceType.AIRCON
 
     def powerful(self):
-        print("haha sneidng powerrrr")
         key = "powerful"
         self.set_action(key)
 
@@ -77,7 +94,3 @@ class BaseAircon(BaseDevice, AirconKeyboardInterface):
 
     def toggle_swing(self):
         raise NotImplementedError
-
-
-class Daikin(BaseAircon):
-    pass
