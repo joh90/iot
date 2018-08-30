@@ -11,15 +11,32 @@ from iot.devices.errors import (
 
 
 class TVBrands(Enum):
+    LG = "lg"
     PANASONIC = "panasonic"
+    PHILIPS = "philips"
+    SAMSUNG = "samsung"
+    SHARP = "sharp"
+    SONY = "sony"
+    TOSHIBA = "toshiba"
+    VIZIO = "vizio"
 
 
 class TVFactory:
 
     def __init__(self):
-        self.mappings = {
-            TVBrands.PANASONIC.value: Panasonic
-        }
+        self.mappings = {}
+        self.populate_mappings()
+
+    def populate_mappings(self):
+        # TODO: Check if brand's class exist
+        # if not just create default BaseTV
+        # class, in special cases we may need to overwrite or
+        # add certain methods for an tv brand
+
+        # Dynamically create tv brand classes
+        for brand in TVBrands:
+            kls = type(brand.value, (BaseTV,), {})
+            self.mappings[brand.value] = kls
 
     def get_brand(self, brand):
         return self.mappings.get(brand.lower(), None)
@@ -48,9 +65,6 @@ class BaseTV(MultimediaDevice, TVKeyboardInterface):
         raise NotImplementedError
 
     def channel(self, chan_number):
-        # TODO: Take from Set Top Box, ideally make a new generic mm class
+        # TODO: Take from Set Top Box, or migrate
+        # code from set top box to multimedia device base class
         raise NotImplementedError
-
-
-class Panasonic(BaseTV):
-    pass

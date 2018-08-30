@@ -191,7 +191,7 @@ class KeyboardCallbackQueryHandler:
 
     def top_menu(self, query, bot, update):
         # To prevent "Message is not modified" from raising
-        # as we should be editing the message if it's in top menu
+        # as we should not be editing the message if it's in top menu
         if query.message.text == "Select room":
             self.answer_query(query, bot, text="Already at top menu!")
             return
