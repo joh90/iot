@@ -12,24 +12,27 @@ logger = logging.getLogger(__name__)
 
 # TODO: create a generic device type factory
 class DeviceFactory:
+
+    __slots__ = ("device_mappings", "interface_mappings",)
+
     def __init__(self):
-        self.device_mapping = {
+        self.device_mappings = {
             DeviceType.AIRCON: AirconFactory(),
             DeviceType.TV: TVFactory(),
             DeviceType.SET_TOP_BOX: SetTopBoxFactory()
         }
 
-        self.interface_mapping = {
+        self.interface_mappings = {
             DeviceType.AIRCON: AirconKeyboardInterface,
             DeviceType.TV: TVKeyboardInterface,
             DeviceType.SET_TOP_BOX: SetTopBoxKeyboardInterface,
         }
 
     def get_device_type_factory(self, device_type):
-        return self.device_mapping.get(device_type, None)
+        return self.device_mappings.get(device_type, None)
 
     def get_device_type_interface(self, device_type):
-        class_interface = self.interface_mapping.get(device_type)
+        class_interface = self.interface_mappings.get(device_type)
         if class_interface:
             return [
                 i for i in dir(class_interface) \

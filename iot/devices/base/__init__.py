@@ -22,8 +22,10 @@ class BaseDevice(BaseDeviceKeyboardInterface):
     `model` - Model number of the device
     """
 
-    device_type = None
-    last_action = None
+    __slots__ = (
+        "device_type", "room", "id", "brand", "model",
+        "commands", "last_action"
+    )
 
     def __init__(self, room, id, brand, model):
         self.room = room
@@ -32,8 +34,7 @@ class BaseDevice(BaseDeviceKeyboardInterface):
         self.brand = brand
         self.model = model
         self.commmands = {}
-
-        #self.populate_device_command()
+        self.last_action = None
 
     def populate_device_commands(self, commands):
         self.commands = commands

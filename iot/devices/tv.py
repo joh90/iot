@@ -23,6 +23,8 @@ class TVBrands(Enum):
 
 class TVFactory:
 
+    __slots__ = ("mappings",)
+
     def __init__(self):
         self.mappings = {}
         self.populate_mappings()
