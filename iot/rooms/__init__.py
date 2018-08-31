@@ -12,6 +12,8 @@ d_factory = DeviceFactory()
 # We assume one blackbean per room for now
 class Room:
 
+    __slots__ = ("name", "blackbean", "DEVICES", "last_action")
+
     def __init__(self, name, blackbean):
         self.name = name
         self.blackbean = blackbean

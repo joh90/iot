@@ -23,6 +23,8 @@ class SetTopBoxBrands(Enum):
 
 class SetTopBoxFactory:
 
+    __slots__ = ("mappings",)
+
     def __init__(self):
         self.mappings = {
             SetTopBoxBrands.SAMSUNG.value: Samsung

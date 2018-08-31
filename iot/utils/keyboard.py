@@ -25,7 +25,7 @@ def build_markup(options) -> list:
 
 class KeyboardCallbackQueryHandler:
 
-    server = None
+    __slots__ = ("server",)
 
     def __init__(self, server):
         self.server = server

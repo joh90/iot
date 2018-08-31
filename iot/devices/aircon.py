@@ -22,6 +22,8 @@ class AirconBrands(Enum):
 
 class AirconFactory:
 
+    __slots__ = ("mappings",)
+
     def __init__(self):
         self.mappings = {}
         self.populate_mappings()
