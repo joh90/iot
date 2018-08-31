@@ -1,4 +1,5 @@
 from functools import wraps
+from datetime import datetime
 
 from iot.constants import (
     ON_OFF,
@@ -137,7 +138,10 @@ def valid_user(func):
         ):
             # Update server last command handled, other than status
             if not func.__name__ == "command_status":
-                server.last_command_handled = (func.__name__, args, kwargs)
+                server.last_command_handled = (
+                    func.__name__, args, kwargs,
+                    str(datetime.now()).split(".")[0]
+                )
 
             return func(server, bot, update, *args, **kwargs)
 
