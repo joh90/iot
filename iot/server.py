@@ -22,8 +22,8 @@ from iot.utils.decorators import (
     valid_device, valid_device_or_room,
     valid_device_feature, valid_user
 )
-from iot.utils.keyboard import (
-    KeyboardCallbackQueryHandler
+from iot.utils.keyboard.cmd_keyboard import (
+    CommandKeyboardCBHandler
 )
 
 
@@ -36,6 +36,9 @@ BOT_SECRET: str = ""
 ROOM_DEVICES_FILE_PATH: str = ""
 COMMANDS_FILE_PATH: str = ""
 USERS_FILE_PATH: str = ""
+
+
+KEYBOARD_HANDLER_NAME = "/keyboard"
 
 
 class TelegramIOTServer:
@@ -55,6 +58,9 @@ class TelegramIOTServer:
         self.commands = {}
         self.approved_users = {}
 
+        # Keyboard handlers
+        self.kb_handlers = {}
+
         self.start_time: datetime = None
         self.last_command_handled = None
 
@@ -67,7 +73,8 @@ class TelegramIOTServer:
         self.reload_rooms_and_devices()
         self.reload_users()
 
-        self.kb_handler = KeyboardCallbackQueryHandler(self)
+        self.kb_handlers[KEYBOARD_HANDLER_NAME] = \
+            CommandKeyboardCBHandler(self, KEYBOARD_HANDLER_NAME)
 
         self.init_telegram_server()
 
@@ -270,8 +277,10 @@ class TelegramIOTServer:
     @valid_user
     @valid_device_or_room(compulsory=False)
     def command_keyboard(self, bot, update, *args, **kwargs):
+        handler = self.kb_handlers[KEYBOARD_HANDLER_NAME]
+
         # By default, reply markup will be rooms keyboard
-        reply_markup = self.kb_handler.build_rooms_keyboard()
+        reply_markup = handler.build_rooms_keyboard()
         text = "Select room"
 
         room = kwargs.pop("room", None)
@@ -279,22 +288,29 @@ class TelegramIOTServer:
 
         # If room, device can be found, that will be the markup
         if room:
-            reply_markup = self.kb_handler.build_room_devices_keyboard(room.name)
+            reply_markup = handler.build_room_devices_keyboard(room.name)
             text = "Select {} device".format(room.name)
         elif device:
-            reply_markup = self.kb_handler.build_device_keyboard(device.id)
+            reply_markup = handler.build_device_keyboard(device.id)
             text = "Select {} feature".format(device.id)
 
         update.message.reply_text(text, reply_markup=reply_markup)
 
     def handle_keyboard_response(self, bot, update):
-        # TODO: This function might be redundant
         query = update.callback_query
         print(query)
         print(query.data)
-        self.kb_handler.process_query(
-            bot, update
-        )
+        handler_name, internal_cb_data = query.data.split(" ", 1)
+
+        if handler_name in self.kb_handlers.keys():
+            self.kb_handlers[handler_name].process_query(
+                bot, update, internal_cb_data
+            )
+        else:
+            logger.error(
+                "Unable to find handler_name, %s in kb_handlers",
+                handler_name
+            )
 
     @valid_user
     @valid_device
@@ -322,14 +338,14 @@ class TelegramIOTServer:
             action=action, *args, **kwargs)
 
     def call_device(self, bot, update, device, feature,
-            action=None, response=False, *args, **kwargs):
+            action=None, handler_name=None, *args, **kwargs):
         """
         Call specified device's feature and action,
         if it can be found
         """
         def send_text(bot, update, message):
             if update.callback_query:
-                self.kb_handler.answer_query(
+                self.kb_handlers[handler_name].answer_query(
                     update.callback_query, bot,
                     text=message
                 )
@@ -352,7 +368,7 @@ class TelegramIOTServer:
             func(*new_args)
 
             if update.callback_query:
-                self.kb_handler.answer_query(
+                self.kb_handlers[handler_name].answer_query(
                     update.callback_query, bot,
                     text="Sent {} with {}".format(device.id, feature)
                 )

@@ -1,53 +1,29 @@
+from datetime import datetime
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    InlineKeyboardButton
+)
 
 from iot.rooms import d_factory
+from iot.utils.keyboard.base import (
+    CLOSE_INLINE_KEYBOARD_COMMAND,
+    InlineKeyboardMixin,
+    KeyboardCallBackQueryHandler
+)
 
 
 logger = logging.getLogger(__name__)
 
 
 BACK_TEXT = "<- Back"
-CLOSE_INLINE_KEYBOARD_COMMAND = "close_keyboard"
+CLOSE_TEXT = "Closed! /keyboard to reactivate keyboard"
 
 
-def build_markup(options) -> list:
-    keyboard = [
-        [InlineKeyboardButton(name, callback_data=command)] \
-        for name, command in options.items()
-    ]
-
-    markup = InlineKeyboardMarkup(keyboard)
-
-    return markup
-
-
-class KeyboardCallbackQueryHandler:
-
-    __slots__ = ("server",)
-
-    def __init__(self, server):
-        self.server = server
+class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin):
 
     def func_name_to_text(self, name):
         return name.replace("_", " ")
-
-    def answer_query(self, query, bot, text=None, alert=False):
-        bot.answer_callback_query(query.id, text=text, show_alert=alert)
-
-    def build_keyboard(self, buttons, cols, header_buttons=None, footer_buttons=None):
-        if cols > 0:
-            kb = [buttons[i:i + cols] for i in range(0, len(buttons), cols)]
-        else:
-            kb = [[b] for b in buttons]
-
-        if header_buttons:
-            kb.insert(0, header_buttons)
-        if footer_buttons:
-            kb.append(footer_buttons)
-
-        return kb
 
     def footer_buttons(self, target, target_type):
         button_list = [
@@ -74,28 +50,25 @@ class KeyboardCallbackQueryHandler:
             cb_data = back_target
 
         return InlineKeyboardButton(
-            text, callback_data=cb_data
-        )
-
-    def close_button(self):
-        return InlineKeyboardButton(
-            "Close", callback_data=CLOSE_INLINE_KEYBOARD_COMMAND
+            text, callback_data=self.return_cb_data(cb_data)
         )
 
     def construct_keyboard_markup(
         self, options, back_target, target_type, cols=0
     ):
         button_list = [
-            InlineKeyboardButton(name, callback_data=command) \
-            for name, command in options.items()
+            InlineKeyboardButton(
+                name, callback_data=self.return_cb_data(command)) \
+                for name, command in options.items()
         ]
 
         footer_buttons = self.footer_buttons(back_target, target_type)
 
-        buttons = self.build_keyboard(button_list, cols=cols,
+        keyboard = self.build_keyboard(button_list, cols=cols,
             footer_buttons=footer_buttons)
 
-        markup = InlineKeyboardMarkup(buttons)
+
+        markup = self.build_inline_keyboard_markup(keyboard)
 
         return markup
 
@@ -133,25 +106,23 @@ class KeyboardCallbackQueryHandler:
 
         return markup
 
-    def process_query(self, bot, update):
-        query = update.callback_query
-        print('query', query)
-        logger.info("Keyboard CB Handler: Handling '%s'", query.data)
-
-        # query_data is only the device's id
-        query_data = query.data.split()
+    def process_query(self, bot, update, internal_callback_data):
+        query, query_data = super(CommandKeyboardCBHandler, self).process_query(
+            bot, update, internal_callback_data)
         query_data_length = len(query_data)
 
         # Single length callback_data eg. room, tv
         if query_data_length == 1:
-            if query.data in self.server.rooms.keys():
-                self.handle_room(query.data, query, bot, update)
-            elif query.data in self.server.devices.keys():
-                self.handle_device(query.data, query, bot, update)
-            elif query.data == "rooms":
+            query_data = query_data[0]
+
+            if query_data in self.server.rooms.keys():
+                self.handle_room(query_data, query, bot, update)
+            elif query_data in self.server.devices.keys():
+                self.handle_device(query_data, query, bot, update)
+            elif query_data == "rooms":
                 self.top_menu(query, bot, update)
-            elif query.data == CLOSE_INLINE_KEYBOARD_COMMAND:
-                self.handle_close(query, bot, update)
+            elif query_data == CLOSE_INLINE_KEYBOARD_COMMAND:
+                self.handle_close(CLOSE_TEXT, query, bot, update)
         # Actual device feature command callback_data eg. aircon powerful
         elif query_data_length == 2:
             device_id = query_data[0]
@@ -159,14 +130,15 @@ class KeyboardCallbackQueryHandler:
 
             device = self.server.devices[device_id]
 
-            # call server call_device
-            print('do something here', device_id, feature)
+            # Call server call_device
             self.server.call_device(
-                bot, update, device, feature
+                bot, update, device, feature,
+                handler_name=self.handler_name
             )
             # Update server last command handled
             self.server.last_command_handled = (
-                self.__class__.__name__, device_id, feature
+                self.__class__.__name__, device_id, feature,
+                str(datetime.now()).split(".")[0]
             )
 
     def handle_room(self, room_name, query, bot, update):
@@ -202,13 +174,5 @@ class KeyboardCallbackQueryHandler:
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=reply_markup)
-
-        self.answer_query(query, bot)
-
-    def handle_close(self, query, bot, update):
-        bot.edit_message_text(text="Closed! /keyboard to reactivate keyboard",
-            chat_id=query.message.chat_id,
-            message_id=query.message.message_id,
-            reply_markup=None)
 
         self.answer_query(query, bot)
