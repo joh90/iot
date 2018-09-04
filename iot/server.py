@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 from iot import constants
+from iot.conversations.cmd_adduser import AddUserConversation
 from iot.devices.base import BaseDevice
 from iot.devices.errors import (
     CommandNotFound, InvalidArgument
@@ -24,6 +25,10 @@ from iot.utils.decorators import (
 )
 from iot.utils.keyboard.cmd_keyboard import (
     CommandKeyboardCBHandler
+)
+from iot.utils.keyboard.cmd_user import (
+    TOP_MENU_TEXT as USER_TOP_MENU_TEXT,
+    CommandUserCBHandler
 )
 
 
@@ -39,6 +44,7 @@ USERS_FILE_PATH: str = ""
 
 
 KEYBOARD_HANDLER_NAME = "/keyboard"
+USER_HANDLER_NAME = "/user"
 
 
 class TelegramIOTServer:
@@ -76,11 +82,17 @@ class TelegramIOTServer:
         self.kb_handlers[KEYBOARD_HANDLER_NAME] = \
             CommandKeyboardCBHandler(self, KEYBOARD_HANDLER_NAME)
 
+        self.kb_handlers[USER_HANDLER_NAME] = \
+            CommandUserCBHandler(self, USER_HANDLER_NAME)
+
         self.init_telegram_server()
 
     def init_telegram_server(self):
         token: str = '{}:{}'.format(BOT_ID, BOT_SECRET)
-        self.updater = Updater(token)
+        self.updater = Updater(
+            token,
+            user_sig_handler=self.stop_server
+        )
 
         # Get the dispatcher to register handlers
         self.dp = self.updater.dispatcher
@@ -91,6 +103,9 @@ class TelegramIOTServer:
         self.dp.add_handler(CommandHandler("list", self.command_list))
         self.dp.add_handler(CommandHandler(
             "keyboard", self.command_keyboard, pass_args=True
+        ))
+        self.dp.add_handler(CommandHandler(
+            "user", self.command_user, pass_args=True
         ))
         self.dp.add_handler(CallbackQueryHandler(self.handle_keyboard_response))
         self.dp.add_handler(CommandHandler(
@@ -103,14 +118,21 @@ class TelegramIOTServer:
             "d", self.command_device, pass_args=True
         ))
         #self.dp.add_handler(CommandHandler("debug", debug))
+        self.add_conversations()
 
         self.dp.add_error_handler(self.error)
 
         self.updater.start_polling()
-        logger.info("Telegram IOT Server Running")
+        logger.info("Telegram IOT Server Running...")
         self.start_time = datetime.now()
 
         self.updater.idle()
+
+    def add_conversations(self):
+        # TODO: make a map and initalize it?
+        AddUserConversation(
+            self, ["adduser"], ["canceladduser"]
+        )
 
     def reload_rooms_and_devices(self):
         with open(ROOM_DEVICES_FILE_PATH) as f:
@@ -200,6 +222,15 @@ class TelegramIOTServer:
                 return
             else:
                 self.approved_users = data
+
+    def save_users(self):
+        logger.info("Saving approved users to %s", USERS_FILE_PATH)
+
+        with open(USERS_FILE_PATH, "w") as f:
+            try:
+                json.dump(self.approved_users, f, indent=4, sort_keys=True)
+            except Exception as e:
+                logger.error("Error while saving users to json file: %s", e)
 
     def error(self, bot, update, error):
         """Log Errors caused by Updates."""
@@ -296,10 +327,17 @@ class TelegramIOTServer:
 
         update.message.reply_text(text, reply_markup=reply_markup)
 
+    @valid_user
+    def command_user(self, bot, update, *args, **kwargs):
+        handler = self.kb_handlers[USER_HANDLER_NAME]
+
+        reply_markup = handler.build_users_keyboard()
+
+        update.message.reply_text(USER_TOP_MENU_TEXT,
+            reply_markup=reply_markup)
+
     def handle_keyboard_response(self, bot, update):
         query = update.callback_query
-        print(query)
-        print(query.data)
         handler_name, internal_cb_data = query.data.split(" ", 1)
 
         if handler_name in self.kb_handlers.keys():
@@ -382,8 +420,12 @@ class TelegramIOTServer:
         except (TypeError, InvalidArgument):
             send_text(bot, update, constants.ARGS_ERROR)
 
-    def stop_server(self):
-        pass
+    def stop_server(self, *args, **kwargs):
+        logger.info("Telegram IOT Server stopping...")
+
+        # Save approved users json
+        # TODO: optimize this, save only on approved_users change
+        self.save_users()
 
 
 server: TelegramIOTServer = TelegramIOTServer()
