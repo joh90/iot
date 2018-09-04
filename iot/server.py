@@ -26,6 +26,10 @@ from iot.utils.decorators import (
 from iot.utils.keyboard.cmd_keyboard import (
     CommandKeyboardCBHandler
 )
+from iot.utils.keyboard.cmd_user import (
+    TOP_MENU_TEXT as USER_TOP_MENU_TEXT,
+    CommandUserCBHandler
+)
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,7 @@ USERS_FILE_PATH: str = ""
 
 
 KEYBOARD_HANDLER_NAME = "/keyboard"
+USER_HANDLER_NAME = "/user"
 
 
 class TelegramIOTServer:
@@ -77,6 +82,9 @@ class TelegramIOTServer:
         self.kb_handlers[KEYBOARD_HANDLER_NAME] = \
             CommandKeyboardCBHandler(self, KEYBOARD_HANDLER_NAME)
 
+        self.kb_handlers[USER_HANDLER_NAME] = \
+            CommandUserCBHandler(self, USER_HANDLER_NAME)
+
         self.init_telegram_server()
 
     def init_telegram_server(self):
@@ -92,6 +100,9 @@ class TelegramIOTServer:
         self.dp.add_handler(CommandHandler("list", self.command_list))
         self.dp.add_handler(CommandHandler(
             "keyboard", self.command_keyboard, pass_args=True
+        ))
+        self.dp.add_handler(CommandHandler(
+            "user", self.command_user, pass_args=True
         ))
         self.dp.add_handler(CallbackQueryHandler(self.handle_keyboard_response))
         self.dp.add_handler(CommandHandler(
@@ -304,10 +315,17 @@ class TelegramIOTServer:
 
         update.message.reply_text(text, reply_markup=reply_markup)
 
+    @valid_user
+    def command_user(self, bot, update, *args, **kwargs):
+        handler = self.kb_handlers[USER_HANDLER_NAME]
+
+        reply_markup = handler.build_users_keyboard()
+
+        update.message.reply_text(USER_TOP_MENU_TEXT,
+            reply_markup=reply_markup)
+
     def handle_keyboard_response(self, bot, update):
         query = update.callback_query
-        print(query)
-        print(query.data)
         handler_name, internal_cb_data = query.data.split(" ", 1)
 
         if handler_name in self.kb_handlers.keys():
