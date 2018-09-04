@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 from iot import constants
+from iot.conversations.cmd_adduser import AddUserConversation
 from iot.devices.base import BaseDevice
 from iot.devices.errors import (
     CommandNotFound, InvalidArgument
@@ -103,14 +104,21 @@ class TelegramIOTServer:
             "d", self.command_device, pass_args=True
         ))
         #self.dp.add_handler(CommandHandler("debug", debug))
+        self.add_conversations()
 
         self.dp.add_error_handler(self.error)
 
         self.updater.start_polling()
-        logger.info("Telegram IOT Server Running")
+        logger.info("Telegram IOT Server Running...")
         self.start_time = datetime.now()
 
         self.updater.idle()
+
+    def add_conversations(self):
+        # TODO: make a map and initalize it?
+        AddUserConversation(
+            self, ["adduser"], ["canceladduser"]
+        )
 
     def reload_rooms_and_devices(self):
         with open(ROOM_DEVICES_FILE_PATH) as f:
