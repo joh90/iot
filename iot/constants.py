@@ -13,12 +13,11 @@ List of possible commands:
 /on <device> - Turns on the targeted device
 /off <device> - Turns on the targeted device
 /d <device> <feature> <action or empty> (eg. `/d aircon temp up`, `/d tv mute`)
+/user - returns list of approved users with delete option
+/adduser - Add user conversation (provide both user id and username)
 
 Future:
 /cm <custom-macro>
-/listusers
-/adduser <user-name> <user-code>
-/removeuser <user-name> <user-code>
 /listtriggers
 /newtrigger
 /updatetrigger

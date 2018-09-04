@@ -150,3 +150,32 @@ def valid_user(func):
         return
 
     return wrapper
+
+
+def valid_user_conversation(func):
+    @wraps(func)
+    def wrapper(conversation, bot, update, *args, **kwargs):
+        server = conversation.server
+
+        # We save the user_id as string in the json file
+        user_id = str(update.effective_user.id)
+        user_name = update.effective_user.username
+
+        if (
+            user_id in server.approved_users and
+            server.approved_users[user_id] == user_name
+        ):
+            # Update server last command handled, other than status
+            if not func.__name__ == "command_status":
+                server.last_command_handled = (
+                    func.__name__, args, kwargs,
+                    str(datetime.now()).split(".")[0]
+                )
+
+            return func(conversation, bot, update, *args, **kwargs)
+
+        update.message.reply_text(USER_NOT_ALLOWED)
+
+        return
+
+    return wrapper

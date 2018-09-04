@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 CLOSE_INLINE_KEYBOARD_COMMAND = "close_keyboard"
 
+YES_TEXT = "YES"
+NO_TEXT = "NO"
+
 
 class InlineKeyboardMixin:
 
@@ -17,7 +20,10 @@ class InlineKeyboardMixin:
         if cols > 0:
             kb = [buttons[i:i + cols] for i in range(0, len(buttons), cols)]
         else:
-            kb = [[b] for b in buttons]
+            if not isinstance(buttons[0], list):
+                kb = [[b] for b in buttons]
+            else:
+                kb = [b for b in buttons]
 
         if header_buttons:
             kb.insert(0, header_buttons)
@@ -28,6 +34,15 @@ class InlineKeyboardMixin:
 
     def build_inline_keyboard_markup(self, keyboard):
         return InlineKeyboardMarkup(keyboard)
+
+    def construct_yes_no_prompt_keyboard(self, yes_cb, no_cb):
+        button_list = self.yes_no_button(yes_cb, no_cb)
+
+        keyboard = self.build_keyboard(button_list, cols=0)
+
+        markup = self.build_inline_keyboard_markup(keyboard)
+
+        return markup
 
     def header_buttons(self, *args, **kwargs):
         """Returns list of header buttons"""
@@ -45,12 +60,27 @@ class InlineKeyboardMixin:
         pass
 
     def close_button(self):
+        """
+        Returns generic "Close" InlineKeyboardButton
+        to close the keyboard
+        """
         return InlineKeyboardButton(
             "Close",
             callback_data=self.return_cb_data(CLOSE_INLINE_KEYBOARD_COMMAND)
         )
 
-    def construct_keyboard_markup(self, *args, **kwargs):
+    def yes_no_button(self, yes_cb, no_cb):
+        return [[
+            InlineKeyboardButton(
+                YES_TEXT,
+                callback_data=self.return_cb_data(yes_cb)
+            ),
+            InlineKeyboardButton(
+                NO_TEXT,
+                callback_data=self.return_cb_data(no_cb))
+        ]]
+
+    def construct_keyboard_markup(self, options, *args, **kwargs):
         raise NotImplementedError
 
     def handle_close(self, text, query, bot, update):
