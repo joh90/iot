@@ -39,7 +39,7 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
         # Rooms top level keyboard
         if target_type == "rooms":
             text = "Top Menu"
-            cb_data = 'rooms'
+            cb_data = "rooms"
         # Room second level keyboard (listing devices), Back to Rooms kb
         elif target_type == "room":
             text = BACK_TEXT
