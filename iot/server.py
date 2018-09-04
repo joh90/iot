@@ -89,7 +89,10 @@ class TelegramIOTServer:
 
     def init_telegram_server(self):
         token: str = '{}:{}'.format(BOT_ID, BOT_SECRET)
-        self.updater = Updater(token)
+        self.updater = Updater(
+            token,
+            user_sig_handler=self.stop_server
+        )
 
         # Get the dispatcher to register handlers
         self.dp = self.updater.dispatcher
@@ -219,6 +222,15 @@ class TelegramIOTServer:
                 return
             else:
                 self.approved_users = data
+
+    def save_users(self):
+        logger.info("Saving approved users to %s", USERS_FILE_PATH)
+
+        with open(USERS_FILE_PATH, "w") as f:
+            try:
+                json.dump(self.approved_users, f, indent=4, sort_keys=True)
+            except Exception as e:
+                logger.error("Error while saving users to json file: %s", e)
 
     def error(self, bot, update, error):
         """Log Errors caused by Updates."""
@@ -408,8 +420,12 @@ class TelegramIOTServer:
         except (TypeError, InvalidArgument):
             send_text(bot, update, constants.ARGS_ERROR)
 
-    def stop_server(self):
-        pass
+    def stop_server(self, *args, **kwargs):
+        logger.info("Telegram IOT Server stopping...")
+
+        # Save approved users json
+        # TODO: optimize this, save only on approved_users change
+        self.save_users()
 
 
 server: TelegramIOTServer = TelegramIOTServer()
