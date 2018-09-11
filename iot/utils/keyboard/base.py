@@ -28,7 +28,16 @@ class InlineKeyboardMixin:
         if header_buttons:
             kb.insert(0, header_buttons)
         if footer_buttons:
-            kb.append(footer_buttons)
+            to_append = []
+
+            for but in footer_buttons:
+                if isinstance(but, list):
+                    kb.append(but)
+                else:
+                    to_append.append(but)
+
+            if len(to_append):
+                kb.append(to_append)
 
         return kb
 

@@ -77,7 +77,6 @@ class Room:
             self.send_blackbean_data(data)
 
     def send_blackbean_data(self, data):
-        print("sending data to rm2", data)
         self.blackbean.send_data(
             self.convert_to_bytearray(data)
         )
