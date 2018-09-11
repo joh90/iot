@@ -390,17 +390,12 @@ class TelegramIOTServer:
             else:
                 update.message.reply_markdown(message)
 
-        print(device, feature, action)
         func = getattr(device, feature)
 
-        print('args', args)
         new_args = args
 
         if action:
             new_args = (action,)
-
-        print('na', new_args)
-        print('na_type', type(new_args))
 
         try:
             func(*new_args)

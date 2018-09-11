@@ -16,6 +16,7 @@ from iot.utils.keyboard.base import (
 logger = logging.getLogger(__name__)
 
 
+JUMP_ROOMS_TEXT = "Jump to Rooms"
 BACK_TEXT = "<- Back"
 CLOSE_TEXT = "Closed! /keyboard to reactivate keyboard"
 
@@ -25,11 +26,20 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
     def func_name_to_text(self, name):
         return name.replace("_", " ")
 
+    def jump_rooms_button(self):
+        return InlineKeyboardButton(
+            JUMP_ROOMS_TEXT, callback_data=self.return_cb_data("rooms")
+        )
+
     def footer_buttons(self, target, target_type):
         button_list = [
             self.back_button(target, target_type),
             self.close_button()
         ]
+
+        # Add Jump rooms button if target_type is device
+        if target_type == "device":
+            button_list.insert(0, [self.jump_rooms_button()])
 
         return button_list
 
@@ -66,7 +76,6 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
 
         keyboard = self.build_keyboard(button_list, cols=cols,
             footer_buttons=footer_buttons)
-
 
         markup = self.build_inline_keyboard_markup(keyboard)
 
