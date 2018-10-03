@@ -1,1 +1,2 @@
+-e vendor/python-broadlink
 python-telegram-bot==10.1.0

@@ -34,14 +34,6 @@ from iot.utils.keyboard.cmd_user import (
 
 logger = logging.getLogger(__name__)
 
-# TODO: send these to constructor instead
-BOT_ID: str = ""
-BOT_SECRET: str = ""
-
-ROOM_DEVICES_FILE_PATH: str = ""
-COMMANDS_FILE_PATH: str = ""
-USERS_FILE_PATH: str = ""
-
 
 KEYBOARD_HANDLER_NAME = "/keyboard"
 USER_HANDLER_NAME = "/user"
@@ -50,12 +42,19 @@ USER_HANDLER_NAME = "/user"
 class TelegramIOTServer:
 
     def __init__(self):
+        # Telegram Bot settings
+        self.bot_id = None
+        self.bot_secret = None
+        self.bot_name = None
+
         # Telegram
         self.updater: Updater = None
         self.dp = None
 
-        # Keyboard query handler
-        self.kb_handler = None
+        # JSON files path
+        self.devices_path = None
+        self.commands_path = None
+        self.users_path = None
 
         # Broadlink and Devices
         self.blackbean_devices = {}
@@ -64,15 +63,23 @@ class TelegramIOTServer:
         self.commands = {}
         self.approved_users = {}
 
-        # Keyboard handlers
+        # Keyboard query handlers
         self.kb_handlers = {}
 
+        # Others
         self.start_time: datetime = None
         self.last_command_handled = None
 
-    def start_server(self):
-        # TODO: It should discover and check against the mac address of the device
-        # hard code mac addr for now
+    def start_server(self, bot_id, bot_secret, bot_name,
+            devices_path, commands_path, users_path):
+        self.bot_id = bot_id
+        self.bot_secret = bot_secret
+        self.bot_name = bot_name
+
+        self.devices_path = devices_path
+        self.commands_path = commands_path
+        self.users_path = users_path
+
         self.discover_blackbean_device()
 
         self.reload_commands()
@@ -88,7 +95,7 @@ class TelegramIOTServer:
         self.init_telegram_server()
 
     def init_telegram_server(self):
-        token: str = '{}:{}'.format(BOT_ID, BOT_SECRET)
+        token: str = '{}:{}'.format(self.bot_id, self.bot_secret)
         self.updater = Updater(
             token,
             user_sig_handler=self.stop_server
@@ -117,7 +124,7 @@ class TelegramIOTServer:
         self.dp.add_handler(CommandHandler(
             "d", self.command_device, pass_args=True
         ))
-        #self.dp.add_handler(CommandHandler("debug", debug))
+
         self.add_conversations()
 
         self.dp.add_error_handler(self.error)
@@ -129,49 +136,60 @@ class TelegramIOTServer:
         self.updater.idle()
 
     def add_conversations(self):
-        # TODO: make a map and initalize it?
+        # TODO: make a map and initialize it?
         AddUserConversation(
             self, ["adduser"], ["canceladduser"]
         )
 
     def reload_rooms_and_devices(self):
-        with open(ROOM_DEVICES_FILE_PATH) as f:
-            try:
-                data: dict = json.load(f)
-            except (ValueError, TypeError) as e:
-                logger.error("Decoding devices json file failed: %s", e)
-                return
-            else:
-                for room_name, value in data.items():
-                    if room_name not in self.rooms:
-                        try:
-                            mac_address: str = value["mac_address"]
-                            blackbean_type: str = value["blackbean_type"]
-                            bb_device = self.find_blackbean_device(
-                                mac_address, blackbean_type
-                            )
+        try:
+            with open(self.devices_path) as f:
+                try:
+                    data: dict = json.load(f)
 
-                            if bb_device:
-                                r: Room = Room(room_name, bb_device)
-                                pop_device: List[BaseDevice] = r.populate_devices(
-                                    value.get("devices", []))
+                    if len(data) == 0:
+                        logger.warning(
+                            "Please add your rooms and devices to %s",
+                            self.devices_path
+                        )
+                        return
+                except (ValueError, TypeError) as e:
+                    logger.error("Decoding devices json file failed: %s", e)
+                    return
+                else:
+                    for room_name, value in data.items():
+                        if room_name not in self.rooms:
+                            try:
+                                mac_address: str = value["mac_address"]
+                                blackbean_type: str = value["blackbean_type"]
+                                bb_device = self.find_blackbean_device(
+                                    mac_address, blackbean_type
+                                )
 
-                                self.rooms[room_name] = r
+                                if bb_device:
+                                    r: Room = Room(room_name, bb_device)
+                                    pop_device: List[BaseDevice] = r.populate_devices(
+                                        value.get("devices", []))
 
-                                for pd in pop_device:
-                                    commands: Dict = self.get_commands(
-                                        pd.device_type.value,
-                                        pd.brand,
-                                        pd.model
-                                    )
-                                    if commands:
-                                        pd.populate_device_commands(commands)
+                                    self.rooms[room_name] = r
 
-                                    self.devices[pd.id] = pd
+                                    for pd in pop_device:
+                                        commands: Dict = self.get_commands(
+                                            pd.device_type.value,
+                                            pd.brand,
+                                            pd.model
+                                        )
+                                        if commands:
+                                            pd.populate_device_commands(commands)
 
-                        except Exception as e:
-                            logger.error("Error While reloading rooms and devices: %s", e)
-                            continue
+                                        self.devices[pd.id] = pd
+
+                            except Exception as e:
+                                logger.error("Error While reloading rooms and devices: %s", e)
+                                continue
+        except FileNotFoundError as e:
+            logger.error("Devices file not found %s", self.devices_path)
+            raise e
 
     def find_blackbean_device(self, mac, bb_type):
             bb = self.blackbean_devices.get(mac)
@@ -190,14 +208,18 @@ class TelegramIOTServer:
             logger.info("Discovered %s device with %s mac", bb.type, mac)
 
     def reload_commands(self):
-        with open(COMMANDS_FILE_PATH) as f:
-            try:
-                data: dict = json.load(f)
-            except (ValueError, TypeError) as e:
-                logger.error("Decoding commands json file failed: %s", e)
-                return
-            else:
-                self.commands = data
+        try:
+            with open(self.commands_path) as f:
+                try:
+                    data: dict = json.load(f)
+                except (ValueError, TypeError) as e:
+                    logger.error("Decoding commands json file failed: %s", e)
+                    return
+                else:
+                    self.commands = data
+        except FileNotFoundError as e:
+            logger.error("Commands file not found %s", self.commands_path)
+            raise e
 
     def get_commands(self, device_type, brand, model) -> Dict[str, str]:
         # TODO: Search for model next time
@@ -214,19 +236,29 @@ class TelegramIOTServer:
             return {}
 
     def reload_users(self):
-        with open(USERS_FILE_PATH) as f:
-            try:
-                data: Dict[str, str] = json.load(f)
-            except (ValueError, TypeError) as e:
-                logger.error("Decoding users json file failed: %s", e)
-                return
-            else:
-                self.approved_users = data
+        try:
+            with open(self.users_path) as f:
+                try:
+                    data: Dict[str, str] = json.load(f)
+
+                    if len(data) == 0:
+                        logger.warning(
+                            "Please populate at least one user to %s",
+                            self.users_path
+                        )
+                except (ValueError, TypeError) as e:
+                    logger.error("Decoding users json file failed: %s", e)
+                    return
+                else:
+                    self.approved_users = data
+        except FileNotFoundError as e:
+            logger.error("Users file not found %s", self.users_path)
+            raise e
 
     def save_users(self):
-        logger.info("Saving approved users to %s", USERS_FILE_PATH)
+        logger.info("Saving approved users to %s", self.users_path)
 
-        with open(USERS_FILE_PATH, "w") as f:
+        with open(self.users_path, "w") as f:
             try:
                 json.dump(self.approved_users, f, indent=4, sort_keys=True)
             except Exception as e:
@@ -263,7 +295,9 @@ class TelegramIOTServer:
     @valid_user
     def command_start(self, bot, update):
         """Send a message when the command `/start` is issued."""
-        update.message.reply_markdown(constants.START_MESSAGE)
+        update.message.reply_markdown(
+            constants.START_MESSAGE.format(self.bot_name)
+        )
 
     def command_ping(self, bot, update):
         """Sends message `pong` and user's id, name"""
@@ -275,16 +309,6 @@ class TelegramIOTServer:
     @valid_user
     def command_status(self, bot, update):
         """Sends server status back"""
-        print(datetime.now() - self.start_time)
-        print(self.blackbean_devices)
-        print(self.rooms)
-        print(self.devices)
-        #print(self.commands)
-        # print(self.rooms["office"].room_info())
-        # print(self.rooms["bedroom"].room_info())
-        # self.blackbean_devices["780f771a192e"].send_data(
-        #     bytearray.fromhex(''.join("26006c000f0717120707080d0613070d0707080805140613070d071306080709041a060e06000b820f06070905150608050f0713060e060805230713060e061307070529070d07000b810f06070905150607070e0713060e0607070805150713060e061307060709051a070d07000d05000000000000000000000000"))
-        # )
         server_info = constants.STATUS_MESSAGE.format(
             str(datetime.now()).split(".")[0],
             self.uptime,
@@ -299,6 +323,13 @@ class TelegramIOTServer:
 
     @valid_user
     def command_list(self, bot, update):
+        """Sends list of blackbean devices, rooms and devices in room"""
+        if len(self.rooms) == 0:
+            update.message.reply_markdown(
+                constants.NO_ROOM_MESSAGE.format(self.devices_path)
+            )
+            return
+
         rooms_info = [str(r.room_list_info()) for r in self.rooms.values()]
 
         update.message.reply_markdown(constants.LIST_MESSAGE.format(
@@ -308,6 +339,13 @@ class TelegramIOTServer:
     @valid_user
     @valid_device_or_room(compulsory=False)
     def command_keyboard(self, bot, update, *args, **kwargs):
+        """Sends Inline keyboard to access rooms and devices"""
+        if len(self.rooms) == 0:
+            update.message.reply_markdown(
+                constants.NO_ROOM_MESSAGE.format(self.devices_path)
+            )
+            return
+
         handler = self.kb_handlers[KEYBOARD_HANDLER_NAME]
 
         # By default, reply markup will be rooms keyboard
@@ -329,6 +367,7 @@ class TelegramIOTServer:
 
     @valid_user
     def command_user(self, bot, update, *args, **kwargs):
+        """Sends inline keyboard to view approved users"""
         handler = self.kb_handlers[USER_HANDLER_NAME]
 
         reply_markup = handler.build_users_keyboard()
