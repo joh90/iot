@@ -44,6 +44,8 @@ Blackbean:
 {}
 '''
 
+NO_ROOM_MESSAGE = 'Please add your room(s) and device(s) to *{}*'
+
 LIST_MESSAGE = '''
 Rooms:
 {}
