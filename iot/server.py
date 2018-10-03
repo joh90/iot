@@ -323,6 +323,13 @@ class TelegramIOTServer:
 
     @valid_user
     def command_list(self, bot, update):
+        """Sends list of blackbean devices, rooms and devices in room"""
+        if len(self.rooms) == 0:
+            update.message.reply_markdown(
+                constants.NO_ROOM_MESSAGE.format(self.devices_path)
+            )
+            return
+
         rooms_info = [str(r.room_list_info()) for r in self.rooms.values()]
 
         update.message.reply_markdown(constants.LIST_MESSAGE.format(
@@ -332,6 +339,13 @@ class TelegramIOTServer:
     @valid_user
     @valid_device_or_room(compulsory=False)
     def command_keyboard(self, bot, update, *args, **kwargs):
+        """Sends Inline keyboard to access rooms and devices"""
+        if len(self.rooms) == 0:
+            update.message.reply_markdown(
+                constants.NO_ROOM_MESSAGE.format(self.devices_path)
+            )
+            return
+
         handler = self.kb_handlers[KEYBOARD_HANDLER_NAME]
 
         # By default, reply markup will be rooms keyboard
@@ -353,6 +367,7 @@ class TelegramIOTServer:
 
     @valid_user
     def command_user(self, bot, update, *args, **kwargs):
+        """Sends inline keyboard to view approved users"""
         handler = self.kb_handlers[USER_HANDLER_NAME]
 
         reply_markup = handler.build_users_keyboard()
