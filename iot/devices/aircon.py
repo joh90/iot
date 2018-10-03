@@ -80,7 +80,7 @@ class BaseAircon(BaseDevice, AirconKeyboardInterface):
 
     def powerful(self):
         key = "powerful"
-        self.set_action(key)
+        self.fire_action(key)
 
     def temp_up(self):
         raise NotImplementedError

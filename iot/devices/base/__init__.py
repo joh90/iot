@@ -39,30 +39,30 @@ class BaseDevice(BaseDeviceKeyboardInterface):
     def populate_device_commands(self, commands):
         self.commands = commands
 
-    def update_last_action(self, action):
-        device_action = ' '.join((self.id, action,))
+    def update_last_action(self, key):
+        device_action = ' '.join((self.id, key,))
         self.last_action = device_action
         self.room.last_action = device_action
 
-    def get_command(self, action):
-        if action not in self.commands:
+    def get_command(self, key):
+        if key not in self.commands:
             raise CommandNotFound
 
-        return self.commands.get(action)
+        return self.commands.get(key)
 
     def power_on(self):
         key = "power_on"
-        self.set_action(key)
+        self.fire_action(key)
 
     def power_off(self):
         key = "power_off"
-        self.set_action(key)
+        self.fire_action(key)
 
-    def set_action(self, action):
-        command = self.get_command(action)
+    def fire_action(self, key):
+        command = self.get_command(key)
         if command:
             self.room.send(command)
-            self.update_last_action(action)
+            self.update_last_action(key)
 
     def return_state(self):
         raise NotImplementedError
