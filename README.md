@@ -26,6 +26,7 @@ Control your home/office devices with Telegram
 - [Screenshots](#screenshots)
 - [Videos](#videos)
 - [Future features / Improvements](#future)
+- [Project Limitation](#limitation)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -46,6 +47,7 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 # Requirements
 ### Requirements
 * Python 3.7
+* [Python Telegram Bot](https://python-telegram-bot.org/)
 * [Python-Broadlink](https://github.com/mjg59/python-broadlink)
 * Supported Broadlink Devices
 	* [RM2](http://www.ibroadlink.com/rmMini3/)
@@ -64,6 +66,23 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 1. Type `/help` for commands
 1. Key in `/newbot` and save your bot id and secret
 ![Example snippet from Botfather](docs/screenshots/botfather_id_secret.jpg)
+
+* Populate shortcut commands to your Telegram bot
+![Shortcut command button](docs/screenshots/shortcut_command_button.jpg)
+1. Find @BotFather in Telegram
+1. Type `/setcommands` in Telegram
+1. Paste the following text snippet to Telegram
+```
+start - list of general commands
+ping - returns pong and your user info
+status - returns server information
+list - returns the list of rooms and devices commands
+keyboard - returns keyboard access to rooms commands
+user - returns list of approved users with delete option
+adduser - Add user conversation (provide both user id and username)
+```
+4. Success!, Botfather will notify `Success! Command list updated. /help`
+![After populating commands](docs/screenshots/shortcut_commands.jpg)
 
 ### Blackbean Devices
 #### RM3
@@ -85,6 +104,8 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 #### Rooms
 * To add a room, use the following JSON format and add it to `devices.json` file
 * Add the Blackbean device's MAC address that you are placing in the room
+(To get device's IP or MAC address, refer to [Learning Commands](#learning-commands))
+* MAC address value should be used from the device list from the app (without the colon `:`)
 
 eg. Adding Office
 ```
@@ -123,7 +144,7 @@ eg. Office's Aircon
 * Only Brand name is used, model is not used at the moment
 * Key value of Command interface name -> Command String (from bytearray)
 * All device's commands should have at least `power_on` and `power_off` key / value
-* Contribute to the project by committing your device's commands
+* Contribute to the project by committing your device's commands (`commands.json`)
 
 eg. Daikin Aircon commands
 ```
@@ -144,7 +165,7 @@ eg. Daikin Aircon commands
 * Server will validate both Telegram user's ID and Name
 * User will not be able to delete him/her self
 * Key value of Telegram User ID -> User Name
-* You have to add at least one user and add other users through the first user
+* We have to add at least one user and add other users through the first user
 
 eg. Add John's Telegram account with user ID 1234567 and username `John`
 ```
@@ -161,36 +182,134 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
 
 
 ### Learning Commands
-####
+#### Pre-requisites
+* Your various broadlink devices are configured and running in your network (Refer to [Blackbean Device](#blackbean-devices), for more details)
+* Completed Step 1-5 in [Run](#run)
+* Installed `python-broadlink` library as we will be using the `cli` commands [here](https://github.com/mjg59/python-broadlink/tree/master/cli)
+* Make sure you have your device(s) Type / IP / MAC Address
+* To retrieve device(s) IP / MAC address
+  1. Open `python` shell
+  1. Import python-broadlink library `import broadlink`
+  1. Discover all devices `devices = broadlink.discover(timeout=5)`
+  1. To get a list of discovered devices in the variable devices eg. `[<broadlink.rm at 0x45a62f0>]`
+  1. We need the device's type, host (IP), and MAC address information
+  1. Iterate all discovered devices print details
+  1. For learning use `for d in devices: print(d.type, d.host, "".join(format(x, '02x') for x in d.mac))`
+  1. To get human format use `for d in devices: print(d.type, d.host, "".join(format(x, '02x') for x in reversed(d.mac))))`
+  1. Save this information which will be used with the `cli` app
+* Note: This step is currently done manually on shell, the ideal future will be a conversation
+command in the app to **add / remove / edit** device commands
+
+#### Steps to learn IR command
+1. Make sure you have your device(s) Type / IP / MAC Address (refer to Pre-requisites for more details)
+1. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
+1. `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
+1. `cli` app will output `Learning...`. Your blackbean device should light indicator will light up as **white**
+![In Learning Mode](docs/screenshots/rm3_learning.jpg)
+1. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
+1. The `cli` app will print out the learned data, save this value in `commands.json` (See [Device's Commands](#device-commands) for more details on how to save learned command)
+1. To test learned data with `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
 
 
 ### Usage
 #### Controlling devices
+* Type `/keyboard` to begin
+* First menu is to select the room ![Select Room](docs/screenshots/keyboard_start.jpg)
+* After selecting the room, select the device in the room ![Select Device](docs/screenshots/keyboard_room_device.jpg)
+* The device's feature buttons will be shown ![Device feature buttons](docs/screenshots/keyboard_device_features.jpg)
+* On successful sent of the selected feature, the app will receive a feedback from the server
+* App ![App successful](docs/screenshots/keyboard_feature_query_alert_app.jpg)
+* Mobile ![Mobile successful](docs/screenshots/keyboard_feature_query_alert_mobile.jpg)
+* Use `Back` or `Jump to Rooms` button to go back to previous menu or jump to select room menu
+* To close, press the `Close` button and the menu keyboard will be closed ![Closed](docs/screenshots/keyboard_close.jpg)
+
 #### Add Users
+* Conversation Flow (Start conversation -> input user's user_id -> input user's username -> Successfully added user)
+* Type `/adduser` to begin
+* Input the user's user id (The user may use `/ping` to find out user id)
+* Input the user's user name
+* Success!
+* At any time if you wish to cancel adding user, you can type `/canceladduser` to cancel add user conversation
+* Type `/user` or `/status` to check which user(s) are approved
+![Add User Example conversation flow](docs/screenshots/add_user.jpg)
+
 #### Remove Users
+* Type `/user` to begin
+* Select `Delete User` next to the user you want to remove ![Remove User](docs/screenshots/remove_user.jpg)
+* Select `Yes` to confirm removal of the selected user or `No` to go back to user menu keyboard ![Confirmation of removal user](docs/screenshots/remove_user_yes_no.jpg)
+* On successful removal of selected user, the app will receive a feedback from the server stating the user's id and name that was removed
+![Remove success query alert](docs/screenshots/remove_successful_query_alert.jpg)
+* To close, press the `Close` button and the user menu keyboard will be closed
 
 
 # Run
-1. Virtualenv
-1. install
-1. install python-broadlink
-1. run! ```python main.py --bot_id <BOT_ID> --bot_secret <BOT_SECRET>```
+1. Clone the repository ()
+1. Install virtualenv and create virtualenv for the repository
+1. Go to folder `cd iot`
+1. Init submodules `git submodule init`
+1. Install requirements `pip install -r requirements.txt`
+1. Update `devices.json` with configuration
+1. Add your telegram user to `users.json`
+1. Run! ```python main.py --bot_id <BOT_ID> --bot_secret <BOT_SECRET> --name <Bot Name>```
+1. You can pass your own users and devices json file, `python main.py --help` for more details
+1. Find and add your bot to your Telegram
+1. Enjoy!
 
 
 # Screenshots
 ### Commands
 #### Start (/start)
+* Desktop App
+![Start Command](docs/screenshots/command_start.jpg)
+* Mobile App
+![Start Command, mobile app](docs/screenshots/command_start_mobile.jpg)
+
 #### Ping (/ping)
+* Desktop App
+![Ping Command](docs/screenshots/command_ping.jpg)
+
+* Mobile App
+![Ping Command, mobile](docs/screenshots/command_ping_mobile.jpg)
+
 #### Status (/status)
+* Desktop App
+![Status Command](docs/screenshots/command_status.jpg)
+
+* Mobile App
+![Status Command, mobile](docs/screenshots/command_status_mobile.jpg)
+
 #### List (/list)
+* Desktop App
+![List Command](docs/screenshots/command_list.jpg)
+
+* Mobile App
+![List Command, mobile](docs/screenshots/command_list_mobile.jpg)
+
 #### Keyboard (/keyboard)
+* Desktop App
+![Keyboard Command](docs/screenshots/keyboard_start.jpg)
+![Keyboard Room's device](docs/screenshots/keyboard_room_device.jpg)
+![Device's features](docs/screenshots/keyboard_device_features.jpg)
+
+* Mobile App
+![Keyboard Command, mobile](docs/screenshots/keyboard_start_mobile.jpg)
+![Keyboard Room's device, mobile](docs/screenshots/keyboard_room_device_mobile.jpg)
+![Device's features, mobile](docs/screenshots/keyboard_device_features_mobile.jpg)
+
 #### User (/user)
+* Desktop App
+![User Command](docs/screenshots/command_user.jpg)
+
+* Mobile App
+![User Command, mobile](docs/screenshots/command_user_mobile.jpg)
 
 
 # Videos
 ### Turning on/off Aircon
+**To be added**
 
 ### Turning on/off TV
+**To be added**
 
 
 # Future
@@ -203,9 +322,9 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
 ### Major Features
 - [ ] Room / User last command (with time)
 - [ ] Custom Macros
-- [ ] Favorite Keyboard, custom make your own keyboard view
+- [ ] Favorite Keyboard, custom make your own keyboard buttons
 - [ ] Room / Device CRUD (conversation style)
-- [ ] Learn device command (conversation style) (if device command cannot be found / convo command)
+- [ ] Learn device command (conversation style) (+ if device command cannot be found / convo command)
 - [ ] Set Top Box network provider channel bindings
 - [ ] Support TC2 light switches
 - [ ] Support Broadlink power strip
@@ -213,7 +332,23 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
 - [ ] Triggers with scheduler (on specific day / time of day / repeatable to do something)
 
 
-# Contributing
+# Limitation
+* You have to learn your own device's command if it is not available from the project
+* With IR devices, the server will not be able to know the current state, only last send commands
+* If the home / office's internet goes down, you will not be able to send command to your devices
+* If your computer / Raspberry-PI hosting the server dies / restart, you will not be able to send command to your devices
+* 2 devices in the same room may result in both devices receiving the IR commands sent from the server
 
+
+# Contributing
+* Fork the project
+* Create branch in your fork project (from master)
+* Make and test your changes
+* Commit to the branch you created (with meaningful commit messages)
+* From your fork project, create a pull request (with meaningful comments with purpose of the change)
+* Fix comments from reviewers (if any)
+* Admins will merge your pull request, when it has enough approval
+* Thanks for contributing!
 
 # License
+* To be added
