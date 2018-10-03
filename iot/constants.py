@@ -3,7 +3,7 @@
 ON_OFF = ("on", "off")
 
 START_MESSAGE = '''
-*Welcome to JoH IOT!*
+*Welcome to {}!*
 
 List of possible commands:
 /ping - returns pong and your user info
@@ -15,15 +15,6 @@ List of possible commands:
 /d <device> <feature> <action or empty> (eg. `/d aircon temp up`, `/d tv mute`)
 /user - returns list of approved users with delete option
 /adduser - Add user conversation (provide both user id and username)
-
-Future:
-/cm <custom-macro>
-/listtriggers
-/newtrigger
-/updatetrigger
-/deletetrigger
-/listhouse (hard, must be in same network)
-/switchhouse - prompts house? (hard, must be in same network)
 '''
 
 PONG_MESSAGE = '''
@@ -43,10 +34,6 @@ Room(s): {}
 Device(s): {}
 
 Approved Users: {}
-
-Future:
-Room's Last command handled
-Version
 '''
 
 ROOM_LIST_MESSAGE = '''
