@@ -1,38 +1,3 @@
 {
-	"office": {
-		"mac_address": "780f771a192e",
-		"blackbean_type": "RM2",
-		"devices": [
-			{
-				"type": 1,
-				"id": "office-aircon",
-				"brand": "daikin",
-				"model": "super-multi-nx"
-			},
-			{
-				"type": 2,
-				"id": "office-tv",
-				"brand": "panasonic",
-				"model": "th-42lf5"
-			},
-			{
-				"type": 3,
-				"id": "office-starhub",
-				"brand": "samsung",
-				"model": "gx-sh530cf"
-			}
-		]
-	},
-	"bedroom": {
-		"mac_address": "780f771a1926",
-		"blackbean_type": "RM2",
-		"devices": [
-			{
-				"type": 1,
-				"id": "bedroom-aircon",
-				"brand": "daikin",
-				"model": "super-multi-nx"
-			}
-		]
-	}
+
 }
