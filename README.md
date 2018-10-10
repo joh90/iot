@@ -226,9 +226,9 @@ command in the app to **add / remove / edit** device commands
 * The device's feature buttons will be shown ![Device feature buttons](docs/screenshots/keyboard_device_features.jpg)
 * On successful sent of the selected feature, the app will receive a feedback from the server
 * eg. App
-<img src="docs/screenshots/keyboard_feature_query_alert_app.jpg" width="728" height="424">
+* <img src="docs/screenshots/keyboard_feature_query_alert_app.jpg" width="728" height="424">
 * eg. Mobile
-<img src="docs/screenshots/keyboard_feature_query_alert_mobile.jpg" width="292" height="501">
+* <img src="docs/screenshots/keyboard_feature_query_alert_mobile.jpg" width="292" height="501">
 * Use `Back` or `Jump to Rooms` button to go back to previous menu or jump to select room menu
 * To close, press the `Close` button and the menu keyboard will be closed
 ![Closed](docs/screenshots/keyboard_close.jpg)
