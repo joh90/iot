@@ -1,7 +1,4 @@
-from iot.devices.errors import (
-    DeviceException, CommandNotFound,
-    BrandNotFound
-)
+from iot.devices.errors import CommandNotFound
 
 
 class BaseDeviceKeyboardInterface:
@@ -33,7 +30,7 @@ class BaseDevice(BaseDeviceKeyboardInterface):
         self.id = id
         self.brand = brand
         self.model = model
-        self.commmands = {}
+        self.commands = {}
         self.last_action = None
 
     def populate_device_commands(self, commands):

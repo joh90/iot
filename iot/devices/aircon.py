@@ -29,11 +29,15 @@ class AirconFactory:
         self.populate_mappings()
 
     def populate_mappings(self):
-        # TODO: Check if brand's class exist,
+        # TODO: Check if model's class exist,
         # if not just create default BaseAircon
         # class, in special cases we may need to overwrite or
-        # add certain methods for an aircon brand
+        # add certain methods for an aircon brand or
+        # at model level
         # Refer to http://www.diveintopython.net/file_handling/more_on_modules.html
+
+        # As of now, we can manually create the mapping,
+        # using a different brand name, see projector for example
 
         # Dynamically create aircon brand classes
         for brand in AirconBrands:
@@ -55,6 +59,7 @@ class AirconFactory:
 
 
 class AirconKeyboardInterface(BaseDeviceKeyboardInterface):
+
     def powerful(self):
         pass
 
