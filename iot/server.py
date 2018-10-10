@@ -15,7 +15,8 @@ from iot import constants
 from iot.conversations.cmd_adduser import AddUserConversation
 from iot.devices.base import BaseDevice
 from iot.devices.errors import (
-    CommandNotFound, InvalidArgument
+    CommandNotFound, InvalidArgument,
+    SendCommandError
 )
 from iot.rooms import Room
 from iot.utils import return_mac
@@ -450,6 +451,12 @@ class TelegramIOTServer:
             send_text(bot, update,
                 constants.DEVICE_COMMAND_NOT_IMPLEMENTED.format(
                     device.id, feature, action)
+            )
+        except SendCommandError as e:
+            send_text(bot, update,
+                constants.SEND_DEVICE_COMMAND_ERROR.format(
+                    device.id, feature, e
+                )
             )
         except (TypeError, InvalidArgument):
             send_text(bot, update, constants.ARGS_ERROR)

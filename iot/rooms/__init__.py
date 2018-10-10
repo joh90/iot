@@ -1,10 +1,17 @@
+import logging
+
 from iot.constants import ROOM_LIST_MESSAGE
 from iot.utils import return_mac
 
 from iot.devices import DeviceType
-from iot.devices.errors import DeviceTypeNotFound
+from iot.devices.errors import (
+    DeviceTypeNotFound, BrandNotFound,
+    SendCommandError
+)
 from iot.devices.factory import DeviceFactory
 
+
+logger = logging.getLogger(__name__)
 
 d_factory = DeviceFactory()
 
@@ -59,6 +66,13 @@ class Room:
                     populated.append(dev)
                 except DeviceTypeNotFound:
                     continue
+                except BrandNotFound:
+                    logger.error(
+                        "Room: %s, Unable to populate device %s, " \
+                        "Brand %s not found for Device Type %s",
+                        self.name, d["id"], d["brand"], d["type"]
+                    )
+                    continue
 
         return populated
 
@@ -77,6 +91,9 @@ class Room:
             self.send_blackbean_data(data)
 
     def send_blackbean_data(self, data):
-        self.blackbean.send_data(
-            self.convert_to_bytearray(data)
-        )
+        try:
+            self.blackbean.send_data(
+                self.convert_to_bytearray(data)
+            )
+        except Exception as e:
+            raise SendCommandError("{}: {}".format(e.__class__, e))
