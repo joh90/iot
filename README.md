@@ -128,6 +128,7 @@ eg. Adding Office
 | 1      | Air-con       |
 | 2      | TV            |
 | 3      | Set Top Box   |
+| 4      | Projector     |
 
 * Model is not used at the moment
 * Add to room's `devices` list

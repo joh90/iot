@@ -55,6 +55,7 @@ class TVFactory:
 
 
 class TVKeyboardInterface(MultimediaKeyboardInterface):
+
     def change_input(self):
         pass
 
