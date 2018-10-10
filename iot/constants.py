@@ -1,5 +1,4 @@
 
-
 ON_OFF = ("on", "off")
 
 START_MESSAGE = '''
@@ -69,6 +68,10 @@ Device *{}*'s feature or action not found, /list to list the device's feature / 
 
 DEVICE_COMMAND_NOT_IMPLEMENTED = '''
 Device *{}* *{}* *{}* command not implemented
+'''
+
+SEND_DEVICE_COMMAND_ERROR = '''
+Device {} {}, Error: {}
 '''
 
 USER_NOT_ALLOWED = '''

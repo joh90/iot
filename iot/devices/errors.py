@@ -22,5 +22,9 @@ class BrandNotFound(DeviceException):
     pass
 
 
+class SendCommandError(DeviceException):
+    pass
+
+
 class AirconException(DeviceException):
     pass
