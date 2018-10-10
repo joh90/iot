@@ -37,16 +37,16 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 
 ### Features
 * Supports various household appliances
-* Only Approved users can use the bot
+* Only approved users can use the bot
 * In-line keyboard menu to control your devices
 * Learn and add commands to JSON file for device's commands
 * Add / Delete users
-* Query Server's last handled request / command
+* Query server's last handled request / command
 
 
 # Requirements
 ### Requirements
-* Python 3.7
+* Python 3.3+
 * [Python Telegram Bot](https://python-telegram-bot.org/)
 * [Python-Broadlink](https://github.com/mjg59/python-broadlink)
 * Supported Broadlink Devices
@@ -89,20 +89,23 @@ adduser - Add user conversation (provide both user id and username)
 [Full Manual](http://download.appinthestore.com/201605/Broadlink%20IR%20Remote%20Controller%20Manual.pdf)
 
 * Unbox Device
-![RM3 unboxing](docs/screenshots/rm3.jpg)
+![RM3 unboxing](docs/screenshots/rm3.jpg =600x320)
 1. USB Cable, RM3 Device
 1. Connect RM3 device with power with USB cable
 
 * Install Mobile App and configure Blackbean device
-1. Install Broadlink's e-Control [Link](http://www.ibroadlink.com/app/)
-1. ![Press on '+' and then 'Add device'](docs/screenshots/app_1.jpg)
-1. ![Key in your Wifi's ssid and password and press 'Configure'](docs/screenshots/app_2.jpg)
+1. Install Broadlink's e-Control App [Link](http://www.ibroadlink.com/app/)
+1. Press on `+` and then `Add device`
+![Press on '+' and then 'Add device'](docs/screenshots/app_1.jpg =292x501)
+1. Key in your Wifi's ssid and password and press `Configure`
+![Configure Wifi](docs/screenshots/app_2.jpg =292x501)
 1. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
-![Device list](docs/screenshots/app_3.jpg)
+![Device list](docs/screenshots/app_3.jpg =292x501)
 
 ### Rooms Devices Commands
 #### Rooms
 * To add a room, use the following JSON format and add it to `devices.json` file
+* Supports one device per room only
 * Add the Blackbean device's MAC address that you are placing in the room
 (To get device's IP or MAC address, refer to [Learning Commands](#learning-commands))
 * MAC address value should be used from the device list from the app (without the colon `:`)
@@ -184,7 +187,7 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
 ### Learning Commands
 #### Pre-requisites
 * Your various broadlink devices are configured and running in your network (Refer to [Blackbean Device](#blackbean-devices), for more details)
-* Completed Step 1-5 in [Run](#run)
+* Completed Step 1-6 in [Run](#run)
 * Installed `python-broadlink` library as we will be using the `cli` commands [here](https://github.com/mjg59/python-broadlink/tree/master/cli)
 * Make sure you have your device(s) Type / IP / MAC Address
 * To retrieve device(s) IP / MAC address
@@ -205,7 +208,7 @@ command in the app to **add / remove / edit** device commands
 1. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
 1. `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
 1. `cli` app will output `Learning...`. Your blackbean device should light indicator will light up as **white**
-![In Learning Mode](docs/screenshots/rm3_learning.jpg)
+![In Learning Mode](docs/screenshots/rm3_learning.jpg =240x320)
 1. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
 1. The `cli` app will print out the learned data, save this value in `commands.json` (See [Device's Commands](#device-commands) for more details on how to save learned command)
 1. To test learned data with `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
@@ -218,10 +221,13 @@ command in the app to **add / remove / edit** device commands
 * After selecting the room, select the device in the room ![Select Device](docs/screenshots/keyboard_room_device.jpg)
 * The device's feature buttons will be shown ![Device feature buttons](docs/screenshots/keyboard_device_features.jpg)
 * On successful sent of the selected feature, the app will receive a feedback from the server
-* App ![App successful](docs/screenshots/keyboard_feature_query_alert_app.jpg)
-* Mobile ![Mobile successful](docs/screenshots/keyboard_feature_query_alert_mobile.jpg)
+* eg. App
+![App successful](docs/screenshots/keyboard_feature_query_alert_app.jpg =424x278)
+* eg. Mobile
+![Mobile successful](docs/screenshots/keyboard_feature_query_alert_mobile.jpg =292x501)
 * Use `Back` or `Jump to Rooms` button to go back to previous menu or jump to select room menu
-* To close, press the `Close` button and the menu keyboard will be closed ![Closed](docs/screenshots/keyboard_close.jpg)
+* To close, press the `Close` button and the menu keyboard will be closed
+![Closed](docs/screenshots/keyboard_close.jpg)
 
 #### Add Users
 * Conversation Flow (Start conversation -> input user's user_id -> input user's username -> Successfully added user)
@@ -235,7 +241,8 @@ command in the app to **add / remove / edit** device commands
 
 #### Remove Users
 * Type `/user` to begin
-* Select `Delete User` next to the user you want to remove ![Remove User](docs/screenshots/remove_user.jpg)
+* Select `Delete User` next to the user you want to remove
+![Remove User](docs/screenshots/remove_user.jpg)
 * Select `Yes` to confirm removal of the selected user or `No` to go back to user menu keyboard ![Confirmation of removal user](docs/screenshots/remove_user_yes_no.jpg)
 * On successful removal of selected user, the app will receive a feedback from the server stating the user's id and name that was removed
 ![Remove success query alert](docs/screenshots/remove_successful_query_alert.jpg)
@@ -243,13 +250,14 @@ command in the app to **add / remove / edit** device commands
 
 
 # Run
-1. Clone the repository ()
-1. Install virtualenv and create virtualenv for the repository
+1. Make sure you have Python 3.3++
+1. Clone or fork the repository (https://github.com/joh90/iot)
+1. Install virtualenv and create virtualenv for the repository (`python -m virtualenv .virtualenv`)
 1. Go to folder `cd iot`
 1. Init submodules `git submodule init`
 1. Install requirements `pip install -r requirements.txt`
 1. Update `devices.json` with configuration
-1. Add your telegram user to `users.json`
+1. Add your telegram user to `users.json` (Refer to [Users](#users))
 1. Run! ```python main.py --bot_id <BOT_ID> --bot_secret <BOT_SECRET> --name <Bot Name>```
 1. You can pass your own users and devices json file, `python main.py --help` for more details
 1. Find and add your bot to your Telegram
@@ -262,28 +270,25 @@ command in the app to **add / remove / edit** device commands
 * Desktop App
 ![Start Command](docs/screenshots/command_start.jpg)
 * Mobile App
-![Start Command, mobile app](docs/screenshots/command_start_mobile.jpg)
+![Start Command, mobile app](docs/screenshots/command_start_mobile.jpg =295x501)
 
 #### Ping (/ping)
 * Desktop App
 ![Ping Command](docs/screenshots/command_ping.jpg)
 
 * Mobile App
-![Ping Command, mobile](docs/screenshots/command_ping_mobile.jpg)
+![Ping Command, mobile](docs/screenshots/command_ping_mobile.jpg =295x501)
 
 #### Status (/status)
 * Desktop App
 ![Status Command](docs/screenshots/command_status.jpg)
 
 * Mobile App
-![Status Command, mobile](docs/screenshots/command_status_mobile.jpg)
+![Status Command, mobile](docs/screenshots/command_status_mobile.jpg =295x501)
 
 #### List (/list)
 * Desktop App
 ![List Command](docs/screenshots/command_list.jpg)
-
-* Mobile App
-![List Command, mobile](docs/screenshots/command_list_mobile.jpg)
 
 #### Keyboard (/keyboard)
 * Desktop App
@@ -292,16 +297,16 @@ command in the app to **add / remove / edit** device commands
 ![Device's features](docs/screenshots/keyboard_device_features.jpg)
 
 * Mobile App
-![Keyboard Command, mobile](docs/screenshots/keyboard_start_mobile.jpg)
-![Keyboard Room's device, mobile](docs/screenshots/keyboard_room_device_mobile.jpg)
-![Device's features, mobile](docs/screenshots/keyboard_device_features_mobile.jpg)
+![Keyboard Command, mobile](docs/screenshots/keyboard_start_mobile.jpg =295x501)
+![Keyboard Room's device, mobile](docs/screenshots/keyboard_room_device_mobile.jpg =295x501)
+![Device's features, mobile](docs/screenshots/keyboard_device_features_mobile.jpg =295x501)
 
 #### User (/user)
 * Desktop App
 ![User Command](docs/screenshots/command_user.jpg)
 
 * Mobile App
-![User Command, mobile](docs/screenshots/command_user_mobile.jpg)
+![User Command, mobile](docs/screenshots/command_user_mobile.jpg =295x501)
 
 
 # Videos
@@ -316,6 +321,7 @@ command in the app to **add / remove / edit** device commands
 ### Minor Improvements
 - [ ] Improve Room / Device listing
 - [ ] Use 2 columns if Inline Keyboard menu buttons are more than 8
+- [ ] On / Off device in room keyboard menu level
 - [ ] Sort device's feature with power on and off first
 - [ ] Send / Backup JSONs
 
@@ -327,6 +333,7 @@ command in the app to **add / remove / edit** device commands
 - [ ] Learn device command (conversation style) (+ if device command cannot be found / convo command)
 - [ ] Set Top Box network provider channel bindings
 - [ ] Support TC2 light switches
+- [ ] Support Multimedia device's menu into up / down / left / right keyboard
 - [ ] Support Broadlink power strip
 - [ ] Restart server
 - [ ] Triggers with scheduler (on specific day / time of day / repeatable to do something)
@@ -351,4 +358,8 @@ command in the app to **add / remove / edit** device commands
 * Thanks for contributing!
 
 # License
-* To be added
+* MIT License
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
