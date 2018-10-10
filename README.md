@@ -65,6 +65,7 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 1. Find @BotFather in Telegram
 1. Type `/help` for commands
 1. Key in `/newbot` and save your bot id and secret
+
 ![Example snippet from Botfather](docs/screenshots/botfather_id_secret.jpg)
 
 * Populate shortcut commands to your Telegram bot
@@ -89,18 +90,19 @@ adduser - Add user conversation (provide both user id and username)
 [Full Manual](http://download.appinthestore.com/201605/Broadlink%20IR%20Remote%20Controller%20Manual.pdf)
 
 * Unbox Device
-![RM3 unboxing](docs/screenshots/rm3.jpg =600x320)
+<img src="docs/screenshots/rm3.jpg" width="600" height="320">
+
 1. USB Cable, RM3 Device
 1. Connect RM3 device with power with USB cable
 
 * Install Mobile App and configure Blackbean device
 1. Install Broadlink's e-Control App [Link](http://www.ibroadlink.com/app/)
-1. Press on `+` and then `Add device`
-![Press on '+' and then 'Add device'](docs/screenshots/app_1.jpg =292x501)
-1. Key in your Wifi's ssid and password and press `Configure`
-![Configure Wifi](docs/screenshots/app_2.jpg =292x501)
-1. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
-![Device list](docs/screenshots/app_3.jpg =292x501)
+2. Press on `+` and then `Add device`
+<img src="docs/screenshots/app_1.jpg" width="292" height="501">
+3. Key in your Wifi's ssid and password and press `Configure`
+<img src="docs/screenshots/app_2.jpg" width="292" height="501">
+4. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
+<img src="docs/screenshots/app_3.jpg" width="292" height="501">
 
 ### Rooms Devices Commands
 #### Rooms
@@ -206,13 +208,14 @@ command in the app to **add / remove / edit** device commands
 
 #### Steps to learn IR command
 1. Make sure you have your device(s) Type / IP / MAC Address (refer to Pre-requisites for more details)
-1. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
-1. `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
-1. `cli` app will output `Learning...`. Your blackbean device should light indicator will light up as **white**
-![In Learning Mode](docs/screenshots/rm3_learning.jpg =240x320)
-1. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
-1. The `cli` app will print out the learned data, save this value in `commands.json` (See [Device's Commands](#device-commands) for more details on how to save learned command)
-1. To test learned data with `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
+2. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
+3. `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
+4. `cli` app will output `Learning...`. Your blackbean device should light indicator will light up as **white**
+<img src="docs/screenshots/rm3_learning.jpg" width="240" height="320">
+
+5. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
+6. The `cli` app will print out the learned data, save this value in `commands.json` (See [Device's Commands](#device-commands) for more details on how to save learned command)
+7. To test learned data with `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
 
 
 ### Usage
@@ -223,9 +226,9 @@ command in the app to **add / remove / edit** device commands
 * The device's feature buttons will be shown ![Device feature buttons](docs/screenshots/keyboard_device_features.jpg)
 * On successful sent of the selected feature, the app will receive a feedback from the server
 * eg. App
-![App successful](docs/screenshots/keyboard_feature_query_alert_app.jpg =424x278)
+<img src="docs/screenshots/keyboard_feature_query_alert_app.jpg" width="728" height="424">
 * eg. Mobile
-![Mobile successful](docs/screenshots/keyboard_feature_query_alert_mobile.jpg =292x501)
+<img src="docs/screenshots/keyboard_feature_query_alert_mobile.jpg" width="292" height="501">
 * Use `Back` or `Jump to Rooms` button to go back to previous menu or jump to select room menu
 * To close, press the `Close` button and the menu keyboard will be closed
 ![Closed](docs/screenshots/keyboard_close.jpg)
@@ -271,21 +274,21 @@ command in the app to **add / remove / edit** device commands
 * Desktop App
 ![Start Command](docs/screenshots/command_start.jpg)
 * Mobile App
-![Start Command, mobile app](docs/screenshots/command_start_mobile.jpg =295x501)
+<img src="docs/screenshots/command_start_mobile.jpg" width="292" height="501">
 
 #### Ping (/ping)
 * Desktop App
 ![Ping Command](docs/screenshots/command_ping.jpg)
 
 * Mobile App
-![Ping Command, mobile](docs/screenshots/command_ping_mobile.jpg =295x501)
+<img src="docs/screenshots/command_ping_mobile.jpg" width="292" height="501">
 
 #### Status (/status)
 * Desktop App
 ![Status Command](docs/screenshots/command_status.jpg)
 
 * Mobile App
-![Status Command, mobile](docs/screenshots/command_status_mobile.jpg =295x501)
+<img src="docs/screenshots/command_status_mobile.jpg" width="292" height="501">
 
 #### List (/list)
 * Desktop App
@@ -298,16 +301,16 @@ command in the app to **add / remove / edit** device commands
 ![Device's features](docs/screenshots/keyboard_device_features.jpg)
 
 * Mobile App
-![Keyboard Command, mobile](docs/screenshots/keyboard_start_mobile.jpg =295x501)
-![Keyboard Room's device, mobile](docs/screenshots/keyboard_room_device_mobile.jpg =295x501)
-![Device's features, mobile](docs/screenshots/keyboard_device_features_mobile.jpg =295x501)
+<img src="docs/screenshots/keyboard_start_mobile.jpg" width="292" height="501">
+<img src="docs/screenshots/keyboard_room_device_mobile.jpg" width="292" height="501">
+<img src="docs/screenshots/keyboard_device_features_mobile.jpg" width="292" height="501">
 
 #### User (/user)
 * Desktop App
 ![User Command](docs/screenshots/command_user.jpg)
 
 * Mobile App
-![User Command, mobile](docs/screenshots/command_user_mobile.jpg =295x501)
+<img src="docs/screenshots/command_user_mobile.jpg" width="292" height="501">
 
 
 # Videos
