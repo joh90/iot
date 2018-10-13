@@ -145,7 +145,16 @@ def valid_user(func):
 
             return func(server, bot, update, *args, **kwargs)
 
-        update.message.reply_text(USER_NOT_ALLOWED)
+        # Handle normal commands
+        if getattr(update, "message"):
+            update.message.reply_text(USER_NOT_ALLOWED)
+        # Handles Inline KB queries
+        elif getattr(update, "callback_query"):
+            query = update.callback_query
+            bot.edit_message_text(text=USER_NOT_ALLOWED,
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
+                reply_markup=None)
 
         return
 
