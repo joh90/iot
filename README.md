@@ -1,6 +1,6 @@
 # Telegram IOT Bot
-Python / Broadlink powered Telegram bot
-Control your home/office devices with Telegram
+* Python / Broadlink powered Telegram bot
+* Control your home/office devices with Telegram
 
 
 # Table of contents
