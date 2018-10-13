@@ -376,6 +376,7 @@ class TelegramIOTServer:
         update.message.reply_text(USER_TOP_MENU_TEXT,
             reply_markup=reply_markup)
 
+    @valid_user
     def handle_keyboard_response(self, bot, update):
         query = update.callback_query
         handler_name, internal_cb_data = query.data.split(" ", 1)
