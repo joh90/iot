@@ -46,7 +46,7 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 
 # Requirements
 ### Requirements
-* Python 3.3+
+* Python 3.6+
 * [Python Telegram Bot](https://python-telegram-bot.org/)
 * [Python-Broadlink](https://github.com/mjg59/python-broadlink)
 * Supported Broadlink Devices
@@ -190,7 +190,7 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
 ### Learning Commands
 #### Pre-requisites
 * Your various broadlink devices are configured and running in your network (Refer to [Blackbean Device](#blackbean-devices), for more details)
-* Completed Step 1-6 in [Run](#run)
+* Completed Step 1-9 in [Run](#run)
 * Installed `python-broadlink` library as we will be using the `cli` commands [here](https://github.com/mjg59/python-broadlink/tree/master/cli)
 * Make sure you have your device(s) Type / IP / MAC Address
 * To retrieve device(s) IP / MAC address
@@ -254,12 +254,15 @@ command in the app to **add / remove / edit** device commands
 
 
 # Run
-1. Make sure you have Python 3.3++
+1. Make sure you have Python 3.6++
 1. Clone or fork the repository (https://github.com/joh90/iot)
-1. Install virtualenv and create virtualenv for the repository (`python -m virtualenv .virtualenv`)
+1. Install virtualenv (`pip3 install virtualenv`) (https://docs.python-guide.org/dev/virtualenvs/)
+1. Create virtualenv for the repository (`python3 -m virtualenv <folder name>`)
+1. Activate your virtualenv (`source <folder name>/bin/activate`)
 1. Go to folder `cd iot`
-1. Init submodules `git submodule init`
-1. Install requirements `pip install -r requirements.txt`
+1. Init submodule `git submodule init`
+1. Update submodule `git submodule update`
+1. Install requirements `pip3 install -r requirements.txt` (this might take some time)
 1. Update `devices.json` with configuration
 1. Add your telegram user to `users.json` (Refer to [Users](#users))
 1. Run! ```python main.py --bot_id <BOT_ID> --bot_secret <BOT_SECRET> --name <Bot Name>```
