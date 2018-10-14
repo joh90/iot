@@ -136,8 +136,9 @@ def valid_user(func):
             user_id in server.approved_users and
             server.approved_users[user_id] == user_name
         ):
-            # Update server last command handled, other than status
-            if not func.__name__ == "command_status":
+            # Update server last command handled
+            # other than status and handling keyboard response
+            if not func.__name__ in ("command_status", "handle_keyboard_response"):
                 server.last_command_handled = (
                     func.__name__, args, kwargs,
                     str(datetime.now()).split(".")[0]
