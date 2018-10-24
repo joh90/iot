@@ -128,15 +128,12 @@ class EpsonEB(BaseProjector):
     def power_off(self):
         """
         To turn off, projector needs to be in "standby" prompt,
-        then send another power on/off command to turn it off
+        then send another "standby" command to turn it off
         """
-        cmd_to_send = []
+        command = self.get_command("standby")
 
-        for key in ('standby', 'power_on'):
-            command = self.get_command(key)
-            cmd_to_send.append(command)
+        for i in range(2):
+            self.room.send(command)
 
-        for cmd in cmd_to_send:
-            self.room.send(cmd)
             # Introduce delay so that the IR receiver can work
-            time.sleep(2.25)
+            time.sleep(2)
