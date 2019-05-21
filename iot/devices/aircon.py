@@ -60,6 +60,15 @@ class AirconFactory:
 
 class AirconKeyboardInterface(BaseDeviceKeyboardInterface):
 
+    def power_on_high(self):
+        pass
+
+    def power_on_low(self):
+        pass
+
+    def power_on_dry(self):
+        pass
+
     def powerful(self):
         pass
 
@@ -83,6 +92,18 @@ class BaseAircon(BaseDevice, AirconKeyboardInterface):
 
     device_type = DeviceType.AIRCON
 
+    def power_on_high(self):
+        key = "power_on_high"
+        self.fire_action(key)
+
+    def power_on_low(self):
+        key = "power_on_low"
+        self.fire_action(key)
+
+    def power_on_dry(self):
+        key = "power_on_dry"
+        self.fire_action(key)
+
     def powerful(self):
         key = "powerful"
         self.fire_action(key)
@@ -97,7 +118,9 @@ class BaseAircon(BaseDevice, AirconKeyboardInterface):
         raise NotImplementedError
 
     def toggle_fan(self):
-        raise NotImplementedError
+        key = "toggle_fan"
+        self.fire_action(key)
 
     def toggle_swing(self):
-        raise NotImplementedError
+        key = "toggle_swing"
+        self.fire_action(key)
