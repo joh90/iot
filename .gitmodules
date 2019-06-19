@@ -1,3 +1,0 @@
-[submodule "vendor/python-broadlink"]
-	path = vendor/python-broadlink
-	url = git@github.com:mjg59/python-broadlink.git

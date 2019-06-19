@@ -209,13 +209,13 @@ command in the app to **add / remove / edit** device commands
 #### Steps to learn IR command
 1. Make sure you have your device(s) Type / IP / MAC Address (refer to Pre-requisites for more details)
 2. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
-3. `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
+3. `python broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
 4. `cli` app will output `Learning...`. Your blackbean device should light indicator will light up as **white**
 <img src="docs/screenshots/rm3_learning.jpg" width="240" height="320">
 
 5. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
 6. The `cli` app will print out the learned data, save this value in `commands.json` (See [Device's Commands](#device-commands) for more details on how to save learned command)
-7. To test learned data with `./vendor/python-broadlink/cli/broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
+7. To test learned data with `python broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
 
 
 ### Usage
@@ -260,8 +260,6 @@ command in the app to **add / remove / edit** device commands
 1. Create virtualenv for the repository (`python3 -m virtualenv <folder name>`)
 1. Activate your virtualenv (`source <folder name>/bin/activate`)
 1. Go to folder `cd iot`
-1. Init submodule `git submodule init`
-1. Update submodule `git submodule update`
 1. Install requirements `pip3 install -r requirements.txt` (this might take some time)
 1. Update `devices.json` with configuration
 1. Add your telegram user to `users.json` (Refer to [Users](#users))

@@ -3,4 +3,3 @@ __pycache__/
 .virtualenv/
 .vscode/*
 *.code-workspace
-/python-broadlink
