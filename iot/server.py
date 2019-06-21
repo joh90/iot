@@ -59,7 +59,7 @@ class TelegramIOTServer:
         self.users_path = None
 
         # Broadlink and Devices
-        self.blackbean_devices = {}
+        self.broadlink_devices = {}
         self.rooms = {}
         self.devices = {}
         self.commands = {}
@@ -82,7 +82,7 @@ class TelegramIOTServer:
         self.commands_path = commands_path
         self.users_path = users_path
 
-        self.discover_blackbean_device()
+        self.discover_broadlink_device()
 
         self.reload_commands()
         self.reload_rooms_and_devices()
@@ -163,13 +163,13 @@ class TelegramIOTServer:
                         if room_name not in self.rooms:
                             try:
                                 mac_address: str = value["mac_address"]
-                                blackbean_type: str = value["blackbean_type"]
-                                bb_device = self.find_blackbean_device(
-                                    mac_address, blackbean_type
+                                broadlink_type: str = value["broadlink_type"]
+                                bl_device = self.find_broadlink_device(
+                                    mac_address, broadlink_type
                                 )
 
-                                if bb_device:
-                                    r: Room = Room(room_name, bb_device)
+                                if bl_device:
+                                    r: Room = Room(room_name, bl_device)
                                     pop_device: List[BaseDevice] = r.populate_devices(
                                         value.get("devices", []))
 
@@ -193,13 +193,13 @@ class TelegramIOTServer:
             logger.error("Devices file not found %s", self.devices_path)
             raise e
 
-    def find_blackbean_device(self, mac, bb_type):
-            bb = self.blackbean_devices.get(mac)
+    def find_broadlink_device(self, mac, bl_type):
+            bl = self.broadlink_devices.get(mac)
 
-            if bb and bb_type == bb.type:
-                return bb
+            if bl and bl_type == bl.type:
+                return bl
 
-    def discover_blackbean_device(self):
+    def discover_broadlink_device(self):
         # Temp Code for when running server
         # with multiple network interface
         # TODO: Remove this code as it should be added to
@@ -215,16 +215,16 @@ class TelegramIOTServer:
             s.close()
 
         logger.info("Local IP: %s", local_ip)
-        logger.info("Discovering Blackbean devices...")
-        bb_devices: list = broadlink.discover(
+        logger.info("Discovering broadlink devices...")
+        bl_devices: list = broadlink.discover(
             timeout=5, local_ip_address=local_ip
         )
 
-        for bb in bb_devices:
-            bb.auth()
-            mac = return_mac(bb.mac)
-            self.blackbean_devices[mac] = bb
-            logger.info("Discovered %s device with %s mac", bb.type, mac)
+        for bl in bl_devices:
+            bl.auth()
+            mac = return_mac(bl.mac)
+            self.broadlink_devices[mac] = bl
+            logger.info("Discovered %s device with %s mac", bl.type, mac)
 
     def reload_commands(self):
         try:
@@ -299,10 +299,10 @@ class TelegramIOTServer:
         return uptime
 
     @property
-    def blackbean_devices_info(self):
+    def broadlink_devices_info(self):
         all_bb_info = []
 
-        for bb in self.blackbean_devices.values():
+        for bb in self.broadlink_devices.values():
             bb_info = "Type: {}, IP: {}, Mac: {}".format(
                 bb.type, bb.host[0],
                 return_mac(bb.mac)
@@ -332,7 +332,7 @@ class TelegramIOTServer:
             str(datetime.now()).split(".")[0],
             self.uptime,
             self.last_command_handled,
-            self.blackbean_devices_info,
+            self.broadlink_devices_info,
             len(self.rooms),
             len(self.devices),
             ", ".join(self.approved_users.values())
@@ -342,7 +342,7 @@ class TelegramIOTServer:
 
     @valid_user
     def command_list(self, bot, update):
-        """Sends list of blackbean devices, rooms and devices in room"""
+        """Sends list of broadlink devices, rooms and devices in room"""
         if len(self.rooms) == 0:
             update.message.reply_markdown(
                 constants.NO_ROOM_MESSAGE.format(self.devices_path)

@@ -1,7 +1,7 @@
 {
 	"study": {
 		"mac_address": "780f771abcde",
-		"blackbean_type": "RM2",
+		"broadlink_type": "RM2",
 		"devices": [
 			{
 				"type": 1,
@@ -19,7 +19,7 @@
 	},
 	"living-room": {
 		"mac_address": "780f771aedcb",
-		"blackbean_type": "RM2",
+		"broadlink_type": "RM2",
 		"devices": [
 			{
 				"type": 2,
