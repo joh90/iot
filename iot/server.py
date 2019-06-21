@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import json
 import logging
+import socket
 
 from typing import Dict, List
 
@@ -199,8 +200,25 @@ class TelegramIOTServer:
                 return bb
 
     def discover_blackbean_device(self):
+        # Temp Code for when running server
+        # with multiple network interface
+        # TODO: Remove this code as it should be added to
+        # https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L66
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        try:
+            s.connect(('10.255.255.255', 1))
+            local_ip = s.getsockname()[0]
+        except:
+            local_ip = '127.0.0.1'
+        finally:
+            s.close()
+
+        logger.info("Local IP: %s", local_ip)
         logger.info("Discovering Blackbean devices...")
-        bb_devices: list = broadlink.discover(timeout=5)
+        bb_devices: list = broadlink.discover(
+            timeout=5, local_ip_address=local_ip
+        )
 
         for bb in bb_devices:
             bb.auth()
