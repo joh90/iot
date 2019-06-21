@@ -11,7 +11,7 @@ class BaseDeviceKeyboardInterface:
 
 class BaseDevice(BaseDeviceKeyboardInterface):
     """
-    All command methods will return payload for blackbean to send
+    All command methods will return payload for RM Device to send
 
     `room` - Room object
     `id` - User-define name

@@ -16,23 +16,28 @@ logger = logging.getLogger(__name__)
 d_factory = DeviceFactory()
 
 
-# We assume one blackbean per room for now
+# We assume one RM3 RM per room for now
 class Room:
 
-    __slots__ = ("name", "blackbean", "DEVICES", "last_action")
+    __slots__ = (
+        "name",
+        "rm",
+        "DEVICES",
+        "last_action"
+    )
 
-    def __init__(self, name, blackbean):
+    def __init__(self, name, rm):
         self.name = name
-        self.blackbean = blackbean
+        self.rm = rm
         self.DEVICES = {}
         self.last_action = None
 
     def room_info(self):
         return {
             "name": self.name,
-            "host": self.blackbean.host,
-            "mac": return_mac(self.blackbean.mac),
-            "type": self.blackbean.type,
+            "rm_host": self.rm.host,
+            "mac": return_mac(self.rm.mac),
+            "type": self.rm.type,
             "devices": self.DEVICES
         }
 
@@ -87,12 +92,12 @@ class Room:
 
     def send(self, data):
         # Check device type
-        if self.blackbean.type == "RM2":
-            self.send_blackbean_data(data)
+        if self.rm.type == "RM2":
+            self.send_rm_data(data)
 
-    def send_blackbean_data(self, data):
+    def send_rm_data(self, data):
         try:
-            self.blackbean.send_data(
+            self.rm.send_data(
                 self.convert_to_bytearray(data)
             )
         except Exception as e:

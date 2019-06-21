@@ -8,7 +8,7 @@
 - [Requirements](#requirements)
 - [Getting Started](#getting-started)
 	* [BotFather](#botfather)
-	* [Blackbean Device](#blackbean-devices)
+	* [Broadlink Device](#broadlink-devices)
 	  * [RM3](#rm3)
 	* [Rooms, Devices & Commands](#rooms-devices-commands)
 	  * [Rooms](#rooms)
@@ -85,7 +85,7 @@ adduser - Add user conversation (provide both user id and username)
 4. Success!, Botfather will notify `Success! Command list updated. /help`
 ![After populating commands](docs/screenshots/shortcut_commands.jpg)
 
-### Blackbean Devices
+### Broadlink Devices
 #### RM3
 [Full Manual](http://download.appinthestore.com/201605/Broadlink%20IR%20Remote%20Controller%20Manual.pdf)
 
@@ -95,7 +95,7 @@ adduser - Add user conversation (provide both user id and username)
 1. USB Cable, RM3 Device
 1. Connect RM3 device with power with USB cable
 
-* Install Mobile App and configure Blackbean device
+* Install Mobile App and configure RM3 Blackbean device
 1. Install Broadlink's e-Control App [Link](http://www.ibroadlink.com/app/)
 2. Press on `+` and then `Add device`
 <img src="docs/screenshots/app_1.jpg" width="292" height="501">
@@ -117,7 +117,7 @@ eg. Adding Office
 {
 	"office": {
 		"mac_address": "780f771abcde",
-		"blackbean_type": "RM2",
+		"broadlink_type": "RM2",
 		"devices": []
 	}
 }
@@ -189,7 +189,7 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
 
 ### Learning Commands
 #### Pre-requisites
-* Your various broadlink devices are configured and running in your network (Refer to [Blackbean Device](#blackbean-devices), for more details)
+* Your various broadlink devices are configured and running in your network (Refer to [Broadlink Device](#broadlink-devices), for more details)
 * Completed Step 1-9 in [Run](#run)
 * Installed `python-broadlink` library as we will be using the `cli` commands [here](https://github.com/mjg59/python-broadlink/tree/master/cli)
 * Make sure you have your device(s) Type / IP / MAC Address
@@ -210,7 +210,7 @@ command in the app to **add / remove / edit** device commands
 1. Make sure you have your device(s) Type / IP / MAC Address (refer to Pre-requisites for more details)
 2. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
 3. `python broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
-4. `cli` app will output `Learning...`. Your blackbean device should light indicator will light up as **white**
+4. `cli` app will output `Learning...`. Your RM3 Blackbean device should light indicator will light up as **white**
 <img src="docs/screenshots/rm3_learning.jpg" width="240" height="320">
 
 5. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
@@ -256,6 +256,7 @@ command in the app to **add / remove / edit** device commands
 # Run
 1. Make sure you have Python 3.6++
 1. Clone or fork the repository (https://github.com/joh90/iot)
+1. `sudo apt-get install build-essential libssl-dev libffi-dev python3.6-dev` for Debian / Ubuntu
 1. Install virtualenv (`pip3 install virtualenv`) (https://docs.python-guide.org/dev/virtualenvs/)
 1. Create virtualenv for the repository (`python3 -m virtualenv <folder name>`)
 1. Activate your virtualenv (`source <folder name>/bin/activate`)
