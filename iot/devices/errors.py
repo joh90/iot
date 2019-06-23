@@ -10,6 +10,11 @@ class CommandNotFound(DeviceException):
     pass
 
 
+class BroadlinkDeviceRequired(Exception):
+    """BaseBroadlinkDeviceRequire error"""
+    pass
+
+
 class InvalidArgument(DeviceException):
     pass
 
