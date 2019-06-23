@@ -26,7 +26,7 @@ Server Time: {}
 Server Uptime: {}
 Server last handled command: {}
 
-Blackbean Devices:
+Broadlink Devices:
 {}
 
 Room(s): {}
@@ -38,17 +38,31 @@ Approved Users: {}
 ROOM_LIST_MESSAGE = '''
 {}
 ====================================
-Blackbean:
+RM Device:
 {}
+
+Registered Device(s):
+{}
+
+Registered Broadlink Device(s):
 {}
 '''
 
 NO_ROOM_MESSAGE = 'Please add your room(s) and device(s) to *{}*'
 
+
 LIST_MESSAGE = '''
 Rooms:
 {}
 '''
+
+# LIST_MESSAGE = '''
+# Rooms:
+# {}
+# ====================================
+# Scheduled Jobs:
+# {}
+# '''
 
 DEVICE_NOT_FOUND = '''
 Device *{}* not found, /list to list the device id and try again

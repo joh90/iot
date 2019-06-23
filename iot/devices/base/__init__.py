@@ -1,4 +1,6 @@
-from iot.devices.errors import CommandNotFound
+from broadlink import device as broadlink_lib_device
+
+from iot.devices.errors import CommandNotFound, BroadlinkDeviceRequired
 
 
 class BaseDeviceKeyboardInterface:
@@ -63,3 +65,29 @@ class BaseDevice(BaseDeviceKeyboardInterface):
 
     def return_state(self):
         raise NotImplementedError
+
+
+class BaseBroadlinkDevice:
+    """
+    Keyboard interface defers from device to device
+
+    `room` - Room object
+    `id` - User-define name
+    """
+    __slots__ = (
+        "device_type", "room",
+        "id", "bl_device"
+    )
+
+    def __init__(self, room, id, bl_device):
+        if not (bl_device or isinstance(device, broadlink_lib_device)):
+            raise BroadlinkDeviceRequired(
+                "Unable to create new device, bl_device is None," \
+                "room: %s, id: %s",
+                room, id
+            )
+
+        self.bl_device = bl_device
+        self.room = room
+        self.id = id
+        self.device_type = self.bl_device.type

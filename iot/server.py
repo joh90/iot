@@ -162,16 +162,33 @@ class TelegramIOTServer:
                     for room_name, value in data.items():
                         if room_name not in self.rooms:
                             try:
-                                mac_address: str = value["mac_address"]
-                                broadlink_type: str = value["broadlink_type"]
-                                bl_device = self.find_broadlink_device(
-                                    mac_address, broadlink_type
-                                )
+                                rm_device = None
+                                to_populate_bl_device = False
 
-                                if bl_device:
-                                    r: Room = Room(room_name, bl_device)
+                                # Check for RM Device
+                                if all(
+                                    k in value for k in (
+                                        "mac_address",
+                                        "broadlink_type"
+                                    )
+                                ):
+                                    rm_mac_address: str = value["mac_address"]
+                                    rm_broadlink_type: str = value["broadlink_type"]
+                                    rm_device = self.find_broadlink_device(
+                                        rm_mac_address, rm_broadlink_type
+                                    )
+
+                                if 'broadlink_devices' in value.keys():
+                                    to_populate_bl_device = True
+
+                                if rm_device or to_populate_bl_device:
+                                    r: Room = Room(room_name, rm_device)
                                     pop_device: List[BaseDevice] = r.populate_devices(
                                         value.get("devices", []))
+
+                                    r.populate_broadlink_devices(
+                                        value.get("broadlink_devices", [])
+                                    )
 
                                     self.rooms[room_name] = r
 
@@ -488,4 +505,4 @@ class TelegramIOTServer:
         self.save_users()
 
 
-server: TelegramIOTServer = TelegramIOTServer()
+iot_server: TelegramIOTServer = TelegramIOTServer()

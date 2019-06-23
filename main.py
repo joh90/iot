@@ -40,8 +40,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    from iot.server import server
-    server.start_server(
+    from iot.server import iot_server
+    iot_server.start_server(
         args.bot_id, args.bot_secret, args.name,
         args.devices, args.commands, args.users
     )
