@@ -474,12 +474,16 @@ class TelegramIOTServer:
             new_args = (action,)
 
         try:
-            func(*new_args)
+            result = func(*new_args)
+            text = "Sent {} with {}".format(device.id, feature)
+
+            if isinstance(result, tuple):
+                text = result[1]
 
             if update.callback_query:
                 self.kb_handlers[handler_name].answer_query(
                     update.callback_query, bot,
-                    text="Sent {} with {}".format(device.id, feature)
+                    text=text
                 )
         except (NotImplementedError, CommandNotFound):
             action = '' if not action else action

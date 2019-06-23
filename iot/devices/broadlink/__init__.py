@@ -47,7 +47,7 @@ class SP2BroadlinkDeviceKeyboardInterface(BaseDeviceKeyboardInterface):
 
 
 class SP2BroadlinkDevice(BaseBroadlinkDevice):
-    
+
     def power_on(self):
         result = self.bl_device.set_power(True)
 
@@ -58,7 +58,7 @@ class SP2BroadlinkDevice(BaseBroadlinkDevice):
         result = self.bl_device.set_power(False)
 
         if result:
-            return True, "Turned OFF {}".format(self.id)
+            return False, "Turned OFF {}".format(self.id)
 
     def check_power_state(self):
         result = self.bl_device.check_power()

@@ -92,6 +92,11 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
         room = self.server.rooms[room]
 
         rooms_devices_data = dict((d, d) for d in room.DEVICES.keys())
+        rooms_broadlink_devices_data = dict(
+            (d, d) for d in room.BL_DEVICES.keys()
+        )
+
+        rooms_devices_data.update(rooms_broadlink_devices_data)
 
         markup = self.construct_keyboard_markup(
             rooms_devices_data, "rooms", "room")
