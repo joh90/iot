@@ -8,13 +8,16 @@
 - [Requirements](#requirements)
 - [Getting Started](#getting-started)
 	* [BotFather](#botfather)
-	* [Broadlink Device](#broadlink-devices)
+	* [Broadlink Devices](#broadlink-devices)
 	  * [RM3](#rm3)
+	  * [SP2](#sp2)
 	* [Rooms, Devices & Commands](#rooms-devices-commands)
 	  * [Rooms](#rooms)
 	  * [Devices](#devices)
 	    * [Type Enums](#type-enums)
 	  * [Device's Commands](#device-commands)
+	  * [Other Broadlink Devices](#other-broadlink-devices)
+	    * [Broadlink Types](#broadlink-types)
 	* [Users](#users)
 	* [Sample JSON](#sample-jsons)
 	* [Learning Commands](#learning-commands)
@@ -51,6 +54,7 @@ Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot
 * [Python-Broadlink](https://github.com/mjg59/python-broadlink)
 * Supported Broadlink Devices
 	* [RM2](http://www.ibroadlink.com/rmMini3/)
+	* [SP2](http://www.ibroadlink.com/)
 	* [TC2](http://www.ibroadlink.com/tc2/)
 	* [RMPro+](http://www.ibroadlink.com/rmPro+/)
 	* etc.
@@ -104,13 +108,32 @@ adduser - Add user conversation (provide both user id and username)
 4. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
 <img src="docs/screenshots/app_3.jpg" width="292" height="501">
 
+#### SP2
+[Full Manual](https://fccid.io/2AIWOSP2-US/User-Manual/User-Manual-3580152.pdf)
+
+* Unbox Device
+<img src="docs/screenshots/sp2.jpg" width="600" height="320">
+
+1. SP2 Smart Plug
+1. Plug SP2 into socket
+
+* Install Mobile App and configure SP2 device
+1. Install Broadlink's e-Control App [Link](http://www.ibroadlink.com/app/)
+2. Press on `+` and then `Add device`
+<img src="docs/screenshots/app_1.jpg" width="292" height="501">
+3. Key in your Wifi's ssid and password and press `Configure`
+<img src="docs/screenshots/app_2.jpg" width="292" height="501">
+4. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
+<img src="docs/screenshots/app_4.jpg" width="400" height="200">
+
 ### Rooms Devices Commands
 #### Rooms
 * To add a room, use the following JSON format and add it to `devices.json` file
-* Supports one device per room only
-* Add the Blackbean device's MAC address that you are placing in the room
+* Supports one RM device per room only
+* Add the RM Blackbean device's MAC address that you are placing in the room (for RM2)
 (To get device's IP or MAC address, refer to [Learning Commands](#learning-commands))
 * MAC address value should be used from the device list from the app (without the colon `:`)
+* See [Other Broadlink Devices](#other-broadlink-devices) for more details with adding other Broadlink devices
 
 eg. Adding Office
 ```
@@ -118,7 +141,8 @@ eg. Adding Office
 	"office": {
 		"mac_address": "780f771abcde",
 		"broadlink_type": "RM2",
-		"devices": []
+		"devices": [],
+		"broadlink_devices": []
 	}
 }
 ```
@@ -165,7 +189,28 @@ eg. Daikin Aircon commands
 }
 ```
 
+#### Other Broadlink Devices
+##### Broadlink Types
+| Types  | Devices       |
+| -------|:-------------:|
+| SP2    | Smart Plug    |
+
+* MP1 / MP2 / SP4 / RM4Mini / TC2 / TC3 / not supported yet
+* Supports multiple Broadlink devices in a room
+* Add to room's `broadlink_devices` list
+* To add Broadlink device(s) into a room, use the following JSON format
+
+eg. Office's Light with SP2
+```
+{
+	"id": "office-light",
+	"mac_address": "780f771888eg",
+	"broadlink_type": "SP2"
+}
+```
+
 * See [Sample JSONs](#sample-jsons) for more room and device examples
+
 
 ### Users
 * Server will validate both Telegram user's ID and Name
@@ -201,7 +246,7 @@ eg. Add John's Telegram account with user ID 1234567 and username `John`
   1. We need the device's type, host (IP), and MAC address information
   1. Iterate all discovered devices print details
   1. For learning use `for d in devices: print(d.type, d.host, "".join(format(x, '02x') for x in d.mac))`
-  1. To get human format use `for d in devices: print(d.type, d.host, "".join(format(x, '02x') for x in reversed(d.mac))))`
+  1. To get human format use `for d in devices: print(d.type, d.host, "".join(format(x, '02x') for x in reversed(d.mac)))`
   1. Save this information which will be used with the `cli` app
 * Note: This step is currently done manually on shell, the ideal future will be a conversation
 command in the app to **add / remove / edit** device commands
