@@ -190,7 +190,13 @@ class TelegramIOTServer:
                                         value.get("broadlink_devices", [])
                                     )
 
-                                    self.rooms[room_name] = r
+                                    # Only populate room if there are any
+                                    # normal / broadlink devices
+                                    if (
+                                        len(r.DEVICES) > 0 or
+                                        len(r.BL_DEVICES) > 0
+                                    ):
+                                        self.rooms[room_name] = r
 
                                     for pd in pop_device:
                                         commands: Dict = self.get_commands(

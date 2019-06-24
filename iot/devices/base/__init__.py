@@ -1,6 +1,7 @@
 from broadlink import device as broadlink_lib_device
 
 from iot.devices.errors import CommandNotFound, BroadlinkDeviceRequired
+from iot.utils import return_mac
 
 
 class BaseDeviceKeyboardInterface:
@@ -80,7 +81,7 @@ class BaseBroadlinkDevice:
     )
 
     def __init__(self, room, id, bl_device):
-        if not (bl_device or isinstance(device, broadlink_lib_device)):
+        if not (bl_device or isinstance(bl_device, broadlink_lib_device)):
             raise BroadlinkDeviceRequired(
                 "Unable to create new device, bl_device is None," \
                 "room: %s, id: %s",
@@ -90,4 +91,12 @@ class BaseBroadlinkDevice:
         self.bl_device = bl_device
         self.room = room
         self.id = id
-        self.device_type = self.bl_device.type
+        self.device_type = bl_device.type
+
+    @property
+    def ip(self):
+        return self.bl_device.host[0]
+
+    @property
+    def mac_address(self):
+        return return_mac(self.bl_device.mac)
