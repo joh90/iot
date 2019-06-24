@@ -15,6 +15,13 @@
 				"brand": "panasonic",
 				"model": "viera"
 			}
+		],
+		"broadlink_devices": [
+			{
+				"id": "study-table-light",
+				"mac_address": "780f77116def",
+				"broadlink_type": "SP2"
+			}
 		]
 	},
 	"living-room": {
@@ -26,6 +33,13 @@
 				"id": "living-tv",
 				"brand": "sony",
 				"model": "vega"
+			}
+		],
+		"broadlink_devices": [
+			{
+				"id": "table-light",
+				"mac_address": "780f77337adf",
+				"broadlink_type": "SP2"
 			}
 		]
 	}
