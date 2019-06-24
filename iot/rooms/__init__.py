@@ -53,14 +53,15 @@ class Room:
     def format_room_devices(self):
         room_devices = [
             "*{}* | Type: {}".format(d.id, DeviceType(d.device_type).name) \
-            for d in self.DEVICES
+            for d in self.DEVICES.values()
         ]
 
         return room_devices
 
     def format_room_bl_devices(self):
         room_bl_devices = [
-            "*{}* | Type: {}".format(d.id, d.device_type) \
+            "*{}* | Type: {} | IP: {} | Mac: {}".format(
+                d.id, d.device_type, d.ip, d.mac_address) \
             for d in self.BL_DEVICES.values()
         ]
 
@@ -113,8 +114,6 @@ class Room:
     def populate_broadlink_devices(self, devices):
         from iot.server import iot_server
 
-        #populated = []
-
         for d in devices:
             if d["id"] not in self.BL_DEVICES:
                 bl_device = iot_server.find_broadlink_device(
@@ -123,8 +122,8 @@ class Room:
                 if bl_device is None:
                     logger.error(
                         "Room: %s, Unable to populate Broadlink device %s, " \
-                        "Broadlink device not found for Device Type %s",
-                        self.name, d["id"], d["broadlink_type"]
+                        "Broadlink device %s not found with Device Type %s",
+                        self.name, d["id"], d["mac_address"], d["broadlink_type"]
                     )
                     continue
 
@@ -132,9 +131,9 @@ class Room:
                     dev = bl_d_factory.create_device(
                         d["broadlink_type"], self, d["id"], bl_device
                     )
+
                     self.add_broadlink_devices(dev.id, dev)
                     iot_server.devices[dev.id] = dev
-                    print(self.BL_DEVICES)
                 except DeviceTypeNotFound:
                     continue
 
