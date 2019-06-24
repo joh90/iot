@@ -5,7 +5,8 @@ from telegram import (
     InlineKeyboardButton
 )
 
-from iot.rooms import d_factory
+from iot.devices.base import BaseDevice, BaseBroadlinkDevice
+from iot.rooms import d_factory, bl_d_factory
 from iot.utils.keyboard.base import (
     CLOSE_INLINE_KEYBOARD_COMMAND,
     InlineKeyboardMixin,
@@ -106,7 +107,13 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
     def build_device_keyboard(self, device):
         device = self.server.devices[device]
 
-        device_interface = d_factory.get_device_type_interface(device.device_type)
+        if isinstance(device,BaseDevice):
+            factory_kls = d_factory
+        elif isinstance(device, BaseBroadlinkDevice):
+            factory_kls = bl_d_factory
+
+        device_interface = \
+            factory_kls.get_device_type_interface(device.device_type)
 
         command = "{} {}"
         interface_data = dict(
