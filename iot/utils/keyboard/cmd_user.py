@@ -114,9 +114,9 @@ class CommandUserCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin):
 
         return markup
 
-    def process_query(self, bot, update, internal_callback_data):
+    def process_query(self, update, context, internal_callback_data):
         query, query_data = super(CommandUserCBHandler, self).process_query(
-            bot, update, internal_callback_data)
+            update, context, internal_callback_data)
         query_data_length = len(query_data)
 
         # # Single length callback_data
@@ -124,13 +124,13 @@ class CommandUserCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin):
             query_data = query_data[0]
 
             if query_data in self.server.approved_users.keys():
-                self.handle_user(query, bot, update)
+                self.handle_user(query, update, context)
             elif query_data == ADD_USER_INLINE_KEYBOARD_COMMAND:
-                self.handle_add_user(query, bot, update)
+                self.handle_add_user(query, update, context)
             elif query_data == USERS_MENU:
-                self.top_menu(query, bot, update)
+                self.top_menu(query, update, context)
             elif query_data == CLOSE_INLINE_KEYBOARD_COMMAND:
-                self.handle_close(CLOSE_TEXT, query, bot, update)
+                self.handle_close(CLOSE_TEXT, query, update, context)
         # Actual user delete prompt and delete
         elif query_data_length == 2:
             action = query_data[0]
@@ -139,42 +139,42 @@ class CommandUserCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin):
             if action == PROMPT_DELETE:
                 deleter = str(update.effective_user.id)
                 if deleter == user_id:
-                    self.answer_query(query, bot, text=SELF_DELETE_RESPONSE_TEXT)
+                    self.answer_query(query, context, text=SELF_DELETE_RESPONSE_TEXT)
                     return
 
-                self.handle_delete_prompt(user_id, query, bot, update)
+                self.handle_delete_prompt(user_id, query, update, context)
             elif action == DELETE:
-                self.handle_delete_user(user_id, query, bot, update)
+                self.handle_delete_user(user_id, query, update, context)
 
-    def handle_user(self, query, bot, update):
+    def handle_user(self, query, update, context):
         # TODO: Future feature to list details for user
-        self.answer_query(query, bot, text=USER_FUTURE)
+        self.answer_query(query, context, text=USER_FUTURE)
 
-    def handle_add_user(self, query, bot, update):
-        bot.send_message(
+    def handle_add_user(self, query, update, context):
+        context.bot.send_message(
             chat_id=query.message.chat_id,
             text=ADD_USER_RESPONSE_TEXT
         )
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)
 
-    def top_menu(self, query, bot, update):
+    def top_menu(self, query, update, context):
         # To prevent "Message is not modified" from raising
         # as we should not be editing the message if it's in top menu
         if query.message.text == TOP_MENU_TEXT:
-            self.answer_query(query, bot, text="Already at top menu!")
+            self.answer_query(query, context, text="Already at top menu!")
             return
 
         reply_markup = self.build_users_keyboard()
 
-        bot.edit_message_text(text=TOP_MENU_TEXT,
+        context.bot.edit_message_text(text=TOP_MENU_TEXT,
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=reply_markup)
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)
 
-    def handle_delete_prompt(self, user_id, query, bot, update):
+    def handle_delete_prompt(self, user_id, query, update, context):
         # YES answer to delete the user
         yes_cb = "{} {}".format(DELETE, user_id)
         # NO answer will result back to top menu
@@ -184,23 +184,23 @@ class CommandUserCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin):
 
         user_name = self.server.approved_users[user_id]
 
-        bot.edit_message_text(text=DELETE_PROMPT_TEXT.format(user_name, user_id),
+        context.bot.edit_message_text(text=DELETE_PROMPT_TEXT.format(user_name, user_id),
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN)
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)
 
-    def handle_delete_user(self, user_id, query, bot, update):
+    def handle_delete_user(self, user_id, query, update, context):
         user_name = self.server.approved_users[user_id]
 
         del self.server.approved_users[user_id]
         logger.info("Deleted user from server %s %s", user_name, user_id)
 
-        self.answer_query(query, bot,
+        self.answer_query(query, context,
             text=DELETE_USER_RESPONSE_TEXT.format(user_name, user_id)
         )
 
         # Return to top menu
-        self.top_menu(query, bot, update)
+        self.top_menu(query, update, context)

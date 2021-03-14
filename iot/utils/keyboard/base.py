@@ -92,13 +92,13 @@ class InlineKeyboardMixin:
     def construct_keyboard_markup(self, options, *args, **kwargs):
         raise NotImplementedError
 
-    def handle_close(self, text, query, bot, update):
-        bot.edit_message_text(text=text,
+    def handle_close(self, text, query, update, context):
+        context.bot.edit_message_text(text=text,
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=None)
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)
 
 
 class KeyboardCallBackQueryHandler:
@@ -113,10 +113,10 @@ class KeyboardCallBackQueryHandler:
         """Always add handler_name before cb_data"""
         return "{} {}".format(self.handler_name, cb_data)
 
-    def answer_query(self, query, bot, text=None, alert=False):
-        bot.answer_callback_query(query.id, text=text, show_alert=alert)
+    def answer_query(self, query, context, text=None, alert=False):
+        context.bot.answer_callback_query(query.id, text=text, show_alert=alert)
 
-    def process_query(self, bot, update, internal_callback_data):
+    def process_query(self, update, context, internal_callback_data):
         query = update.callback_query
         logger.info(
             "CMD %s CB Handler: Handling '%s', Internal: %s",

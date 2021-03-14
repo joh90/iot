@@ -12,8 +12,8 @@ from iot.constants import (
 
 def valid_device(func):
     @wraps(func)
-    def wrapper(server, bot, update, *args, **kwargs):
-        device_id = "".join(kwargs.get("args"))
+    def wrapper(server, update, context, *args, **kwargs):
+        device_id = "".join(context.args)
 
         if device_id not in server.devices:
             update.message.reply_markdown(DEVICE_NOT_FOUND.format(device_id))
@@ -21,7 +21,7 @@ def valid_device(func):
 
         device = server.devices[device_id]
 
-        return func(server, bot, update, device, *args, **kwargs)
+        return func(server, update, context, device, *args, **kwargs)
 
     return wrapper
 
@@ -29,8 +29,8 @@ def valid_device(func):
 def valid_device_or_room(compulsory=True):
     def _inner(func, *args, **kwargs):
         @wraps(func)
-        def wrapper(server, bot, update, *args, **kwargs):
-            user_params = "".join(kwargs.get("args"))
+        def wrapper(server, update, context, *args, **kwargs):
+            user_params = "".join(context.args)
             room = None
             device = None
 
@@ -47,7 +47,7 @@ def valid_device_or_room(compulsory=True):
                     return
 
             return func(
-                server, bot, update,
+                server, update, context,
                 room=room, device=device, *args, **kwargs
             )
 
@@ -58,10 +58,8 @@ def valid_device_or_room(compulsory=True):
 
 def valid_device_feature(func):
     @wraps(func)
-    def wrapper(server, bot, update, *args, **kwargs):
-        # TODO: We can go ahead and check the device
-        # and send what is possible feature commands to send next time
-        user_params = kwargs.get("args")
+    def wrapper(server, update, context, *args, **kwargs):
+        user_params = context.args
 
         # device_id and at least one other params is sent
         if len(user_params) > 1:
@@ -82,7 +80,7 @@ def valid_device_feature(func):
 
                 if callable(getattr(device, potential_feature, None)):
                     return func(
-                        server, bot, update, device, potential_feature,
+                        server, update, context, device, potential_feature,
                         *args, **kwargs
                     )
 
@@ -100,7 +98,7 @@ def valid_device_feature(func):
                     return
 
                 return func(
-                    server, bot, update, device, feature,
+                    server, update, context, device, feature,
                     *args, **kwargs
                 )
 
@@ -114,7 +112,7 @@ def valid_device_feature(func):
                 action = None
 
             return func(
-                server, bot, update, device, feature,
+                server, update, context, device, feature,
                 action=action, *args, **kwargs
             )
 
@@ -127,7 +125,7 @@ def valid_device_feature(func):
 
 def valid_user(func):
     @wraps(func)
-    def wrapper(server, bot, update, *args, **kwargs):
+    def wrapper(server, update, context, *args, **kwargs):
         # We save the user_id as string in the json file
         user_id = str(update.effective_user.id)
         user_name = update.effective_user.username
@@ -144,7 +142,7 @@ def valid_user(func):
                     str(datetime.now()).split(".")[0]
                 )
 
-            return func(server, bot, update, *args, **kwargs)
+            return func(server, update, context, *args, **kwargs)
 
         # Handle normal commands
         if getattr(update, "message"):
@@ -152,7 +150,7 @@ def valid_user(func):
         # Handles Inline KB queries
         elif getattr(update, "callback_query"):
             query = update.callback_query
-            bot.edit_message_text(text=USER_NOT_ALLOWED,
+            context.bot.edit_message_text(text=USER_NOT_ALLOWED,
                 chat_id=query.message.chat_id,
                 message_id=query.message.message_id,
                 reply_markup=None)
@@ -164,7 +162,7 @@ def valid_user(func):
 
 def valid_user_conversation(func):
     @wraps(func)
-    def wrapper(conversation, bot, update, *args, **kwargs):
+    def wrapper(conversation, update, context, *args, **kwargs):
         server = conversation.server
 
         # We save the user_id as string in the json file
@@ -182,7 +180,7 @@ def valid_user_conversation(func):
                     str(datetime.now()).split(".")[0]
                 )
 
-            return func(conversation, bot, update, *args, **kwargs)
+            return func(conversation, update, context, *args, **kwargs)
 
         update.message.reply_text(USER_NOT_ALLOWED)
 
