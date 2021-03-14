@@ -264,17 +264,16 @@ class TelegramIOTServer:
             raise e
 
     def get_commands(self, device_type, brand, model) -> Dict[str, str]:
-        # TODO: Search for model next time
-
         # Always convert device_type to String,
         # as populated command dict key is in String
         device_type = str(device_type)
 
         try:
-            return self.commands[device_type][brand]
+            return self.commands[device_type][brand][model]
         except KeyError:
             logger.error("Command not found for %s-%s-%s",
                 device_type, brand, model)
+
             return {}
 
     def reload_users(self):
