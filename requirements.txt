@@ -1,4 +1,3 @@
 python-telegram-bot==10.1.0
-broadlink==0.11.1
-# Required by broadlink lib
-cryptography==2.6.1
+broadlink==0.17.0
+cryptography==3.2 # Required by broadlink lib
