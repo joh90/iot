@@ -27,7 +27,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--devices',
         default='devices.json',
-        help='Rooms & Devices JSON file path, defaults to `devices.json'
+        help='Rooms & Devices JSON file path, defaults to `devices.json`'
     )
     parser.add_argument('--commands',
         default='commands.json',
