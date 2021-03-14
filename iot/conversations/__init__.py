@@ -1,5 +1,6 @@
 from telegram.ext import (
-    CommandHandler, ConversationHandler
+    CommandHandler, ConversationHandler,
+    Filters, MessageHandler
 )
 
 
@@ -63,12 +64,12 @@ class BaseConversations:
             for command in self.fallback_cmd
         ]
 
-    def start(self, bot, update, *args, **kwargs):
+    def start(self, update, context, *args, **kwargs):
         pass
 
-    def cancel(self, bot, update, *args, **kwargs):
+    def cancel(self, update, context, *args, **kwargs):
         pass
 
-    def end(self, bot, update, *args, **kwargs):
-        self.handler.update_state(
-            ConversationHandler.END, self.handler.current_conversation)
+    def end(self, update, context, *args, **kwargs):
+        check = self.handler.check_update(update)
+        self.handler.update_state(ConversationHandler.END, check[0])

@@ -76,7 +76,8 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
         footer_buttons = self.footer_buttons(back_target, target_type)
 
         keyboard = self.build_keyboard(button_list, cols=cols,
-            footer_buttons=footer_buttons)
+            footer_buttons=footer_buttons
+        )
 
         markup = self.build_inline_keyboard_markup(keyboard)
 
@@ -100,7 +101,8 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
         rooms_devices_data.update(rooms_broadlink_devices_data)
 
         markup = self.construct_keyboard_markup(
-            rooms_devices_data, "rooms", "room")
+            rooms_devices_data, "rooms", "room"
+        )
 
         return markup
 
@@ -127,9 +129,9 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
 
         return markup
 
-    def process_query(self, bot, update, internal_callback_data):
+    def process_query(self, update, context, internal_callback_data):
         query, query_data = super(CommandKeyboardCBHandler, self).process_query(
-            bot, update, internal_callback_data)
+            update, context, internal_callback_data)
         query_data_length = len(query_data)
 
         # Single length callback_data eg. room, tv
@@ -137,13 +139,13 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
             query_data = query_data[0]
 
             if query_data in self.server.rooms.keys():
-                self.handle_room(query_data, query, bot, update)
+                self.handle_room(query_data, query, update, context)
             elif query_data in self.server.devices.keys():
-                self.handle_device(query_data, query, bot, update)
+                self.handle_device(query_data, query, update, context)
             elif query_data == "rooms":
-                self.top_menu(query, bot, update)
+                self.top_menu(query, update, context)
             elif query_data == CLOSE_INLINE_KEYBOARD_COMMAND:
-                self.handle_close(CLOSE_TEXT, query, bot, update)
+                self.handle_close(CLOSE_TEXT, query, update, context)
         # Actual device feature command callback_data eg. aircon powerful
         elif query_data_length == 2:
             device_id = query_data[0]
@@ -153,7 +155,7 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
 
             # Call server call_device
             self.server.call_device(
-                bot, update, device, feature,
+                update, context, device, feature,
                 handler_name=self.handler_name
             )
             # Update server last command handled
@@ -162,38 +164,38 @@ class CommandKeyboardCBHandler(KeyboardCallBackQueryHandler, InlineKeyboardMixin
                 str(datetime.now()).split(".")[0]
             )
 
-    def handle_room(self, room_name, query, bot, update):
+    def handle_room(self, room_name, query, update, context):
         reply_markup = self.build_room_devices_keyboard(room_name)
 
-        bot.edit_message_text(text="Select {} device".format(room_name),
+        context.bot.edit_message_text(text="Select {} device".format(room_name),
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=reply_markup)
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)
 
-    def handle_device(self, device_id, query, bot, update):
+    def handle_device(self, device_id, query, update, context):
         reply_markup = self.build_device_keyboard(device_id)
 
-        bot.edit_message_text(text="Select {} feature".format(device_id),
+        context.bot.edit_message_text(text="Select {} feature".format(device_id),
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=reply_markup)
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)
 
-    def top_menu(self, query, bot, update):
+    def top_menu(self, query, update, context):
         # To prevent "Message is not modified" from raising
         # as we should not be editing the message if it's in top menu
         if query.message.text == "Select room":
-            self.answer_query(query, bot, text="Already at top menu!")
+            self.answer_query(query, context, text="Already at top menu!")
             return
 
         reply_markup = self.build_rooms_keyboard()
 
-        bot.edit_message_text(text="Select room",
+        context.bot.edit_message_text(text="Select room",
             chat_id=query.message.chat_id,
             message_id=query.message.message_id,
             reply_markup=reply_markup)
 
-        self.answer_query(query, bot)
+        self.answer_query(query, context)

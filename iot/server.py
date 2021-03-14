@@ -305,9 +305,9 @@ class TelegramIOTServer:
             except Exception as e:
                 logger.error("Error while saving users to json file: %s", e)
 
-    def error(self, bot, update, error):
+    def error(self, update, context):
         """Log Errors caused by Updates."""
-        logger.warning('Update "%s" caused error "%s"', update, error)
+        logger.warning('Update "%s" caused error "%s"', update, context.error)
 
     @property
     def uptime(self):
@@ -334,13 +334,13 @@ class TelegramIOTServer:
         return '\n'.join(all_bb_info)
 
     @valid_user
-    def command_start(self, bot, update):
+    def command_start(self, update, context):
         """Send a message when the command `/start` is issued."""
         update.message.reply_markdown(
             constants.START_MESSAGE.format(self.bot_name)
         )
 
-    def command_ping(self, bot, update):
+    def command_ping(self, update, context):
         """Sends message `pong` and user's id, name"""
         user = update.effective_user
         update.message.reply_markdown(constants.PONG_MESSAGE.format(
@@ -348,7 +348,7 @@ class TelegramIOTServer:
         ))
 
     @valid_user
-    def command_status(self, bot, update):
+    def command_status(self, update, context):
         """Sends server status back"""
         server_info = constants.STATUS_MESSAGE.format(
             str(datetime.now()).split(".")[0],
@@ -363,7 +363,7 @@ class TelegramIOTServer:
         update.message.reply_text(server_info)
 
     @valid_user
-    def command_list(self, bot, update):
+    def command_list(self, update, context):
         """Sends list of broadlink devices, rooms and devices in room"""
         if len(self.rooms) == 0:
             update.message.reply_markdown(
@@ -379,7 +379,7 @@ class TelegramIOTServer:
 
     @valid_user
     @valid_device_or_room(compulsory=False)
-    def command_keyboard(self, bot, update, *args, **kwargs):
+    def command_keyboard(self, update, context, *args, **kwargs):
         """Sends Inline keyboard to access rooms and devices"""
         if len(self.rooms) == 0:
             update.message.reply_markdown(
@@ -407,7 +407,7 @@ class TelegramIOTServer:
         update.message.reply_text(text, reply_markup=reply_markup)
 
     @valid_user
-    def command_user(self, bot, update, *args, **kwargs):
+    def command_user(self, update, context, *args, **kwargs):
         """Sends inline keyboard to view approved users"""
         handler = self.kb_handlers[USER_HANDLER_NAME]
 
@@ -417,13 +417,13 @@ class TelegramIOTServer:
             reply_markup=reply_markup)
 
     @valid_user
-    def handle_keyboard_response(self, bot, update):
+    def handle_keyboard_response(self, update, context):
         query = update.callback_query
         handler_name, internal_cb_data = query.data.split(" ", 1)
 
         if handler_name in self.kb_handlers.keys():
             self.kb_handlers[handler_name].process_query(
-                bot, update, internal_cb_data
+                update, context, internal_cb_data
             )
         else:
             logger.error(
@@ -433,19 +433,19 @@ class TelegramIOTServer:
 
     @valid_user
     @valid_device
-    def command_on(self, bot, update, device, *args, **kwargs):
+    def command_on(self, update, context, device, *args, **kwargs):
         """Turn ON targeted device if device id can be found"""
         device.power_on()
 
     @valid_user
     @valid_device
-    def command_off(self, bot, update, device, *args, **kwargs):
+    def command_off(self, update, context, device, *args, **kwargs):
         """Turn OFF targeted device if device id can be found"""
         device.power_off()
 
     @valid_user
     @valid_device_feature
-    def command_device(self, bot, update, device, feature,
+    def command_device(self, update, context, device, feature,
             action=None, *args, **kwargs
         ):
         """
@@ -453,19 +453,19 @@ class TelegramIOTServer:
         action can be found, passthrough function and call
         server's call_device method
         """
-        self.call_device(bot, update, device, feature,
+        self.call_device(update, context, device, feature,
             action=action, *args, **kwargs)
 
-    def call_device(self, bot, update, device, feature,
+    def call_device(self, update, context, device, feature,
             action=None, handler_name=None, *args, **kwargs):
         """
         Call specified device's feature and action,
         if it can be found
         """
-        def send_text(bot, update, message):
+        def send_text(update, context, message):
             if update.callback_query:
                 self.kb_handlers[handler_name].answer_query(
-                    update.callback_query, bot,
+                    update.callback_query, context,
                     text=message
                 )
             else:
@@ -487,24 +487,24 @@ class TelegramIOTServer:
 
             if update.callback_query:
                 self.kb_handlers[handler_name].answer_query(
-                    update.callback_query, bot,
+                    update.callback_query, context,
                     text=text
                 )
         except (NotImplementedError, CommandNotFound):
             action = '' if not action else action
 
-            send_text(bot, update,
+            send_text(update, context,
                 constants.DEVICE_COMMAND_NOT_IMPLEMENTED.format(
                     device.id, feature, action)
             )
         except SendCommandError as e:
-            send_text(bot, update,
+            send_text(update, context,
                 constants.SEND_DEVICE_COMMAND_ERROR.format(
                     device.id, feature, e
                 )
             )
         except (TypeError, InvalidArgument):
-            send_text(bot, update, constants.ARGS_ERROR)
+            send_text(update, context, constants.ARGS_ERROR)
 
     def stop_server(self, *args, **kwargs):
         logger.info("Telegram IOT Server stopping...")

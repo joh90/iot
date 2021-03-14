@@ -22,27 +22,26 @@ CANCEL_TEXT = "Cancelled /adduser conversation"
 class AddUserConversation(BaseConversations):
 
     USER_ID, USER_NAME = range(2)
-    state_range = [USER_ID, USER_NAME]
 
     def set_states(self):
         self.states = {
             self.USER_ID: [MessageHandler(
-                Filters.text, self.add_user_id,
+                Filters.text & ~Filters.command, self.add_user_id,
                 pass_user_data=True
             )],
             self.USER_NAME: [MessageHandler(
-                Filters.text, self.add_user_name,
+                Filters.text & ~Filters.command, self.add_user_name,
                 pass_user_data=True
             )],
         }
 
     @valid_user_conversation
-    def start(self, bot, update):
+    def start(self, update, context):
         update.message.reply_text(START_TEXT)
 
         return self.USER_ID
 
-    def add_user_id(self, bot, update, *args, **kwargs):
+    def add_user_id(self, update, context, *args, **kwargs):
         user_id = update.message.text
 
         # Test if user_id can be casted to integer
@@ -56,38 +55,36 @@ class AddUserConversation(BaseConversations):
             update.message.reply_text(USER_ID_EXISTS.format(user_id))
             return self.USER_ID
 
-        user_data = kwargs.pop("user_data", dict)
-
+        user_data = context.user_data
         user_data["add_user_id"] = user_id
 
         update.message.reply_text(USER_NAME_TEXT.format(user_id))
 
         return self.USER_NAME
 
-    def add_user_name(self, bot, update, *args, **kwargs):
-        user_data = kwargs.pop("user_data", None)
-        if not user_data:
+    def add_user_name(self, update, context, *args, **kwargs):
+        #user_data = kwargs.pop("user_data", None)
+        if not context.user_data:
             logger.error("No user_data in kwargs, unable to process")
-            self.end(bot, update)
+            self.end(update, context)
 
         user_name = update.message.text
-
-        add_user_id = user_data["add_user_id"]
+        add_user_id = context.user_data["add_user_id"]
 
         self.server.approved_users[add_user_id] = user_name
 
         logger.info("Adding user to server %s %s", user_name, add_user_id)
 
         # Remove `add_user_id` from user_data
-        user_data.clear()
+        context.user_data.clear()
 
         update.message.reply_markdown(
             ADDED_USER_TEXT.format(user_name, add_user_id)
         )
 
-        self.end(bot, update)
+        self.end(update, context)
 
     @valid_user_conversation
-    def cancel(self, bot, update):
+    def cancel(self, update, context):
         update.message.reply_text(CANCEL_TEXT)
-        self.end(bot, update)
+        self.end(update, context)
