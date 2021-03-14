@@ -145,7 +145,7 @@ class Room:
 
     def send(self, data):
         # Check device type
-        if self.rm and self.rm.type == "RM2":
+        if self.rm and self.rm.type == "RMMINI":
             self.send_rm_data(data)
 
     def send_rm_data(self, data):

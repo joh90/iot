@@ -1,7 +1,7 @@
 {
 	"study": {
 		"mac_address": "780f771abcde",
-		"broadlink_type": "RM2",
+		"broadlink_type": "RMMINI",
 		"devices": [
 			{
 				"type": 1,
@@ -26,7 +26,7 @@
 	},
 	"living-room": {
 		"mac_address": "780f771aedcb",
-		"broadlink_type": "RM2",
+		"broadlink_type": "RMMINI",
 		"devices": [
 			{
 				"type": 2,

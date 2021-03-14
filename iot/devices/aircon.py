@@ -109,10 +109,12 @@ class BaseAircon(BaseDevice, AirconKeyboardInterface):
         self.fire_action(key)
 
     def temp_up(self):
-        raise NotImplementedError
+        key = "temp_up"
+        self.fire_action(key)
 
     def temp_down(self):
-        raise NotImplementedError
+        key = "temp_down"
+        self.fire_action(key)
 
     def toggle_mode(self):
         raise NotImplementedError
