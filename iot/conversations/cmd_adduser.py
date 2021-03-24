@@ -63,7 +63,6 @@ class AddUserConversation(BaseConversations):
         return self.USER_NAME
 
     def add_user_name(self, update, context, *args, **kwargs):
-        #user_data = kwargs.pop("user_data", None)
         if not context.user_data:
             logger.error("No user_data in kwargs, unable to process")
             self.end(update, context)
