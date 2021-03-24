@@ -9,12 +9,6 @@ from iot.devices.errors import (
 )
 
 
-class BroadlinkDeviceTypes(Enum):
-
-    SP2 = type("SP2", (SP2BroadlinkDevice,), {})
-    SP4 = type("SP4", (SP4BroadlinkDevice,), {})
-
-
 class BroadlinkDeviceFactory:
 
     __slots__ = ("device_mappings", "interface_mappings",)
@@ -126,3 +120,9 @@ class SP4BroadlinkDevice(SP2BroadlinkDevice):
         if isinstance(result, bool):
             state = "ON" if result else "OFF"
             return result, "{} is {}".format(self.id, state)
+
+
+class BroadlinkDeviceTypes(Enum):
+
+    SP2 = type("SP2", (SP2BroadlinkDevice,), {})
+    SP4 = type("SP4", (SP4BroadlinkDevice,), {})
