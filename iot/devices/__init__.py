@@ -6,3 +6,4 @@ class DeviceType(IntEnum):
     TV = 2
     SET_TOP_BOX = 3
     PROJECTOR = 4
+    AMPLIFIER = 5

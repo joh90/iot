@@ -2,6 +2,7 @@ import logging
 
 from iot.devices import DeviceType
 from iot.devices.aircon import AirconFactory, AirconKeyboardInterface
+from iot.devices.amplifier import AmplifierFactory, AmplifierKeyboardInterface
 from iot.devices.errors import DeviceTypeNotFound
 from iot.devices.projector import ProjectorFactory, ProjectorKeyboardInterface
 from iot.devices.set_top_box import SetTopBoxFactory, SetTopBoxKeyboardInterface
@@ -21,7 +22,8 @@ class DeviceFactory:
             DeviceType.AIRCON: AirconFactory(),
             DeviceType.TV: TVFactory(),
             DeviceType.SET_TOP_BOX: SetTopBoxFactory(),
-            DeviceType.PROJECTOR: ProjectorFactory()
+            DeviceType.PROJECTOR: ProjectorFactory(),
+            DeviceType.AMPLIFIER: AmplifierFactory(),
         }
 
         self.interface_mappings = {
@@ -29,6 +31,7 @@ class DeviceFactory:
             DeviceType.TV: TVKeyboardInterface,
             DeviceType.SET_TOP_BOX: SetTopBoxKeyboardInterface,
             DeviceType.PROJECTOR: ProjectorKeyboardInterface,
+            DeviceType.AMPLIFIER: AmplifierKeyboardInterface,
         }
 
     def get_device_type_factory(self, device_type):

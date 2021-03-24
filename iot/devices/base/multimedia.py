@@ -30,6 +30,9 @@ class MultimediaKeyboardInterface(BaseDeviceKeyboardInterface):
     # def enter(self):
     #     pass
 
+    # def back(self):
+    #     pass
+
     # def up(self):
     #     pass
 
@@ -79,6 +82,10 @@ class MultimediaDevice(BaseDevice, MultimediaKeyboardInterface):
 
     def enter(self):
         key = "enter"
+        self.fire_action(key)
+
+    def back(self):
+        key = "back"
         self.fire_action(key)
 
     def up(self):

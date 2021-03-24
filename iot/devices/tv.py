@@ -59,6 +59,12 @@ class TVKeyboardInterface(MultimediaKeyboardInterface):
     def change_input(self):
         pass
 
+    def home(self):
+        pass
+
+    def netflix(self):
+        pass
+
 
 class BaseTV(MultimediaDevice, TVKeyboardInterface):
 
@@ -71,3 +77,11 @@ class BaseTV(MultimediaDevice, TVKeyboardInterface):
         # TODO: Take from Set Top Box, or migrate
         # code from set top box to multimedia device base class
         raise NotImplementedError
+
+    def home(self):
+        key = "home"
+        self.fire_action(key)
+
+    def netflix(self):
+        key = "netflix"
+        self.fire_action(key)
