@@ -9,6 +9,12 @@ from iot.devices.errors import (
 )
 
 
+class BroadlinkDeviceTypes(Enum):
+
+    SP2 = type("SP2", (SP2BroadlinkDevice,), {})
+    SP4 = type("SP4", (SP4BroadlinkDevice,), {})
+
+
 class BroadlinkDeviceFactory:
 
     __slots__ = ("device_mappings", "interface_mappings",)
@@ -17,6 +23,7 @@ class BroadlinkDeviceFactory:
         self.device_mappings = {}
         self.interface_mappings = {
             BroadlinkDeviceTypes.SP2.name: SP2BroadlinkDeviceKeyboardInterface,
+            BroadlinkDeviceTypes.SP4.name: SP4BroadlinkDeviceKeyboardInterface,
         }
         self.populate_mappings()
 
@@ -58,6 +65,18 @@ class SP2BroadlinkDeviceKeyboardInterface(BaseDeviceKeyboardInterface):
         pass
 
 
+class SP4BroadlinkDeviceKeyboardInterface(SP2BroadlinkDeviceKeyboardInterface):
+
+    def check_nightlight_state(self):
+        pass
+
+    def nightlight_on(self):
+        pass
+
+    def nightlight_off(self):
+        pass
+
+
 class SP2BroadlinkDevice(BaseBroadlinkDevice):
 
     def power_on(self):
@@ -85,6 +104,25 @@ class SP2BroadlinkDevice(BaseBroadlinkDevice):
         raise NotImplementedError
 
 
-class BroadlinkDeviceTypes(Enum):
+class SP4BroadlinkDevice(SP2BroadlinkDevice):
 
-    SP2 = type("SP2", (SP2BroadlinkDevice,), {})
+    def nightlight_on(self):
+        self.bl_device.set_nightlight(True)
+        result, _ = self.check_nightlight_state()
+
+        if result is True:
+            return True, "Turned ON {}".format(self.id)
+
+    def nightlight_off(self):
+        self.bl_device.set_nightlight(False)
+        result, _ = self.check_nightlight_state()
+
+        if result is False:
+            return False, "Turned OFF {}".format(self.id)
+
+    def check_nightlight_state(self):
+        result = self.bl_device.check_nightlight()
+
+        if isinstance(result, bool):
+            state = "ON" if result else "OFF"
+            return result, "{} is {}".format(self.id, state)
