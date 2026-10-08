@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import CallbackQuery, InaccessibleMessage, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from iotbot.bot import keyboards as kb
@@ -19,6 +19,7 @@ from iotbot.bot.callbacks import decode
 from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup
 from iotbot.context import AppContext
 from iotbot.result import Actor, Result, Surface
+from iotbot.services.users import parse_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,39 @@ def restricted(func: Handler) -> Handler:
     return wrapper
 
 
+MAX_TEXT = 4000  # Telegram limit is 4096; keep headroom
+
+
+def split_text(text: str, limit: int = MAX_TEXT) -> list[str]:
+    """Split on line boundaries. Every line we build has balanced tags, so no tag is cut."""
+    chunks: list[str] = []
+    cur = ""
+    for line in text.split("\n"):
+        while len(line) > limit:  # a single huge line: hard cut (plain text only in practice)
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{cur}\n{line}" if cur else line
+        if len(candidate) > limit:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur = candidate
+    if cur or not chunks:
+        chunks.append(cur)
+    return chunks
+
+
 async def reply(update: Update, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
     msg = update.effective_message
-    if msg is not None:
-        await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup,
-                             disable_web_page_preview=True)
+    if msg is None:
+        return
+    parts = split_text(text)
+    for i, part in enumerate(parts):
+        await msg.reply_text(part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+                             reply_markup=markup if i == len(parts) - 1 else None)
 
 
 async def reply_result(update: Update, r: Result) -> None:
@@ -76,9 +105,7 @@ async def safe_edit(query: CallbackQuery, text: str, markup: InlineKeyboardMarku
     msg = query.message
     if msg is None or isinstance(msg, InaccessibleMessage):
         # Too old or inaccessible: send a fresh message instead
-        if query.from_user:
-            await query.get_bot().send_message(query.from_user.id, text, parse_mode=ParseMode.HTML,
-                                               reply_markup=markup)
+        await _dm(query, text, markup)
         return False
     try:
         await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
@@ -87,6 +114,25 @@ async def safe_edit(query: CallbackQuery, text: str, markup: InlineKeyboardMarku
         if "not modified" in str(e).lower():
             return False
         raise
+
+
+async def _dm(query: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
+    if not query.from_user:
+        return
+    try:
+        await query.get_bot().send_message(query.from_user.id, text, parse_mode=ParseMode.HTML,
+                                           reply_markup=markup, disable_web_page_preview=True)
+    except TelegramError as e:  # e.g. Forbidden: the user never opened a private chat
+        logger.info("Could not message user %s: %s", query.from_user.id, e)
+
+
+async def answer_or_message(query: CallbackQuery, text: str, alert: bool) -> None:
+    """Answer the button; if the answer window expired (slow send/retry), message instead."""
+    try:
+        await query.answer(popup(text), show_alert=alert)
+    except BadRequest as e:
+        logger.info("Callback answer failed (%s); sending as a message", e)
+        await _dm(query, h(text))
 
 
 # ---- commands ------------------------------------------------------------------------
@@ -267,7 +313,7 @@ async def _remote_button(update: Update, context: ContextTypes.DEFAULT_TYPE, que
     elif action == "f" and len(args) == 2:
         r = await ctx.devices.run(args[0], args[1], actor_of(update, ctx, "button"),
                                   request_id=request_id(update))
-        await query.answer(popup(r.message), show_alert=not r.ok)
+        await answer_or_message(query, r.message, alert=not r.ok)
     else:
         await query.answer("That room or device no longer exists. /keyboard to refresh.", show_alert=True)
 
@@ -286,24 +332,23 @@ async def _users_button(update: Update, context: ContextTypes.DEFAULT_TYPE, quer
         await query.answer("Use /adduser <user id> <name>", show_alert=True)
     elif action == "me":
         await query.answer("This is you.")
-    elif action == "info" and args and args[0].isdigit():
-        await query.answer(popup(f"{ctx.users.name_of(int(args[0]))}, user id {args[0]}"))
+    elif action == "info" and args and (uid := parse_user_id(args[0])):
+        await query.answer(popup(f"{ctx.users.name_of(uid)}, user id {uid}"))
     elif action == "ask" and args:
-        uid = args[0]
-        if not uid.isdigit() or not ctx.users.is_allowed(int(uid)):
+        uid = parse_user_id(args[0])
+        if uid is None or not ctx.users.is_allowed(uid):
             await query.answer("Already removed.")
             await safe_edit(query, "Approved users", kb.users_keyboard(ctx.users.list(), me))
             return
-        if int(uid) == me:
+        if uid == me:
             await query.answer("You cannot remove yourself.", show_alert=True)
             return
         await query.answer()
-        await safe_edit(query, f"Remove {b(ctx.users.name_of(int(uid)))} ({h(uid)})?",
-                        kb.confirm_remove_keyboard(int(uid)))
+        await safe_edit(query, f"Remove {b(ctx.users.name_of(uid))} ({uid})?", kb.confirm_remove_keyboard(uid))
     elif action == "del" and args:
         # The service rechecks self-delete and existence at this moment (B13)
         r = await ctx.users.delete(actor_of(update, ctx, "button"), args[0])
-        await query.answer(popup(r.message), show_alert=not r.ok)
+        await answer_or_message(query, r.message, alert=not r.ok)
         await safe_edit(query, "Approved users", kb.users_keyboard(ctx.users.list(), me))
     else:
         await query.answer("This button is no longer active.")

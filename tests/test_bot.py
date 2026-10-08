@@ -222,3 +222,61 @@ async def test_error_handler_answers_spinner_and_hides_update_b15(ctx, caplog):
     await hd.on_error(u, c)
     u.callback_query.answer.assert_awaited()
     assert "kb:rooms" not in caplog.text
+
+
+def test_split_text():
+    from iotbot.bot.handlers import split_text
+
+    text = "\n".join(f"<b>line {i}</b> " + "x" * 50 for i in range(300))
+    parts = split_text(text, 1000)
+    assert all(len(p) <= 1000 for p in parts)
+    assert "\n".join(parts) == text
+    assert all(p.count("<b>") == p.count("</b>") for p in parts)
+    assert split_text("") == [""]
+    assert [len(p) for p in split_text("y" * 2500, 1000)] == [1000, 1000, 500]
+
+
+async def test_long_status_split_into_messages(ctx):
+    ctx.warnings = [f"warning number {i} " + "w" * 300 for i in range(10)]
+    ctx.users.store._data = {str(i): "N" * 30 for i in range(1, 300)}
+    ctx.users.store._data[str(ME)] = "Me"
+    u = make_update(ME)
+    await hd.cmd_status(u, make_context(ctx))
+    calls = u.effective_message.reply_text.call_args_list
+    assert len(calls) >= 2 and all(len(c.args[0]) <= 4000 for c in calls)
+
+
+async def test_expired_callback_falls_back_to_message(ctx):
+    u = make_update(ME, data="kb:f:bedroom_ac:power_on")
+    u.callback_query.answer = AsyncMock(side_effect=BadRequest("Query is too old"))
+    bot = SimpleNamespace(send_message=AsyncMock())
+    u.callback_query.get_bot = lambda: bot
+    await hd.on_button(u, make_context(ctx))
+    bot.send_message.assert_awaited()
+
+
+def test_edited_messages_do_not_trigger_commands():
+    from telegram.ext import Application, CommandHandler, filters
+
+    from iotbot.bot.app import register
+
+    app = Application.builder().token("1:x").build()
+    register(app)
+    cmds = [h_ for h_ in app.handlers[0] if isinstance(h_, CommandHandler)]
+    assert cmds and all(h_.filters is filters.UpdateType.MESSAGE or
+                        "MESSAGE" in repr(h_.filters) and "EDITED" not in repr(h_.filters) for h_ in cmds)
+
+
+def test_feature_keyboard_capped(ctx):
+    from iotbot.devices.model import Feature
+
+    dev = ctx.registry.devices["bedroom_ac"]
+    dev.features = {f"k{i}": Feature(f"k{i}", f"k{i}", (b"\x26",)) for i in range(200)}
+    markup = kb.device_keyboard(ctx.registry, "bedroom_ac")
+    assert sum(len(r) for r in markup.inline_keyboard) <= kb.MAX_FEATURE_BUTTONS + 3
+
+
+async def test_odd_digit_callback_does_not_crash(ctx):
+    u = make_update(ME, data="us:ask:\u00b2")
+    await hd.on_button(u, make_context(ctx))
+    u.callback_query.answer.assert_awaited()
