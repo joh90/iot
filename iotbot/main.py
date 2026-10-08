@@ -42,14 +42,21 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     if args.check:
+        # Warnings were already logged by build_context
         print(f"rooms={len(ctx.registry.rooms)} devices={len(ctx.registry.devices)} "
               f"users={len(ctx.users.list())} warnings={len(ctx.warnings)}")
-        for w in ctx.warnings:
-            print(f"warning: {w}")
         return 0
 
+    from telegram.error import InvalidToken
+
     app = build_application(ctx)
-    app.run_polling(drop_pending_updates=False)
+    try:
+        # Keep retrying the first connection: at boot DNS may come up after network-online
+        app.run_polling(drop_pending_updates=False, bootstrap_retries=-1)
+    except InvalidToken:
+        # Never log the exception text: PTB puts the full token in it
+        logging.getLogger(__name__).critical("BOT_TOKEN was rejected by Telegram; check .env")
+        return 2
     return 0
 
 

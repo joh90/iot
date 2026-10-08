@@ -22,3 +22,21 @@ def test_corrupt_users_refuses_start(tmp_path):
     (tmp_path / ".env").write_text("BOT_TOKEN=1:x\n")
     (tmp_path / "users.json").write_text("{broken")
     assert main(["--env-file", str(tmp_path / ".env"), "--check"]) == 3
+
+
+def test_rejected_token_not_logged(tmp_path, monkeypatch, caplog):
+    from telegram.error import InvalidToken
+
+    import iotbot.bot.app as app_mod
+
+    (tmp_path / ".env").write_text("BOT_TOKEN=123:supersecret\n")
+    (tmp_path / "users.json").write_text('{"1": "A"}')
+
+    class FakeApp:
+        def run_polling(self, **kw):
+            assert kw["bootstrap_retries"] == -1
+            raise InvalidToken("The token `123:supersecret` was rejected by the server.")
+
+    monkeypatch.setattr(app_mod, "build_application", lambda ctx: FakeApp())
+    assert main(["--env-file", str(tmp_path / ".env")]) == 2
+    assert "supersecret" not in caplog.text

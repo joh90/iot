@@ -53,3 +53,8 @@ def test_missing_token_names_env_path(tmp_path, monkeypatch):
     monkeypatch.delenv("BOT_TOKEN", raising=False)
     with pytest.raises(ConfigError, match=str(tmp_path)):
         load_settings(base_dir=tmp_path)
+
+
+def test_bad_timezone_rejected():
+    with pytest.raises(ConfigError, match="timezone"):
+        load_settings(environ={"BOT_TOKEN": "1:x", "TZ_NAME": "Mars/Base"})
