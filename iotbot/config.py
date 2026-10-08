@@ -51,7 +51,8 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
                 env_path = base / env_path
             if env_path.exists():
                 file_values = {k: v for k, v in dotenv_values(env_path).items() if v is not None}
-        environ = {**file_values, **os.environ}
+        # Real env wins, but an empty real value never hides a .env value
+        environ = {**file_values, **{k: v for k, v in os.environ.items() if v != ""}}
 
     token = (environ.get("BOT_TOKEN") or "").strip()
     if not token or ":" not in token:
