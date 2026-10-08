@@ -100,7 +100,7 @@ async def test_plug(tmp_path):
 
 async def test_resolve(tmp_path):
     svc = service(tmp_path)
-    assert svc.resolve("bedroom_ac", ["on"]).data[1] == "power_on"
+    assert svc.resolve("bedroom_ac", ["on"]).data == {"device": "bedroom_ac", "feature": "power_on"}
     assert svc.resolve("nope", ["on"]).error == "device_not_found"
     assert svc.resolve("bedroom_ac", []).error == "feature_missing"
     r = svc.resolve("bedroom_ac", ["dance"])
@@ -141,7 +141,7 @@ async def test_cannot_delete_self(tmp_path):
     assert r.error == "self_delete" and u.is_allowed(1)
 
 
-@pytest.mark.parametrize("raw", ["abc", "-5", "0", "", None])
+@pytest.mark.parametrize("raw", ["abc", "-5", "0", "", None, "+5", "1_0", "--5", "\u00b2", True])
 async def test_bad_ids(tmp_path, raw):
     u = users(tmp_path)
     assert (await u.add(ALICE, raw, "X")).error == "bad_user_id"
@@ -162,3 +162,92 @@ def test_invalid_users_file_refused(tmp_path):
     st = JsonStore(p, dict, validate=validate_users)
     with pytest.raises(StoreError):
         st.load()
+
+
+@pytest.mark.parametrize("key", ["-5", "--5", "\u00b2", "0", "007"])
+def test_bad_user_keys_refused(tmp_path, key):
+    p = tmp_path / "users.json"
+    p.write_text(json.dumps({key: "x"}))
+    with pytest.raises(StoreError):
+        JsonStore(p, dict, validate=validate_users).load()
+
+
+async def test_delete_nonexistent(tmp_path):
+    assert (await users(tmp_path).delete(ALICE, 999)).error == "not_found"
+
+
+async def test_audit_lines(tmp_path):
+    u = users(tmp_path)
+    await u.add(ALICE, 42, "Bob")
+    await u.delete(ALICE, 42)
+    lines = [json.loads(x) for f in tmp_path.glob("audit-*.jsonl") for x in f.read_text().splitlines()]
+    assert [x["event"] for x in lines] == ["user_added", "user_removed"]
+
+
+async def test_store_failure_returns_result(tmp_path, monkeypatch):
+    import iotbot.store as store_mod
+
+    u = users(tmp_path)
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store_mod, "write_json_atomic", boom)
+    r = await u.add(ALICE, 42, "Bob")
+    assert r.error == "store_error" and not u.is_allowed(42)
+    assert not list(tmp_path.glob("audit-*.jsonl"))
+
+
+async def test_name_cleaned_and_truncated(tmp_path):
+    u = users(tmp_path)
+    await u.add(ALICE, 7, "A\x00b\nc " + "x" * 50)
+    assert u.name_of(7).startswith("A b c ") and len(u.name_of(7)) <= 32
+
+
+async def test_only_people_change_users(tmp_path):
+    u = users(tmp_path)
+    for surface in ("llm", "scheduler", "system"):
+        assert (await u.add(Actor(1, "A", surface), 5, "X")).error == "forbidden"
+        assert (await u.delete(Actor(1, "A", surface), 5)).error == "forbidden"
+
+
+async def test_concurrent_add_same_id_one_wins(tmp_path):
+    import asyncio
+
+    u = users(tmp_path)
+    rs = await asyncio.gather(*(u.add(ALICE, 9, f"N{i}") for i in range(5)))
+    assert sum(r.ok for r in rs) == 1
+
+
+async def test_plug_failure(tmp_path):
+    r = await service(tmp_path, FakeHub(fail=HubError("offline"))).run("lamp", "power_on", ALICE)
+    assert not r.ok
+
+
+async def test_seq_and_prev_feature(tmp_path):
+    svc = service(tmp_path)
+    r1 = await svc.run("bedroom_ac", "power_on", ALICE, request_id="u1")
+    r2 = await svc.run("bedroom_ac", "power_off", ALICE, source="sched:s1")
+    assert r2.data["seq"] > r1.data["seq"]
+    assert svc.last["bedroom_ac"].prev_feature == "power_on"
+    ev = events(tmp_path)
+    assert ev[0]["request_id"] == "u1" and ev[1]["source"] == "sched:s1"
+    assert r1.to_dict()["ok"] is True
+
+
+async def test_cancelled_send_is_logged(tmp_path):
+    import asyncio
+
+    class Hang(FakeHub):
+        async def send_ir(self, *a, **k):
+            await asyncio.sleep(10)
+
+    svc = service(tmp_path, Hang())
+    task = asyncio.create_task(svc.run("bedroom_ac", "power_on", ALICE))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.05)
+    ev = events(tmp_path)
+    assert ev and ev[0]["error"] == "cancelled" and ev[0]["maybe_delivered"] is True
