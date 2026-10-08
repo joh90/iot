@@ -6,6 +6,7 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import dotenv_values
 
@@ -66,6 +67,12 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
     if not math.isfinite(discover_timeout) or discover_timeout <= 0:
         raise ConfigError("DISCOVER_TIMEOUT must be a positive number of seconds")
 
+    tz = environ.get("TZ_NAME") or "Asia/Singapore"
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ConfigError(f"TZ_NAME '{tz}' is not a known timezone (e.g. Asia/Singapore)") from None
+
     return Settings(
         bot_token=token,
         bot_name=environ.get("BOT_NAME") or "Home IoT",
@@ -74,7 +81,7 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         users_path=_path(environ, "USERS_PATH", "users.json", base),
         state_dir=_path(environ, "STATE_DIR", "state", base),
         log_dir=_path(environ, "LOG_DIR", "logs", base),
-        timezone=environ.get("TZ_NAME") or "Asia/Singapore",
+        timezone=tz,
         discover_timeout=discover_timeout,
         log_level=(environ.get("LOG_LEVEL") or "INFO").upper(),
     )

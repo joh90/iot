@@ -6,7 +6,7 @@ Each numbered task gets a reviewer subagent before it is marked done.
 
 Status: `[ ]` pending, `[~]` in progress, `[r]` built, in review, `[x]` done + reviewed
 
-## Phase 1 -- Foundation (2026-10-09 run builds ONLY this phase)
+## Phase 1 -- Foundation (done 2026-10-09, awaiting user test with a test bot token)
 
 | #    | Status | Task                                                                                                  |
 |------|--------|-------------------------------------------------------------------------------------------------------|
@@ -16,7 +16,7 @@ Status: `[ ]` pending, `[~]` in progress, `[r]` built, in review, `[x]` done + r
 | 1.4  | [x]    | Broadlink hub: async wrapper, per-RM lock, discover by MAC, per-device try at startup, rediscover + retry on failed send (B9), any RM with `send_data` (B7), idempotent-only retry, SP2/SP4 plugs |
 | 1.5  | [x]    | Service layer: `Result{ok,data,warnings,conflicts,error}`, DeviceService.run (actor + surface, device_events JSONL), UserService (auth by id B5, add/delete with rechecks B13) |
 | 1.6  | [x]    | Telegram layer on PTB 22 async: /start /ping /status /list /keyboard /on /off /d /user /adduser, compact string callback data (B18), HTML escaping (B11), error handler (B15), UI nits (B26-28) |
-| 1.7  | [~]    | Entry point + README rewrite for Pi/.env/tunnel (B22) + systemd unit example + local smoke run |
+| 1.7  | [x]    | Entry point + README rewrite for Pi/.env/tunnel (B22) + systemd unit example + local smoke run |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
