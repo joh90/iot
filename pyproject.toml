@@ -9,6 +9,7 @@ dependencies = [
     "python-telegram-bot==22.8",
     "broadlink==0.19.0",
     "python-dotenv==1.2.4",
+    "tzdata",  # zoneinfo fallback if the Pi has no system tz database
 ]
 
 [project.scripts]
