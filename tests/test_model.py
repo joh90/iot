@@ -1,4 +1,6 @@
 import json
+
+import pytest
 from pathlib import Path
 
 from iotbot.devices.model import (
@@ -105,6 +107,9 @@ def test_resolve_feature_allowlist():
     assert resolve_feature(ac, ["off"]) == "power_off"
     assert resolve_feature(ac, ["power", "on", "high"]) == "power_on_high"
     assert resolve_feature(ac, ["TEMP", "up"]) == "temp_up"
+    assert resolve_feature(ac, ["on", "high"]) == "power_on_high"
+    assert resolve_feature(ac, ["off", "now"]) is None
+    assert resolve_feature(ac, ["temp", "up", "please"]) is None
     for evil in (["__delattr__"], ["fire_action"], ["room"], ["features"], []):
         assert resolve_feature(ac, evil) is None
 
@@ -128,3 +133,37 @@ def test_real_commands_json_decodes():
                 for f in feats.values():
                     assert all(c[0] == 0x26 for c in f.codes)
     assert warn == []
+
+
+def test_aliases_for_old_words():
+    cmds_ = {"2": {"p": {"tv": {"mute": ON}}}, "5": {"c": {"amp": {"input": ON}}}}
+    cfg = {"r": {"mac_address": "780f771abcde", "devices": [
+        {"type": 2, "id": "tv", "brand": "p", "model": "tv"},
+        {"type": 5, "id": "amp", "brand": "c", "model": "amp"}]}}
+    reg = load_registry(cfg, cmds_)
+    assert resolve_feature(reg.devices["tv"], ["unmute"]) == "mute"
+    assert resolve_feature(reg.devices["amp"], ["change", "input"]) == "input"
+    assert "unmute" not in reg.devices["tv"].features  # alias only, no duplicate button
+
+
+@pytest.mark.parametrize("commands", [None, [], {"1": None}, {"1": {"daikin": []}}, {"1": {"daikin": {"nx": 5}}}])
+def test_malformed_commands_never_raise(commands):
+    cfg = {"r": {"mac_address": "780f771abcde",
+                 "devices": [{"type": 1, "id": "ac", "brand": "daikin", "model": "nx"}]}}
+    reg = load_registry(cfg, commands)
+    assert reg.devices["ac"].features == {}
+    assert reg.warnings
+
+
+@pytest.mark.parametrize("cfg", [
+    {"r": {"mac_address": 123, "devices": 5}},
+    {"r": {"devices": "abc"}},
+    {"r": {"devices": [{"type": True, "id": "x", "brand": "b", "model": "m"}]}},
+    {"r": {"devices": [{"type": 1, "id": None, "brand": "b", "model": "m"}]}},
+    {"r": {"devices": [{"type": 1, "id": "a\n", "brand": "b", "model": "m"}]}},
+    {"r": {"devices": [{"type": 1, "id": "ok", "brand": "daikin", "model": "nx"}]}},
+])
+def test_malformed_devices_never_raise(cfg):
+    reg = load_registry(cfg, cmds(power_on=["2600", 5]))
+    assert set(reg.devices) <= {"ok"}
+    assert len([w for w in reg.warnings if "characters" in w]) == 0
