@@ -46,13 +46,13 @@ test bot**: two programs polling one token fight over messages (409 Conflict).
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh     # installs uv
 git clone https://github.com/joh90/iot iot-bot && cd iot-bot
-git checkout v2
+git checkout v2                                     # once v2 is pushed; until then rsync the folder
 uv sync --no-dev                                    # downloads Python 3.13 + dependencies
 cp .env.example .env                                # then put BOT_TOKEN in it
 cp devices.example.json devices.json                # then edit
 cp users.example.json users.json                    # then put your own id in it
-uv run iotbot --check                               # validates files, prints warnings, no network
-uv run iotbot
+uv run --no-dev iotbot --check                      # validates files, prints warnings, no network
+uv run --no-dev iotbot
 ```
 
 On a 32-bit Pi OS (armv7), `cryptography` (needed by broadlink) may have no prebuilt wheel and
@@ -102,7 +102,7 @@ Each key is an action name (lowercase, digits, `_`), each value is the Broadlink
 `power_on` and `power_off` are listed first; other actions follow file order.
 Words in `/d` join with `_`: `/d bedroom_ac power on high` runs `power_on_high`.
 
-To capture a code, find the RM's type, IP and MAC with `python3 discovery`, then:
+To capture a code, find the RM's type, IP and MAC with `uv run python discovery`, then:
 
 ```bash
 uv run python broadlink_cli --type <type> --host <ip> --mac <mac> --learn
@@ -110,6 +110,10 @@ uv run python broadlink_cli --type <type> --host <ip> --mac <mac> --learn
 
 The RM's light turns white; press the button on the original remote and paste the printed hex into
 `commands.json`. Test with `--send <hex>`.
+
+Known issue: `broadlink_cli --learn` was written for an older broadlink library. On 0.19,
+`check_data()` raises instead of returning nothing while it waits, so `--learn` crashes after
+about 2 seconds. Learning over Telegram (`/learn`) is on the deferred list in PLAN.md.
 
 Aircon remotes send the whole state with every press (mode, temperature, fan, swing), so a captured
 "power on" always means one specific setting. See the IR decode table in PLAN.md.
