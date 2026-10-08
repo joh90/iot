@@ -19,6 +19,7 @@ timeout. A lost reply can therefore still repeat a toggle; we keep that timeout 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import socket
 import time
@@ -32,6 +33,13 @@ from broadlink import exceptions as blex
 logger = logging.getLogger(__name__)
 
 SEND_TIMEOUT = 3  # seconds the library waits for a reply (it re-sends every 1s meanwhile)
+REDISCOVER_BACKOFF = 20.0  # seconds before another broadcast for a device that was not found
+
+# Errors where the device answered "I did not do it" before executing anything
+_NOT_RUN = (
+    blex.AuthenticationError, blex.AuthorizationError, blex.ConnectionClosedError,
+    blex.DeviceOfflineError, blex.CommandNotSupportedError, blex.StructureAbnormalError,
+)
 
 
 class HubError(Exception):
@@ -59,14 +67,13 @@ def local_ip() -> str | None:
 
 
 def maybe_delivered(err: BaseException) -> bool:
-    """Could the device have executed the command despite this error?"""
-    if isinstance(err, (blex.NetworkTimeoutError, socket.timeout, TimeoutError)):
-        return True   # no reply: it may have run
-    if isinstance(err, blex.BroadlinkException):
-        return False  # the device replied with an error code: it did not run
-    if isinstance(err, OSError):
-        return False  # sendto failed (network unreachable etc.): never left this host
-    return True       # unknown: assume the worst
+    """Could the device have executed the command despite this error?
+
+    Only explicit pre-execution refusals count as "did not run". Timeouts, malformed
+    replies (DataValidationError arrives after the device answered) and socket errors
+    (the library re-sends every 1s, so an earlier copy may have landed) are all "maybe".
+    """
+    return not isinstance(err, _NOT_RUN)
 
 
 @dataclass(slots=True)
@@ -98,13 +105,14 @@ class Transport:
     def scan(self, want: set[str], timeout: float | None = None) -> dict[str, Any]:
         """Broadcast; return {mac: device} for wanted MACs, stopping early once all are seen."""
         found: dict[str, Any] = {}
-        for dev in broadlink.xdiscover(timeout=timeout or self.discover_timeout,
-                                       local_ip_address=local_ip()):
-            m = mac_of(dev)
-            if m in want:
-                found[m] = dev
-                if found.keys() >= want:
-                    break
+        gen = broadlink.xdiscover(timeout=timeout or self.discover_timeout, local_ip_address=local_ip())
+        with contextlib.closing(gen):  # closes the socket when we stop early
+            for dev in gen:
+                m = mac_of(dev)
+                if m in want:
+                    found[m] = dev
+                    if found.keys() >= want:
+                        break
         return found
 
     def hello(self, ip: str, timeout: float | None = None) -> Any:
@@ -119,9 +127,12 @@ class Transport:
 
 
 class BroadlinkHub:
-    def __init__(self, transport: Transport, sleep: Callable[[float], Any] = asyncio.sleep):
+    def __init__(self, transport: Transport, sleep: Callable[[float], Any] = asyncio.sleep,
+                 clock: Callable[[], float] = time.monotonic):
         self.transport = transport
         self._sleep = sleep
+        self._clock = clock
+        self._last_miss: dict[str, float] = {}
         self._expected: dict[str, Expected] = {}
         self._devices: dict[str, Any] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -136,18 +147,18 @@ class BroadlinkHub:
             self._locks.setdefault(e.mac, asyncio.Lock())
             self.status[e.mac] = DeviceStatus(e.mac, e.label)
 
-        by_ip = [m for m, e in self._expected.items() if e.ip]
-        by_scan = {m for m, e in self._expected.items() if not e.ip}
         found: dict[str, Any] = {}
-        if by_scan:
-            try:
-                found = await asyncio.to_thread(self.transport.scan, by_scan)
-            except Exception as err:  # noqa: BLE001 -- network errors must not stop startup
-                logger.error("Broadlink discovery failed: %s", err)
-        for m in by_ip:
+        for m in [m for m, e in self._expected.items() if e.ip]:
             dev = await self._hello(m)
             if dev is not None:
                 found[m] = dev
+        # Broadcast for everything else, including fixed-IP devices that did not answer
+        by_scan = set(self._expected) - set(found)
+        if by_scan:
+            try:
+                found.update(await asyncio.to_thread(self.transport.scan, by_scan))
+            except Exception as err:  # noqa: BLE001 -- network errors must not stop startup
+                logger.error("Broadlink discovery failed: %s", err)
 
         for m in self._expected:
             if m in found:
@@ -193,10 +204,18 @@ class BroadlinkHub:
         logger.warning("Broadlink %s offline: %s", st.label, why)
 
     async def rediscover(self, mac: str) -> bool:
-        """Find one device again (fixed IP first, then broadcast) and re-auth it."""
-        e = self._expected.get(mac)
-        if e is None:
+        """Public: find one device again under its lock (e.g. a /status refresh)."""
+        if mac not in self._expected:
             return False
+        async with self._locks[mac]:
+            return await self._rediscover(mac, force=True)
+
+    async def _rediscover(self, mac: str, force: bool = False) -> bool:
+        """Caller holds the device lock. Fixed IP first, then broadcast, then re-auth."""
+        e = self._expected[mac]
+        last = self._last_miss.get(mac)
+        if not force and last is not None and self._clock() - last < REDISCOVER_BACKOFF:
+            return False  # don't broadcast on every command for a device that is truly gone
         dev = await self._hello(mac) if e.ip else None
         if dev is None:
             try:
@@ -206,9 +225,15 @@ class BroadlinkHub:
                 return False
             dev = found.get(mac)
         if dev is None:
+            self._last_miss[mac] = self._clock()
             self._mark_offline(mac, "not found on rediscovery")
             return False
-        return await self._adopt(mac, dev)
+        ok = await self._adopt(mac, dev)
+        if ok:
+            self._last_miss.pop(mac, None)
+        else:
+            self._last_miss[mac] = self._clock()
+        return ok
 
     # ---- actions -----------------------------------------------------------------------
 
@@ -229,18 +254,19 @@ class BroadlinkHub:
         """Run a plug operation. Returns the reported state for check_* / set_* ops."""
         lock = self._lock(mac)
         async with lock:
-            if op in ("power_on", "power_off"):
-                on = op == "power_on"
-                # Setting an absolute state is idempotent
-                await self._call_with_retry(mac, "set_power", (on,), True, need="set_power", what="plug")
-                return await self._call_with_retry(mac, "check_power", (), True,
-                                                   need="check_power", what="plug")
-            if op in ("nightlight_on", "nightlight_off"):
-                on = op == "nightlight_on"
-                await self._call_with_retry(mac, "set_nightlight", (on,), True,
-                                            need="set_nightlight", what="plug with nightlight")
-                return await self._call_with_retry(mac, "check_nightlight", (), True,
-                                                   need="check_nightlight", what="plug with nightlight")
+            # Setting an absolute state is idempotent. If only the read-back fails, the
+            # set still worked: report unknown state (None) rather than an error.
+            for prefix, setter, checker, what in (("power", "set_power", "check_power", "plug"),
+                                                  ("nightlight", "set_nightlight", "check_nightlight",
+                                                   "plug with nightlight")):
+                if op in (f"{prefix}_on", f"{prefix}_off"):
+                    await self._call_with_retry(mac, setter, (op.endswith("_on"),), True,
+                                                need=setter, what=what)
+                    try:
+                        return await self._call_with_retry(mac, checker, (), True, need=checker, what=what)
+                    except HubError as e:
+                        logger.warning("%s set ok but read-back failed: %s", mac, e)
+                        return None
             if op in ("check_power", "check_nightlight"):
                 return await self._call_with_retry(mac, op, (), True, need=op, what="plug")
         raise HubError(f"unknown plug operation '{op}'")
@@ -252,7 +278,7 @@ class BroadlinkHub:
 
     async def _device(self, mac: str) -> Any:
         dev = self._devices.get(mac)
-        if dev is None and await self.rediscover(mac):
+        if dev is None and await self._rediscover(mac):
             dev = self._devices.get(mac)
         if dev is None:
             st = self.status[mac]
@@ -264,24 +290,39 @@ class BroadlinkHub:
         dev = await self._device(mac)
         if not hasattr(dev, need):
             raise HubError(f"{self.status[mac].label} ({self.status[mac].type}) is not a {what}")
+        label = self.status[mac].label
         try:
-            result = await asyncio.to_thread(self.transport.call, dev, method, *args)
+            result = await self._run_thread(dev, method, args)
         except Exception as err:  # noqa: BLE001
+            if not isinstance(err, (blex.BroadlinkException, OSError)):
+                # A programming error (e.g. wrong arguments), not a network fault: keep the device online
+                raise HubError(f"{label}: {method} error: {err}", maybe_delivered=True) from err
             maybe = maybe_delivered(err)
             if maybe and not idempotent:
-                raise HubError(f"no reply from {self.status[mac].label}; it may or may not have "
-                               f"received the command, not retrying ({err})", maybe_delivered=True) from err
-            logger.warning("%s: %s failed (%s); rediscovering and retrying once",
-                           self.status[mac].label, method, err)
-            if not await self.rediscover(mac):
-                raise HubError(f"{self.status[mac].label} is offline ({self.status[mac].error})",
-                               maybe_delivered=maybe) from err
+                # No resend, but recover the session/IP so the next command works
+                await self._rediscover(mac, force=True)
+                raise HubError(f"no clear reply from {label}; it may or may not have run the command, "
+                               f"not resending a toggle ({err})", maybe_delivered=True) from err
+            logger.warning("%s: %s failed (%s); rediscovering and retrying once", label, method, err)
+            if not await self._rediscover(mac, force=True):
+                raise HubError(f"{label} is offline ({self.status[mac].error})", maybe_delivered=maybe) from err
             dev = self._devices[mac]
             try:
-                result = await asyncio.to_thread(self.transport.call, dev, method, *args)
+                result = await self._run_thread(dev, method, args)
             except Exception as err2:  # noqa: BLE001
                 self._mark_offline(mac, f"{method} failed twice: {err2}")
-                raise HubError(f"{self.status[mac].label} failed twice: {err2}",
+                raise HubError(f"{label} failed twice: {err2}",
                                maybe_delivered=maybe or maybe_delivered(err2)) from err2
         self.status[mac].last_ok = time.time()
         return result
+
+    async def _run_thread(self, dev: Any, method: str, args: tuple) -> Any:
+        """Run a blocking call; if we are cancelled, still wait for the thread so the
+        device lock is never released while the Device object is mid-packet."""
+        task = asyncio.ensure_future(asyncio.to_thread(self.transport.call, dev, method, *args))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await task
+            raise
