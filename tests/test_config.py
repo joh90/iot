@@ -1,0 +1,41 @@
+from pathlib import Path
+
+import pytest
+
+from iotbot.config import ConfigError, load_settings
+
+
+def test_defaults_resolve_against_base(tmp_path):
+    s = load_settings(environ={"BOT_TOKEN": "123:abc"}, base_dir=tmp_path)
+    assert s.bot_token == "123:abc"
+    assert s.devices_path == tmp_path / "devices.json"
+    assert s.state_dir == tmp_path / "state"
+    assert s.timezone == "Asia/Singapore"
+    assert s.discover_timeout == 5.0
+
+
+def test_absolute_paths_kept(tmp_path):
+    s = load_settings(environ={"BOT_TOKEN": "1:x", "USERS_PATH": "/etc/u.json"}, base_dir=tmp_path)
+    assert s.users_path == Path("/etc/u.json")
+
+
+@pytest.mark.parametrize("token", ["", "   ", "nocolon"])
+def test_bad_token_rejected(token):
+    with pytest.raises(ConfigError):
+        load_settings(environ={"BOT_TOKEN": token})
+
+
+def test_bad_timeout_rejected():
+    with pytest.raises(ConfigError):
+        load_settings(environ={"BOT_TOKEN": "1:x", "DISCOVER_TIMEOUT": "soon"})
+
+
+def test_env_file_loaded(tmp_path, monkeypatch):
+    monkeypatch.delenv("BOT_TOKEN", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("BOT_TOKEN=42:secret\nBOT_NAME=Test\n")
+    s = load_settings(env_file=env, base_dir=tmp_path)
+    assert s.bot_token == "42:secret"
+    assert s.bot_name == "Test"
+    monkeypatch.delenv("BOT_TOKEN", raising=False)
+    monkeypatch.delenv("BOT_NAME", raising=False)

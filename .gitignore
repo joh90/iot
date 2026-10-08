@@ -1,5 +1,14 @@
 *.pyc
 __pycache__/
 .virtualenv/
+.venv/
 .vscode/*
 *.code-workspace
+.pytest_cache/
+
+# Secrets and household data (B16, B23) -- ship *.example.json instead
+.env
+devices.json
+users.json
+state/
+logs/
