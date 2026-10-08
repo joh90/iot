@@ -77,9 +77,17 @@ async def nosleep(_):
     return None
 
 
-async def make_hub(devs, expected, **kw):
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+async def make_hub(devs, expected, clock=None, **kw):
     t = FakeTransport(devs, **kw)
-    hub = BroadlinkHub(t, sleep=nosleep)
+    hub = BroadlinkHub(t, sleep=nosleep, clock=clock or Clock())
     await hub.start(expected)
     return hub, t
 
@@ -144,6 +152,137 @@ async def test_toggle_timeout_not_retried():
     assert rm.sent == []
 
 
+async def test_toggle_timeout_recovers_session_without_resend():
+    rm = FakeDev(RM)
+    hub, t = await make_hub([rm], [Expected(RM, "tv")])
+    rm.fail = [blex.NetworkTimeoutError(-4000, "t", "x")]
+    with pytest.raises(HubError):
+        await hub.send_ir(RM, (b"\x26\x01",))
+    assert t.scans == 2 and rm.sent == []  # rediscovered, nothing resent
+    await hub.send_ir(RM, (b"\x26\x02",))
+    assert rm.sent == [b"\x26\x02"]
+
+
+@pytest.mark.parametrize("err", [
+    blex.DataValidationError(-4007, "short", "x"),  # device answered: it probably ran
+    OSError("unreachable"),                       # an earlier resend may have landed
+    blex.SendError(-1, "x", "y"),
+])
+async def test_toggle_not_retried_on_maybe_errors(err):
+    rm = FakeDev(RM)
+    hub, _ = await make_hub([rm], [Expected(RM, "tv")])
+    rm.fail = [err]
+    with pytest.raises(HubError) as ei:
+        await hub.send_ir(RM, (b"\x26\x01",))
+    assert ei.value.maybe_delivered and rm.sent == []
+
+
+async def test_programming_error_keeps_device_online():
+    rm = FakeDev(RM)
+    hub, _ = await make_hub([rm], [Expected(RM, "tv")])
+    rm.fail = [TypeError("bad args")]
+    with pytest.raises(HubError):
+        await hub.send_ir(RM, (b"\x26",), idempotent=True)
+    assert hub.status[RM].online
+
+
+async def test_rediscovery_backoff():
+    clock = Clock()
+    hub, t = await make_hub([], [Expected(RM, "gone")], clock=clock)
+    for _ in range(3):
+        with pytest.raises(HubError):
+            await hub.send_ir(RM, (b"\x26",))
+    assert t.scans == 2  # startup + one rediscovery, then backoff
+    clock.t += 30
+    with pytest.raises(HubError):
+        await hub.send_ir(RM, (b"\x26",))
+    assert t.scans == 3
+
+
+async def test_fixed_ip_failure_falls_back_to_broadcast():
+    rm = FakeDev(RM, ip="10.0.0.77")
+    hub, t = await make_hub([rm], [Expected(RM, "bedroom", ip="10.0.0.50")])
+    assert hub.status[RM].online and t.scans == 1
+
+
+async def test_cancel_waits_for_thread_before_releasing_lock():
+    import asyncio
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+    order = []
+
+    class SlowDev(FakeDev):
+        def send_data(self, pkt):
+            order.append(("start", pkt))
+            if pkt == b"\x26\x01":
+                started.set()
+                release.wait(2)
+            order.append(("end", pkt))
+
+    rm = SlowDev(RM)
+    hub, _ = await make_hub([rm], [Expected(RM, "b")])
+    first = asyncio.create_task(hub.send_ir(RM, (b"\x26\x01",)))
+    await asyncio.to_thread(started.wait, 2)
+    first.cancel()
+    second = asyncio.create_task(hub.send_ir(RM, (b"\x26\x02",)))
+    await asyncio.sleep(0.05)
+    assert ("start", b"\x26\x02") not in order  # still blocked behind the first thread
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await second
+    assert order == [("start", b"\x26\x01"), ("end", b"\x26\x01"),
+                     ("start", b"\x26\x02"), ("end", b"\x26\x02")]
+
+
+async def test_plug_readback_failure_returns_unknown():
+    p = FakePlug(PLUG)
+    hub, _ = await make_hub([p], [Expected(PLUG, "lamp")])
+
+    def broken():
+        raise blex.NetworkTimeoutError(-4000, "t", "x")
+
+    p.check_power = broken
+    assert await hub.plug(PLUG, "power_on") is None
+    assert p.power is True
+
+
+async def test_nightlight_ops():
+    class SP4(FakePlug):
+        night = False
+
+        def set_nightlight(self, on):
+            self.night = on
+
+        def check_nightlight(self):
+            return self.night
+
+    p = SP4(PLUG)
+    hub, _ = await make_hub([p], [Expected(PLUG, "lamp")])
+    assert await hub.plug(PLUG, "nightlight_on") is True
+    assert await hub.plug(PLUG, "check_nightlight") is True
+
+
+def test_real_transport_scan_stops_early(monkeypatch):
+    import broadlink
+
+    closed = []
+
+    def fake_xdiscover(timeout, local_ip_address):
+        try:
+            yield FakeDev(RM2)
+            yield FakeDev(RM)
+            yield FakeDev(PLUG)  # never reached
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(broadlink, "xdiscover", fake_xdiscover)
+    found = Transport(1).scan({RM})
+    assert list(found) == [RM]
+    assert closed == [True]
+
+
 async def test_toggle_device_error_is_retried():
     rm = FakeDev(RM)
     hub, _ = await make_hub([rm], [Expected(RM, "tv")])
@@ -156,15 +295,17 @@ async def test_failing_twice_marks_offline():
     rm = FakeDev(RM)
     hub, _ = await make_hub([rm], [Expected(RM, "bedroom")])
     rm.fail = [OSError("unreachable"), OSError("unreachable")]
-    with pytest.raises(HubError, match="twice"):
+    with pytest.raises(HubError, match="twice") as ei:
         await hub.send_ir(RM, (b"\x26",), idempotent=True)
     assert not hub.status[RM].online
+    assert ei.value.maybe_delivered
 
 
 async def test_offline_device_found_on_next_send():
     rm = FakeDev(RM)
     t = FakeTransport([])
-    hub = BroadlinkHub(t, sleep=nosleep)
+    clock = Clock()
+    hub = BroadlinkHub(t, sleep=nosleep, clock=clock)
     await hub.start([Expected(RM, "bedroom")])
     assert not hub.status[RM].online
     t.devices[RM] = rm  # it came back with a new DHCP address
