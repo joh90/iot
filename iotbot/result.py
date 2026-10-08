@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
+
+Surface = Literal["slash", "button", "scheduler", "llm", "system"]
+SYSTEM_USER_ID = 0  # actor id for scheduler/system actions
 
 
 @dataclass(slots=True)
@@ -15,6 +18,10 @@ class Result:
     warnings: list[str] = field(default_factory=list)
     # Never resolved silently: callers (buttons now, LLM later) decide what to do
     conflicts: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly form for logs and (later) LLM tool results."""
+        return asdict(self)
 
     @classmethod
     def success(cls, message: str = "", data: Any = None, **kw: Any) -> Result:
@@ -30,4 +37,4 @@ class Actor:
     """Who asked, and through which surface: slash | button | scheduler | llm | system."""
     user_id: int
     name: str
-    surface: str
+    surface: Surface
