@@ -40,7 +40,7 @@ def _fsync_dir(path: Path) -> None:
 
 def write_json_atomic(path: Path, data: Any) -> None:
     """Serialize first, then replace `path` atomically, keeping a `.bak`."""
-    text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
+    text = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -54,37 +54,64 @@ def write_json_atomic(path: Path, data: Any) -> None:
         except (OSError, ValueError):
             logger.warning("Not backing up unreadable %s", path)
         else:
-            shutil.copyfile(path, path.with_name(path.name + ".bak"))
+            # Hard-link the current (already durable) inode as the backup: atomic, no copy.
+            # os.replace below swaps in a new inode, so the link keeps the old content.
+            bak_tmp = path.with_name(path.name + ".bak.tmp")
+            bak_tmp.unlink(missing_ok=True)
+            try:
+                os.link(path, bak_tmp)
+            except OSError:
+                shutil.copyfile(path, bak_tmp)  # filesystems without hard links
+                with open(bak_tmp, "rb") as f:
+                    os.fsync(f.fileno())
+            os.replace(bak_tmp, path.with_name(path.name + ".bak"))
     os.replace(tmp, path)
     _fsync_dir(path.parent)
 
 
-def read_json(path: Path, default: Callable[[], Any]) -> tuple[Any, str | None]:
+def read_json(path: Path, default: Callable[[], Any],
+              validate: Callable[[Any], None] | None = None) -> tuple[Any, str | None]:
     """Load `path`; fall back to `.bak`, then to `default()` if neither exists.
 
-    Returns (data, warning). Raises StoreError if the file exists but neither it
-    nor its backup can be parsed -- refusing to start beats silently wiping data.
+    A file that parses but fails `validate` counts as unreadable. Returns
+    (data, warning). Raises StoreError if a file exists but neither it nor its
+    backup is usable -- refusing to start beats silently wiping data.
     """
     bak = path.with_name(path.name + ".bak")
+
+    def load(p: Path) -> Any:
+        data = _parse(p)
+        if validate:
+            validate(data)
+        return data
+
     if not path.exists():
-        if bak.exists():
-            data = _parse(bak)
-            return data, f"{path.name} missing, restored from {bak.name}"
-        return default(), None
+        if not bak.exists():
+            data = default()
+            if validate:
+                validate(data)
+            return data, None
+        try:
+            return load(bak), f"{path.name} missing, restored from {bak.name}"
+        except (OSError, ValueError, TypeError) as e:
+            raise StoreError(f"{path} missing and {bak.name} unusable: {e}") from e
     try:
-        return _parse(path), None
-    except (OSError, ValueError) as e:
+        return load(path), None
+    except (OSError, ValueError, TypeError) as e:
         if bak.exists():
             try:
-                data = _parse(bak)
-            except (OSError, ValueError) as e2:
-                raise StoreError(f"{path} and {bak.name} both unreadable: {e}; {e2}") from e2
-            return data, f"{path.name} unreadable ({e}), loaded {bak.name}"
-        raise StoreError(f"{path} unreadable and no backup: {e}") from e
+                data = load(bak)
+            except (OSError, ValueError, TypeError) as e2:
+                raise StoreError(f"{path} and {bak.name} both unusable: {e}; {e2}") from e2
+            return data, f"{path.name} unusable ({e}), loaded {bak.name}"
+        raise StoreError(f"{path} unusable and no backup: {e}") from e
 
 
 def _parse(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+_UNSET: Any = object()
 
 
 class JsonStore:
@@ -100,13 +127,11 @@ class JsonStore:
         self._default = default
         self._validate = validate
         self._lock = asyncio.Lock()
-        self._data: Any = None
+        self._data: Any = _UNSET
         self.load_warning: str | None = None
 
     def load(self) -> Any:
-        data, warning = read_json(self.path, self._default)
-        if self._validate:
-            self._validate(data)
+        data, warning = read_json(self.path, self._default, self._validate)
         self._data = data
         self.load_warning = warning
         if warning:
@@ -116,7 +141,7 @@ class JsonStore:
     @property
     def data(self) -> Any:
         """Read-only view by convention; mutate only through update()."""
-        if self._data is None:
+        if self._data is _UNSET:
             raise StoreError(f"{self.path} not loaded")
         return self._data
 
@@ -124,13 +149,25 @@ class JsonStore:
         """Apply `fn` to a deep copy, save, then commit. Returns fn's return value.
 
         If `fn` raises, nothing is saved and the in-memory value is unchanged.
+        Cancelling the caller does not cancel the write: memory is committed
+        whenever the file was written, so disk and memory never diverge.
+        Do not keep references into the returned value; copy what you need.
         """
         async with self._lock:
             draft = copy.deepcopy(self.data)
             result = fn(draft)
             if self._validate:
                 self._validate(draft)
-            await asyncio.to_thread(write_json_atomic, self.path, draft)
+            write = asyncio.ensure_future(asyncio.to_thread(write_json_atomic, self.path, draft))
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                try:
+                    await write
+                except Exception:
+                    raise asyncio.CancelledError() from None
+                self._data = draft
+                raise
             self._data = draft
             return result
 
@@ -154,23 +191,33 @@ class JsonlLog:
         return self.directory / f"{self.prefix}-{when.astimezone(self.tz):%Y-%m}.jsonl"
 
     def append(self, record: dict[str, Any], when: datetime | None = None) -> dict[str, Any]:
-        when = when or self.now()
-        rec = {"ts": when.isoformat(timespec="milliseconds"), **record}
+        """Blocking append. From async code prefer `await log.append_async(...)`."""
+        when = (when or self.now()).astimezone(self.tz)
+        rec = {**record, "ts": when.isoformat(timespec="milliseconds")}
         line = json.dumps(rec, ensure_ascii=False, separators=(",", ":"), default=str) + "\n"
-        self.directory.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.path_for(when), "a", encoding="utf-8") as f:
-                f.write(line)
+            self.directory.mkdir(parents=True, exist_ok=True)
+            path = self.path_for(when)
+            with open(path, "a+b") as f:
+                # Start on a fresh line if a power cut left a torn last line
+                if f.tell() > 0:
+                    f.seek(-1, os.SEEK_END)
+                    if f.read(1) != b"\n":
+                        f.write(b"\n")
+                f.write(line.encode("utf-8"))
         except OSError as e:
             # Logging must never break a device action
             logger.error("Could not append to %s log: %s", self.prefix, e)
         return rec
 
+    async def append_async(self, record: dict[str, Any], when: datetime | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self.append, record, when)
+
     def read_month(self, year: int, month: int) -> Iterator[dict[str, Any]]:
         path = self.directory / f"{self.prefix}-{year:04d}-{month:02d}.jsonl"
         if not path.exists():
             return
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             for n, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
