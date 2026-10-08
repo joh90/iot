@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from telegram import BotCommand
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, filters
 
 from iotbot.bot import handlers as hd
 from iotbot.context import AppContext, expected_devices
@@ -49,15 +49,12 @@ def build_application(ctx: AppContext) -> Application:
 
 
 def register(app: Application) -> None:
-    app.add_handler(CommandHandler("ping", hd.cmd_ping))
-    app.add_handler(CommandHandler("start", hd.cmd_start))
-    app.add_handler(CommandHandler("status", hd.cmd_status))
-    app.add_handler(CommandHandler("list", hd.cmd_list))
-    app.add_handler(CommandHandler("keyboard", hd.cmd_keyboard))
-    app.add_handler(CommandHandler("on", hd.cmd_on))
-    app.add_handler(CommandHandler("off", hd.cmd_off))
-    app.add_handler(CommandHandler("d", hd.cmd_device))
-    app.add_handler(CommandHandler("user", hd.cmd_user))
-    app.add_handler(CommandHandler("adduser", hd.cmd_adduser))
+    # New messages only: editing an old "/off ac" must not fire IR again
+    new_only = filters.UpdateType.MESSAGE
+    for name, func in (("ping", hd.cmd_ping), ("start", hd.cmd_start), ("status", hd.cmd_status),
+                       ("list", hd.cmd_list), ("keyboard", hd.cmd_keyboard), ("on", hd.cmd_on),
+                       ("off", hd.cmd_off), ("d", hd.cmd_device), ("user", hd.cmd_user),
+                       ("adduser", hd.cmd_adduser)):
+        app.add_handler(CommandHandler(name, func, filters=new_only))
     app.add_handler(CallbackQueryHandler(hd.on_button))
     app.add_error_handler(hd.on_error)
