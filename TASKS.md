@@ -4,14 +4,14 @@ Native Claude Code task tools were not available in the 2026-10-09 session, so t
 Source of truth for decisions: `PLAN.md`. Build order: 1, 3, 2, 5, 6, 7 (4 = LLM, after planning).
 Each numbered task gets a reviewer subagent before it is marked done.
 
-Status: `[ ]` pending, `[~]` in progress, `[x]` done + reviewed
+Status: `[ ]` pending, `[~]` in progress, `[r]` built, in review, `[x]` done + reviewed
 
 ## Phase 1 -- Foundation (2026-10-09 run builds ONLY this phase)
 
 | #    | Status | Task                                                                                                  |
 |------|--------|-------------------------------------------------------------------------------------------------------|
-| 1.1  | [~]    | Scaffold: uv + pyproject (py3.13, PTB 22.8, broadlink 0.19, python-dotenv), `.env` config (B16), gitignore real data + `*.example.json` (B23), pytest |
-| 1.2  | [ ]    | Storage: atomic JSON store (tmp + fsync file/dir + rename, `.bak`, load `.bak` on parse failure), monthly JSONL event log |
+| 1.1  | [r]    | Scaffold: uv + pyproject (py3.13, PTB 22.8, broadlink 0.19, python-dotenv), `.env` config (B16), gitignore real data + `*.example.json` (B23), pytest |
+| 1.2  | [~]    | Storage: atomic JSON store (tmp + fsync file/dir + rename, `.bak`, load `.bak` on parse failure), monthly JSONL event log |
 | 1.3  | [ ]    | Device model: load devices.json + commands.json, pre-decoded bytes, data-driven feature allowlist (B2, B17), duplicate ids rejected (B19), per-device load errors never drop a room (B10) |
 | 1.4  | [ ]    | Broadlink hub: async wrapper, per-RM lock, discover by MAC, per-device try at startup, rediscover + retry on failed send (B9), any RM with `send_data` (B7), idempotent-only retry, SP2/SP4 plugs |
 | 1.5  | [ ]    | Service layer: `Result{ok,data,warnings,conflicts,error}`, DeviceService.run (actor + surface, device_events JSONL), UserService (auth by id B5, add/delete with rechecks B13) |

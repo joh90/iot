@@ -6,7 +6,8 @@ __pycache__/
 *.code-workspace
 .pytest_cache/
 
-# Secrets and household data (B16, B23) -- ship *.example.json instead
+# Secrets and household data (B16, B23) -- ship *.example.json instead.
+# commands.json (IR captures) stays tracked on purpose: it is device data, not household data.
 .env
 devices.json
 users.json

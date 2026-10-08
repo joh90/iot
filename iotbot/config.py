@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 
 class ConfigError(Exception):
@@ -35,21 +36,34 @@ def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
 def load_settings(env_file: str | os.PathLike | None = ".env",
                   environ: dict[str, str] | None = None,
                   base_dir: Path | None = None) -> Settings:
-    """Build Settings. Relative paths resolve against `base_dir` (default: cwd)."""
-    if environ is None:
-        if env_file is not None:
-            load_dotenv(env_file, override=False)
-        environ = dict(os.environ)
+    """Build Settings without touching os.environ.
+
+    `env_file` and relative data paths resolve against `base_dir` (default: cwd).
+    Real environment variables win over `.env` values. Passing `environ` skips both.
+    """
     base = base_dir or Path.cwd()
+    env_path = None
+    if environ is None:
+        file_values: dict[str, str] = {}
+        if env_file is not None:
+            env_path = Path(env_file)
+            if not env_path.is_absolute():
+                env_path = base / env_path
+            if env_path.exists():
+                file_values = {k: v for k, v in dotenv_values(env_path).items() if v is not None}
+        environ = {**file_values, **os.environ}
 
     token = (environ.get("BOT_TOKEN") or "").strip()
     if not token or ":" not in token:
-        raise ConfigError("BOT_TOKEN is missing or malformed (expected '<id>:<secret>'); see .env.example")
+        where = f" (looked in {env_path} and the environment)" if env_path else ""
+        raise ConfigError(f"BOT_TOKEN is missing or malformed, expected '<id>:<secret>'{where}; see .env.example")
 
     try:
         discover_timeout = float(environ.get("DISCOVER_TIMEOUT") or 5)
     except ValueError as e:
         raise ConfigError(f"DISCOVER_TIMEOUT must be a number: {e}") from None
+    if not math.isfinite(discover_timeout) or discover_timeout <= 0:
+        raise ConfigError("DISCOVER_TIMEOUT must be a positive number of seconds")
 
     return Settings(
         bot_token=token,
