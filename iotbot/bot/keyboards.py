@@ -12,6 +12,7 @@ KB = "kb"   # remote namespace
 US = "us"   # users namespace
 
 ROOMS_TEXT = "Select room"
+MAX_FEATURE_BUTTONS = 90  # Telegram rejects very large inline keyboards
 
 
 def _rows(buttons: list[Btn], cols: int) -> list[list[Btn]]:
@@ -36,7 +37,8 @@ def room_keyboard(reg: Registry, room: str) -> InlineKeyboardMarkup:
 def device_keyboard(reg: Registry, device_id: str) -> InlineKeyboardMarkup:
     """Only features with captured codes get a button (B17)."""
     dev = reg.devices[device_id]
-    feats = [Btn(f.label, callback_data=encode(KB, "f", dev.id, f.key)) for f in dev.features.values()]
+    feats = [Btn(f.label, callback_data=encode(KB, "f", dev.id, f.key))
+             for f in list(dev.features.values())[:MAX_FEATURE_BUTTONS]]
     return InlineKeyboardMarkup(_rows(feats, 2) + [[
         Btn("<- Back", callback_data=encode(KB, "r", dev.room)),
         Btn("Rooms", callback_data=encode(KB, "rooms")),
