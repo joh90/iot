@@ -1,0 +1,22 @@
+# systemd unit for the Raspberry Pi. Install:
+#   sudo cp deploy/iotbot.service /etc/systemd/system/
+#   sudo systemctl enable --now systemd-time-wait-sync.service   # wait for NTP (Pi has no RTC)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now iotbot
+# Edit User and WorkingDirectory first. Logs: journalctl -u iotbot -f
+[Unit]
+Description=iot-bot v2 (Telegram home IR bot)
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/iot-bot
+ExecStart=/home/pi/.local/bin/uv run --frozen --no-dev iotbot
+Restart=on-failure
+RestartSec=10
+# Do not restart-loop on a config error (exit 2) or unreadable data file (exit 3)
+RestartPreventExitStatus=2 3
+
+[Install]
+WantedBy=multi-user.target
