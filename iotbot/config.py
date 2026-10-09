@@ -27,6 +27,8 @@ class Settings:
     timezone: str
     discover_timeout: float
     log_level: str
+    # False (AC_ENCODER=off): ACs send their captured codes, as v1 did
+    ac_encoder: bool = True
 
 
 def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
@@ -70,6 +72,10 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
     if not math.isfinite(discover_timeout) or discover_timeout <= 0:
         raise ConfigError("DISCOVER_TIMEOUT must be a positive number of seconds")
 
+    ac_raw = (environ.get("AC_ENCODER") or "on").strip().lower()
+    if ac_raw not in ("on", "off"):
+        raise ConfigError(f"AC_ENCODER must be 'on' or 'off', got '{ac_raw}'")
+
     tz = environ.get("TZ_NAME") or "Asia/Singapore"
     try:
         ZoneInfo(tz)
@@ -87,4 +93,5 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         timezone=tz,
         discover_timeout=discover_timeout,
         log_level=(environ.get("LOG_LEVEL") or "INFO").upper(),
+        ac_encoder=ac_raw == "on",
     )
