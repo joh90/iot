@@ -18,6 +18,22 @@ Status: `[ ]` pending, `[~]` in progress, `[r]` built, in review, `[x]` done + r
 | 1.6  | [x]    | Telegram layer on PTB 22 async: /start /ping /status /list /keyboard /on /off /d /user /adduser, compact string callback data (B18), HTML escaping (B11), error handler (B15), UI nits (B26-28) |
 | 1.7  | [x]    | Entry point + README rewrite for Pi/.env/tunnel (B22) + systemd unit example + local smoke run |
 
+## Phase D -- Deploy to the Pi (planned 2026-10-09; in-place upgrade on the real token)
+
+Pi: `johrasp.lan` / 192.168.86.48 (Pi 1/2/3/Zero by MAC prefix b8:27:eb). Old bot stays untouched until D6.
+
+| #    | Status | Task                                                                                                  |
+|------|--------|-------------------------------------------------------------------------------------------------------|
+| D1   | [ ]    | User installs this PC's key on the Pi (`ssh-copy-id`), says which username                            |
+| D2   | [ ]    | Read-only inspection: arch, OS, glibc, disk, RAM, how v1 runs, its paths, data files, token location  |
+| D3   | [ ]    | Decide OS path from D2 facts (keep OS vs reflash a spare SD with 64-bit Pi OS Lite)                   |
+| D4   | [ ]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
+| D5   | [ ]    | Install v2 next to v1: uv, clone, `uv sync --frozen --no-dev`, copy real data files, `.env`, `--check` |
+| D6   | [ ]    | Cutover: stop + disable v1, start v2 unit, smoke test (/ping /status /keyboard + 1 IR the user picks)  |
+| D7   | [ ]    | Pi -> LLM tunnel: autossh unit on the Pi, key here restricted to forwarding 127.0.0.1:8001, curl /health |
+
+Rollback: stop v2, re-enable v1 (v1 dir untouched), or swap the old SD card back if reflashed.
+
 ## Later phases (coarse; split into numbered subtasks when started)
 
 | #   | Status | Task                                                                                       |

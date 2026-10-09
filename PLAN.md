@@ -184,5 +184,6 @@ failure UX, voice notes.
 ## Pending before build
 
 - Pi facts (user to paste): `uname -m; cat /etc/os-release; python3 --version; ldd --version | head -1; df -h /; ps aux | grep main.py`
-- Branch name + whether to push (default: local branch `v2`, no push until asked)
-- Test bot token from BotFather for v2 (old bot keeps the real token until cutover) -- needed to TEST Phase 1, not to build it
+- Branch name + whether to push: DECIDED 2026-10-09 -- push the `v2` branch (no merge) at deploy step D4
+- Test bot token: DROPPED 2026-10-09 -- user chose to test by upgrading the real bot in place (Phase D in TASKS.md)
+- Tunnel: DECIDED 2026-10-09 -- set up at cutover (D7), not with Phase 4; Pi key restricted to port 8001 forwarding
