@@ -163,6 +163,19 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         when = datetime.fromtimestamp(last.at, tz)
         status = "ok" if last.ok else "in progress" if last.ok is None else "FAILED"
         lines.append(f"Last action: {h(dev)} {h(last.feature)} by {h(last.actor)} at {when:%H:%M:%S} ({status})")
+    if ctx.ac and ctx.ac.presets:
+        # What the bot last sent; the physical remote can change the AC without the bot knowing
+        lines.append("")
+        lines.append(b("Aircons (last state sent by the bot)"))
+        for dev_id, preset in ctx.ac.presets.items():
+            sent = ctx.ac.last(dev_id)
+            if sent:
+                when = datetime.fromtimestamp(sent.at, tz)
+                lines.append(f"- {h(dev_id)}: {h(sent.state.describe())} ({when:%d %b %H:%M}, {h(sent.actor)})")
+            else:
+                lines.append(f"- {h(dev_id)}: nothing sent yet (On = {h(preset.describe())})")
+    elif not ctx.settings.ac_encoder:
+        lines.append("AC encoder: off (AC_ENCODER=off), aircons send captured codes")
     lines.append("")
     lines.append(b("Broadlink devices"))
     for st in ctx.hub.status.values():
@@ -313,7 +326,8 @@ async def _remote_button(update: Update, context: ContextTypes.DEFAULT_TYPE, que
     elif action == "f" and len(args) == 2:
         r = await ctx.devices.run(args[0], args[1], actor_of(update, ctx, "button"),
                                   request_id=request_id(update))
-        await answer_or_message(query, r.message, alert=not r.ok)
+        text = "\n".join([r.message, *("Note: " + w for w in r.warnings)])
+        await answer_or_message(query, text, alert=not r.ok or bool(r.warnings))
     else:
         await query.answer("That room or device no longer exists. /keyboard to refresh.", show_alert=True)
 
