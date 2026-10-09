@@ -75,7 +75,7 @@ The image brings Debian 13 + Python 3.13; the host only needs Docker.
 git clone -b v2 https://github.com/joh90/iot iot-bot-v2 && cd iot-bot-v2
 mkdir data && cp .env.example data/.env && chmod 600 data/.env   # then put BOT_TOKEN in it
 cp ~/joh_devices.json data/devices.json && cp ~/joh_users.json data/users.json   # v1 files, same format
-deploy/docker.sh build       # first build ~10 min on a Pi 3 (cffi compiles)
+# on the PC (see below why not on the Pi):  deploy/docker.sh ship johnson@johrasp.lan
 deploy/docker.sh discover    # finds every RM / plug, prints online/offline, no Telegram, no IR
 deploy/docker.sh check       # validates files and the token format, no network (exit 3 = bad data)
 deploy/docker.sh start       # runs check first; restarts on crash and at boot; logs capped at 3 x 10 MB
@@ -85,11 +85,15 @@ deploy/docker.sh logs
 - `data/` holds `.env`, `devices.json`, `users.json`, `state/` and `logs/`. The container runs as
   uid 1001, so the folder must be writable by that uid (on this Pi that is the `johnson` user).
 - `commands.json` is baked into the image (`COMMANDS_PATH=/app/commands.json`); rebuild after changing it.
+- Build on the PC, not the Pi: Docker 20.10.7 cannot apply a seccomp profile to build steps
+  ("does not support setting security options on build"), so `apt-get` and `uv` fail inside
+  `docker build` on the Pi. `ship` cross-builds for linux/arm/v7 (PC needs `sudo dnf install
+  qemu-user-static-arm`) and streams the image to the Pi with `docker save | ssh docker load`.
 - `deploy/seccomp-clone3.json`: Docker 20.10.7's default seccomp profile blocks `clone3` with EPERM,
   so images with glibc 2.34+ fail with "can't start new thread". The profile is the stock v20.10.7
   profile plus `clone3 -> SCMP_ACT_TRACE`, which returns ENOSYS when no tracer is attached, so glibc
   falls back to `clone`. (`errnoRet` is not honoured by that Docker's runc.) Not needed on Docker 20.10.10+.
-- Update: `git fetch origin && git checkout origin/v2 && deploy/docker.sh build && deploy/docker.sh restart`,
+- Update: on the PC `deploy/docker.sh ship johnson@johrasp.lan`, then on the Pi `git fetch origin && git checkout origin/v2 && deploy/docker.sh restart`,
   then `docker image prune` now and then (each build keeps an `iotbot:<rev>` tag on the SD card).
 - `stop` / `restart` delete the container's docker logs; the bot's own JSONL logs stay in `data/logs/`.
 - Unlike the systemd unit, Docker has no `RestartPreventExitStatus` and no wait for NTP. `start` runs

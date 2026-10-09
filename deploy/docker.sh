@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run iot-bot v2 in Docker on the Pi. Usage: deploy/docker.sh build|check|discover|start|stop|restart|logs
+# Run iot-bot v2 in Docker on the Pi. Usage: deploy/docker.sh build|ship|check|discover|start|stop|restart|logs
 # Data dir (IOTBOT_DATA, default ./data) holds .env, devices.json, users.json, state/ and logs/.
 set -eu
 cd "$(dirname "$0")/.."
@@ -35,6 +35,15 @@ case "${1:-}" in
         REV=$(git rev-parse --short HEAD 2>/dev/null || echo local)
         docker build -t "$IMAGE" -t "iotbot:$REV" .
         ;;
+    ship)
+        # Run on the PC, not the Pi: Docker 20.10.7 cannot apply the seccomp profile to build steps,
+        # so builds fail there. Needs qemu-user-static-arm on the PC.
+        # Usage: deploy/docker.sh ship johnson@johrasp.lan
+        HOST="${2:?usage: $0 ship user@host}"
+        REV=$(git rev-parse --short HEAD 2>/dev/null || echo local)
+        docker buildx build --platform linux/arm/v7 -t "$IMAGE" -t "iotbot:$REV" --load .
+        docker save "$IMAGE" "iotbot:$REV" | gzip -1 | ssh "$HOST" "gunzip | docker load"
+        ;;
     check)
         run --rm "$IMAGE" --check
         ;;
@@ -66,7 +75,7 @@ case "${1:-}" in
         docker logs -f --tail 100 "$NAME"
         ;;
     *)
-        echo "usage: $0 build|check|discover|start|stop|restart|logs" >&2
+        echo "usage: $0 build|ship|check|discover|start|stop|restart|logs" >&2
         exit 64
         ;;
 esac
