@@ -16,7 +16,7 @@ bot on the Pi keeps running untouched until the branch is proven.
 | Storage       | NO SQLite. JSON state files (atomic tmp+rename, saved on every change) + JSONL logs (monthly) |
 | Roles         | None (B4 skipped). All approved users are equal                                               |
 | Python        | uv-managed Python 3.13 on the Pi (system Python is likely 3.6; PTB 22 needs >= 3.10)          |
-| Hardware      | Bedroom: Broadlink RM mini 3 (RMMINI) + Daikin super-multi-nx                                 |
+| Hardware      | Office + joh-bedroom: RM mini 3 (RMMINI) + Mitsubishi Electric fn18ve (since 2023-06; Daikin only in the old `.bk`) |
 | TTL prompts   | Run-time nudge + pre-schedule heads-up + (later, with LLM) confirm-every-LLM-action expiry    |
 | Tracking      | Numbered native tasks, reviewer subagent after each task                                      |
 | Users         | Me + household (2-4). Messages attribute actions ("X set bedroom to 24C")                     |
@@ -60,7 +60,7 @@ live only after the Phase 3 10-state hardware check.
 |-------|------------------------------------------------------------------------------------------------------------|
 | 1     | Foundation: uv + pyproject (py3.13), PTB 22.8, broadlink 0.19, `.env`, JSON state store (atomic), auth by id, Broadlink layer (per-RM lock, pre-decoded bytes, reconnect), device_events JSONL from day 1, pytest, chosen B-fixes. Typed service layer (`device.send(device, action)` returning Result with warnings) so Phase 2 + LLM plug in without rewrites |
 | 2     | Scheduling: see "Scheduling design" below                                                                  |
-| 3     | AC state engine: per-AC state (power/mode/temp/fan/swing/powerful), Daikin 280-bit encoder, golden tests re-encoding captures byte-for-byte, `/ac` command + inline remote, 10-state hardware check |
+| 3     | AC state engine, rescoped 2026-10-09: Mitsubishi 144-bit encoder (cool only; temp, fan, up/down vane + swing, powerful), per-AC state, golden tests vs the 6 captures, On/Off/Powerful buttons send encoded frames. No `/ac` UI (state picker comes with Phase 2), no hardware check (test by use after cutover) |
 | 5     | TTL prompts (non-LLM parts): run-time nudge [Off][Keep][Snooze], pre-schedule heads-up [OK][Skip tonight], `/prefs` (TTL, threshold, default-on-timeout, quiet hours) |
 | 6     | Telemetry: `turns` JSONL (user, surface, raw, intent, outcome, parse/ir/total ms), owner `/stats` p50/p95 |
 | 7     | Weekly recommendations from device_events (plain stats), hours-run + kWh/SGD (SP tariff 0.2972/kWh) |
@@ -140,6 +140,29 @@ SG public-holiday skip flag.
 Service API (shared by slash, buttons, scheduler, later LLM tools):
 `schedule.plan / apply / list / get / update / delete / pause(until?, filter?) / resume / skip(date|next) / unskip / revert(event_id) / agenda(range)`,
 each returning `Result{ok, data, warnings[], conflicts[]}`; writes carry `rev`.
+
+## Phase 3 decisions (2026-10-09)
+
+| Topic          | Decision                                                                                      |
+|----------------|-----------------------------------------------------------------------------------------------|
+| Target         | Mitsubishi Electric 144-bit, both rooms (live `joh_devices.json`). Daikin codes kept, no encoder |
+| Controls       | Cool mode only; temp 16-31; fan auto/1-5; up/down vane auto/1-5/swing; powerful. No dry/fan-only |
+| "On"           | Fixed room preset = the captured frame's state (bedroom 22C fan 3 vane auto, office 23C fan 3 vane 1) |
+| UI             | None new. Existing On/Off/Powerful buttons go through the encoder. State picker arrives with Phase 2 |
+| Hardware check | Skipped. Golden tests gate the build; user tests by use after cutover and reports odd behaviour |
+| Run            | Full auto through Phase 3 incl. shipping the image to the Pi; stop before cutover (D7)        |
+| Cutover        | After Phase 3                                                                                 |
+
+Decoded Mitsubishi captures (18 bytes, sent twice, checksum = sum(b0..b16) & 0xFF):
+
+```
+bedroom on (fn18ve-22):  23 cb 26 01 00 20 18 06 36 43 00 00 00 00 00 00 00 cc
+bedroom off:             23 cb 26 01 00 00 18 06 36 43 00 00 00 00 00 00 00 ac
+bedroom powerful:        23 cb 26 01 00 20 18 06 36 40 00 00 00 00 00 08 00 d1
+office on (fn18ve-23):   23 cb 26 01 00 20 18 07 36 4b 00 00 00 00 00 00 00 d5
+```
+b5 power (20 on), b6 mode (18 cool), b7 temp-16, b8 36 (cool + wide vane centre), b9 fan bits 0-2 /
+vane bits 3-5 / 0x40 flag, b15 powerful (08). Uncaptured bit meanings from IRremoteESP8266 `ir_Mitsubishi.cpp`.
 
 ## Aircon IR decode (commands.json)
 
