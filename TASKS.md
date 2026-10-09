@@ -41,7 +41,7 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D5   | [x]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
 | D6   | [x]    | Image cross-built on the PC (`deploy/docker.sh ship`, Pi Docker cannot build with the profile) and loaded on the Pi; `discover` in the container on the Pi: 2/2 RMs online in 10s. v2 not started (cutover deferred) |
 | D7   | [ ]    | DEFERRED until more phases are done: cutover (user runs `sudo systemctl disable --now johiot`), v2 to the real token, smoke test |
-| D8   | [ ]    | LATER: rotate the real bot token in BotFather (old one is in `ps`, the v1 unit and a session log)    |
+| D8   | n/a    | DROPPED 2026-10-09: user keeps the current token (it stays visible in `ps` and the v1 unit until cutover) |
 | D9   | [ ]    | Pi -> LLM tunnel on the host (not a container): `sudo apt install autossh` (user), new ed25519 key on the Pi restricted here to 127.0.0.1:8001 forwarding, start at boot, curl /health |
 
 Rollback: stop the v2 container, re-enable `johiot` (v1 dir and data untouched). After D8, rollback also needs the
