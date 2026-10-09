@@ -46,7 +46,7 @@ test bot**: two programs polling one token fight over messages (409 Conflict).
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh     # installs uv
 git clone https://github.com/joh90/iot iot-bot && cd iot-bot
-git checkout v2                                     # once v2 is pushed; until then rsync the folder
+git checkout v2
 uv sync --no-dev                                    # downloads Python 3.13 + dependencies
 cp .env.example .env                                # then put BOT_TOKEN in it
 cp devices.example.json devices.json                # then edit
@@ -55,8 +55,8 @@ uv run --no-dev iotbot --check                      # validates files, prints wa
 uv run --no-dev iotbot
 ```
 
-On a 32-bit Pi OS (armv7), `cryptography` (needed by broadlink) may have no prebuilt wheel and
-compile from source, which is slow. A 64-bit OS avoids this.
+On a 32-bit OS older than glibc 2.31 (e.g. Ubuntu 16.04 armhf), `cryptography` (needed by broadlink)
+has no prebuilt wheel and needs a Rust build. Use Docker instead (section 3b).
 
 Your user id: start the bot, send it `/ping`, put the id in `users.json`, restart.
 After that, add people from Telegram with `/adduser`.
@@ -65,6 +65,37 @@ After that, add people from Telegram with `/adduser`.
 
 See [deploy/iotbot.service](deploy/iotbot.service). It waits for network and NTP time sync
 (the Pi has no hardware clock) and does not restart-loop on a config error.
+
+### 3b. Docker on the Pi (old OS)
+
+For a Pi whose OS is too old for the Python packages (this repo's Pi: Ubuntu 16.04 armhf, Docker 20.10.7).
+The image brings Debian 13 + Python 3.13; the host only needs Docker.
+
+```bash
+git clone -b v2 https://github.com/joh90/iot iot-bot-v2 && cd iot-bot-v2
+mkdir data && cp .env.example data/.env && chmod 600 data/.env   # then put BOT_TOKEN in it
+cp ~/joh_devices.json data/devices.json && cp ~/joh_users.json data/users.json   # v1 files, same format
+deploy/docker.sh build       # first build ~10 min on a Pi 3 (cffi compiles)
+deploy/docker.sh discover    # finds every RM / plug, prints online/offline, no Telegram, no IR
+deploy/docker.sh check       # validates files and the token format, no network (exit 3 = bad data)
+deploy/docker.sh start       # runs check first; restarts on crash and at boot; logs capped at 3 x 10 MB
+deploy/docker.sh logs
+```
+
+- `data/` holds `.env`, `devices.json`, `users.json`, `state/` and `logs/`. The container runs as
+  uid 1001, so the folder must be writable by that uid (on this Pi that is the `johnson` user).
+- `commands.json` is baked into the image (`COMMANDS_PATH=/app/commands.json`); rebuild after changing it.
+- `deploy/seccomp-clone3.json`: Docker 20.10.7's default seccomp profile blocks `clone3` with EPERM,
+  so images with glibc 2.34+ fail with "can't start new thread". The profile is the stock v20.10.7
+  profile plus `clone3 -> SCMP_ACT_TRACE`, which returns ENOSYS when no tracer is attached, so glibc
+  falls back to `clone`. (`errnoRet` is not honoured by that Docker's runc.) Not needed on Docker 20.10.10+.
+- Update: `git fetch origin && git checkout origin/v2 && deploy/docker.sh build && deploy/docker.sh restart`,
+  then `docker image prune` now and then (each build keeps an `iotbot:<rev>` tag on the SD card).
+- `stop` / `restart` delete the container's docker logs; the bot's own JSONL logs stay in `data/logs/`.
+- Unlike the systemd unit, Docker has no `RestartPreventExitStatus` and no wait for NTP. `start` runs
+  `check` first so a bad config never gets a restart loop. After a reboot the container may start before
+  the clock is synced (the Pi has no RTC): Telegram TLS fails and is retried until NTP catches up, and
+  the first few log timestamps can be wrong.
 
 ## devices.json
 
