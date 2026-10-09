@@ -39,10 +39,10 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D3   | [x]    | Runtime: Docker on the existing OS, custom seccomp profile (threads, clock, DNS, to_thread verified)  |
 | D4   | [ ]    | Docker packaging in repo: Dockerfile (python:3.13-slim, uv, gcc for cffi in a build stage, uid 1001), `deploy/seccomp-clone3.json`, run script, `--check` + hub-only discovery mode, log cap; reviewer |
 | D5   | [ ]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
-| D6   | [ ]    | Install beside v1: clone to `~/iot-bot-v2`, data files copied into `~/iot-bot-v2/data`, `.env` mode 600, `docker build` on the Pi, `--check`, discovery of both RMs (no IR) while v1 keeps running |
-| D7   | [ ]    | Cutover: stop + disable v1 (needs sudo), start v2, smoke test (/ping /status /keyboard + 1 IR the user picks) |
-| D8   | [ ]    | Rotate the bot token in BotFather (old one is in `ps`, the v1 unit and a session log)                 |
-| D9   | [ ]    | Pi -> LLM tunnel: Pi key restricted on this PC to forwarding 127.0.0.1:8001, autossh, curl /health    |
+| D6   | [ ]    | Install beside v1: clone to `~/iot-bot-v2`, data files copied into `~/iot-bot-v2/data`, `.env` mode 600, `docker build` on the Pi, `--check`, discovery of both RMs (no IR). Runs in parallel with v1 on a TEST bot token (one token = one poller); `--restart unless-stopped`, logs capped |
+| D7   | [ ]    | DEFERRED until more phases are done: cutover (user runs `sudo systemctl disable --now johiot`), v2 to the real token, smoke test |
+| D8   | [ ]    | LATER: rotate the real bot token in BotFather (old one is in `ps`, the v1 unit and a session log)    |
+| D9   | [ ]    | Pi -> LLM tunnel on the host (not a container): `sudo apt install autossh` (user), new ed25519 key on the Pi restricted here to 127.0.0.1:8001 forwarding, start at boot, curl /health |
 
 Rollback: stop the v2 container, re-enable `johiot` (v1 dir and data untouched). After D8, rollback also needs the
 new token in the v1 unit.
