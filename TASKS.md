@@ -58,13 +58,13 @@ new token in the v1 unit.
 | 3.2  | [x]    | Mitsubishi 144-bit encoder + strict decoder (decoded state always re-encodes byte-exact) + Broadlink packet builder (capture-average timings, rounded ticks, frame twice, 0x0d05 end gap) + packet/pulse/frame parsers; reviewed |
 | 3.3  | [x]    | Golden tests: 6 captures byte-exact both ways, packet header, per-pulse timing vs the real remote (bits <= 100 us, header/gaps <= 160 us), 2 IRremoteESP8266 real-remote vectors. Not backed by a real capture: fan 2/4/quiet, vane 2-5, temps other than 22-24/26 (reachable only from Phase 2); reviewed |
 | 3.4  | [x]    | `AcService`: preset = decoded captured power_on; On = preset, Powerful = preset + powerful + fan auto, Off = last state powered off; per-AC lock across build/send/save; `DeviceService.send_ac_state` for Phase 2; `ac_state` in device_events; `AC_ENCODER=off` kill switch; `/status` aircon lines; reviewed |
-| 3.5  | [ ]    | Ship the image to the Pi (`deploy/docker.sh ship`), `discover`, update the Pi clone; STOP before D7 |
+| 3.5  | [x]    | Image `iotbot:8d23986` (= latest) shipped to the Pi, Pi clone at 8d23986, `discover` 2/2 online, encoder in the arm image gives the bedroom capture byte-exact. v2 not started, v1 untouched. STOPPED before D7 |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
 | #   | Status | Task                                                                                       |
 |-----|--------|--------------------------------------------------------------------------------------------|
-| 3   | [ ]    | AC state engine (rescoped, see Phase 3 table above)                                       |
+| 3   | [x]    | AC state engine (done 2026-10-09, see Phase 3 table above)                                  |
 | 2   | [ ]    | Scheduling per PLAN.md "Scheduling design" + adversarial review outcomes                    |
 | 5   | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up, `/prefs`                      |
 | 6   | [ ]    | Telemetry: `turns` JSONL, `/stats` p50/p95                                                  |
