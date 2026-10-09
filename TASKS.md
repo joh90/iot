@@ -41,12 +41,15 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D6   | [x]    | Image cross-built on the PC (`deploy/docker.sh ship`, Pi Docker cannot build with the profile) and loaded on the Pi; `discover` in the container on the Pi: 2/2 RMs online in 10s. v2 not started (cutover deferred) |
 | D7   | [ ]    | Cutover to v2 on the Pi (steps kept outside the repo)                                                                            |
 
+Follow-up (found in the 3.1 review, not in scope): `write_json_atomic` only checks that the main file parses before
+backing it up, not that it passes `validate`, so a parseable-but-invalid users.json could replace a good `.bak`.
+
 
 ## Phase 3 -- AC state engine (rescoped 2026-10-09, full auto, stop before cutover)
 
 | #    | Status | Task                                                                                                  |
 |------|--------|-------------------------------------------------------------------------------------------------------|
-| 3.1  | [ ]    | AC state model: `AcState(power, mode=cool, temp 16-31, fan auto/1-5, vane auto/1-5/swing, powerful)`, validation, room presets from captures, last-sent state per AC in `state/ac_state.json` |
+| 3.1  | [x]    | AC state model: frozen `AcState(power, mode=cool, temp 16-31, fan auto/1-4/quiet, vane auto/1-5/swing, powerful)`, strict validation (no bool/float/str-digit), `AcStateStore` cache in `state/ac_state.json` (damaged file -> start empty + warning); reviewed |
 | 3.2  | [ ]    | Mitsubishi 144-bit encoder + decoder + Broadlink packet builder (pulses, frame sent twice)            |
 | 3.3  | [ ]    | Golden tests: the 6 captures byte-exact, decode/encode round trip, checksum, packet decodes via broadlink `data_to_pulses` |
 | 3.4  | [ ]    | Service: `AcService.set(device, state or changes, actor)` -> Result; On = fixed room preset, Off, Powerful through the encoder; device_events logs the state sent |
