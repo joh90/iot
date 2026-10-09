@@ -44,6 +44,9 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D8   | n/a    | DROPPED 2026-10-09: user keeps the current token (it stays visible in `ps` and the v1 unit until cutover) |
 | D9   | [ ]    | Pi -> LLM tunnel on the host (not a container): `sudo apt install autossh` (user), new ed25519 key on the Pi restricted here to 127.0.0.1:8001 forwarding, start at boot, curl /health |
 
+Follow-up (found in the 3.1 review, not in scope): `write_json_atomic` only checks that the main file parses before
+backing it up, not that it passes `validate`, so a parseable-but-invalid users.json could replace a good `.bak`.
+
 Rollback: stop the v2 container, re-enable `johiot` (v1 dir and data untouched). After D8, rollback also needs the
 new token in the v1 unit.
 
@@ -51,7 +54,7 @@ new token in the v1 unit.
 
 | #    | Status | Task                                                                                                  |
 |------|--------|-------------------------------------------------------------------------------------------------------|
-| 3.1  | [ ]    | AC state model: `AcState(power, mode=cool, temp 16-31, fan auto/1-5, vane auto/1-5/swing, powerful)`, validation, room presets from captures, last-sent state per AC in `state/ac_state.json` |
+| 3.1  | [x]    | AC state model: frozen `AcState(power, mode=cool, temp 16-31, fan auto/1-4/quiet, vane auto/1-5/swing, powerful)`, strict validation (no bool/float/str-digit), `AcStateStore` cache in `state/ac_state.json` (damaged file -> start empty + warning); reviewed |
 | 3.2  | [ ]    | Mitsubishi 144-bit encoder + decoder + Broadlink packet builder (pulses, frame sent twice)            |
 | 3.3  | [ ]    | Golden tests: the 6 captures byte-exact, decode/encode round trip, checksum, packet decodes via broadlink `data_to_pulses` |
 | 3.4  | [ ]    | Service: `AcService.set(device, state or changes, actor)` -> Result; On = fixed room preset, Off, Powerful through the encoder; device_events logs the state sent |

@@ -138,6 +138,15 @@ class JsonStore:
             logger.warning(warning)
         return data
 
+    def use_default(self) -> Any:
+        """Start from `default()` without reading the file; the next save replaces it.
+
+        For caches only: data files must refuse to start instead (see read_json).
+        """
+        self._data = self._default()
+        self.load_warning = None
+        return self._data
+
     @property
     def data(self) -> Any:
         """Read-only view by convention; mutate only through update()."""
