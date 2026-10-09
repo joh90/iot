@@ -16,11 +16,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: ./.env)")
     parser.add_argument("--check", action="store_true",
                         help="load config and data files, print warnings, and exit without connecting")
+    parser.add_argument("--discover", action="store_true",
+                        help="find and authenticate every Broadlink device, print the result, and exit "
+                             "(never contacts Telegram or sends IR; BOT_TOKEN may be empty)")
     args = parser.parse_args(argv)
 
     env_file = Path(args.env_file)
     try:
-        settings = load_settings(env_file=env_file.name, base_dir=env_file.resolve().parent)
+        settings = load_settings(env_file=env_file.name, base_dir=env_file.resolve().parent,
+                                 require_token=not args.discover)
     except ConfigError as e:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
@@ -47,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
               f"users={len(ctx.users.list())} warnings={len(ctx.warnings)}")
         return 0
 
+    if args.discover:
+        return _discover(ctx)
+
     from telegram.error import InvalidToken
 
     app = build_application(ctx)
@@ -58,6 +65,22 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger(__name__).critical("BOT_TOKEN was rejected by Telegram; check .env")
         return 2
     return 0
+
+
+def _discover(ctx) -> int:
+    """Exit 0 if every expected device answered, 1 otherwise."""
+    import asyncio
+
+    from iotbot.context import expected_devices
+
+    asyncio.run(ctx.hub.start(expected_devices(ctx.registry)))
+    statuses = list(ctx.hub.status.values())
+    for st in statuses:
+        state = f"online {st.type} {st.ip}" if st.online else f"OFFLINE ({st.error})"
+        print(f"{st.label}: {st.mac} {state}")
+    online = sum(st.online for st in statuses)
+    print(f"{online}/{len(statuses)} devices online")
+    return 0 if statuses and online == len(statuses) else 1
 
 
 if __name__ == "__main__":
