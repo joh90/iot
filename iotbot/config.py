@@ -36,8 +36,11 @@ def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
 
 def load_settings(env_file: str | os.PathLike | None = ".env",
                   environ: dict[str, str] | None = None,
-                  base_dir: Path | None = None) -> Settings:
+                  base_dir: Path | None = None,
+                  require_token: bool = True) -> Settings:
     """Build Settings without touching os.environ.
+
+    `require_token=False` allows an empty BOT_TOKEN (discovery-only runs that never reach Telegram).
 
     `env_file` and relative data paths resolve against `base_dir` (default: cwd).
     Real environment variables win over `.env` values. Passing `environ` skips both.
@@ -56,7 +59,7 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         environ = {**file_values, **{k: v for k, v in os.environ.items() if v != ""}}
 
     token = (environ.get("BOT_TOKEN") or "").strip()
-    if not token or ":" not in token:
+    if (token or require_token) and ":" not in token:
         where = f" (looked in {env_path} and the environment)" if env_path else ""
         raise ConfigError(f"BOT_TOKEN is missing or malformed, expected '<id>:<secret>'{where}; see .env.example")
 

@@ -1,0 +1,16 @@
+# Keep secrets, household data and local state out of the image
+.env
+.env.*
+devices.json
+users.json
+state/
+logs/
+data/
+.git/
+.venv/
+.pytest_cache/
+**/__pycache__/
+tests/
+docs/
+broadlink_cli
+discovery
