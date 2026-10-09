@@ -56,7 +56,7 @@ new token in the v1 unit.
 |------|--------|-------------------------------------------------------------------------------------------------------|
 | 3.1  | [x]    | AC state model: frozen `AcState(power, mode=cool, temp 16-31, fan auto/1-4/quiet, vane auto/1-5/swing, powerful)`, strict validation (no bool/float/str-digit), `AcStateStore` cache in `state/ac_state.json` (damaged file -> start empty + warning); reviewed |
 | 3.2  | [x]    | Mitsubishi 144-bit encoder + strict decoder (decoded state always re-encodes byte-exact) + Broadlink packet builder (capture-average timings, rounded ticks, frame twice, 0x0d05 end gap) + packet/pulse/frame parsers; reviewed |
-| 3.3  | [ ]    | Golden tests: the 6 captures byte-exact, decode/encode round trip, checksum, packet decodes via broadlink `data_to_pulses` |
+| 3.3  | [x]    | Golden tests: 6 captures byte-exact both ways, packet header, per-pulse timing vs the real remote (bits <= 100 us, header/gaps <= 160 us), 2 IRremoteESP8266 real-remote vectors. Not backed by a real capture: fan 2/4/quiet, vane 2-5, temps other than 22-24/26 (reachable only from Phase 2); reviewed |
 | 3.4  | [ ]    | Service: `AcService.set(device, state or changes, actor)` -> Result; On = fixed room preset, Off, Powerful through the encoder; device_events logs the state sent |
 | 3.5  | [ ]    | Ship the image to the Pi (`deploy/docker.sh ship`), `discover`, update the Pi clone; STOP before D7 |
 
