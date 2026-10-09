@@ -11,7 +11,7 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 
 - `/keyboard` opens a button remote: room > device > action
 - `/on <device>`, `/off <device>`, `/d <device> <action>` (e.g. `/d bedroom_ac power on high`)
-- `/status` shows uptime, the last action, every Broadlink device (online or offline) and config warnings
+- `/status` shows uptime, the last action, the last state sent to each aircon, every Broadlink device (online or offline) and config warnings
 - `/list` shows rooms, devices and the actions each one has
 - `/user` lists approved users with a Remove button; `/adduser <user id> <name>` approves someone
 - `/ping` works for anyone and shows their Telegram user id (needed to approve them)
@@ -28,7 +28,7 @@ Only approved Telegram user ids can use the bot; usernames are not checked.
 | `users.json`       | no      | Approved users `{"<telegram id>": "<name>"}` (`users.example.json`) |
 | `commands.json`    | yes     | Captured IR codes by device type / brand / model           |
 | `logs/*.jsonl`     | no      | `device_events-YYYY-MM.jsonl` (every action), `audit-YYYY-MM.jsonl` (user changes) |
-| `state/`           | no      | Future state files (schedules, AC state)                   |
+| `state/`           | no      | `ac_state.json` (last state sent per aircon); later schedules |
 
 JSON files are written atomically (temp file, fsync, rename) with a `.bak` of the previous good
 version. If a file is damaged after a power cut, the bot loads the `.bak` and says so in `/status`.
@@ -153,6 +153,23 @@ about 2 seconds. Learning over Telegram (`/learn`) is on the deferred list in PL
 Aircon remotes send the whole state with every press (mode, temperature, fan, swing), so a captured
 "power on" always means one specific setting. See the IR decode table in PLAN.md.
 
+## Aircon state (Mitsubishi)
+
+Mitsubishi Electric aircons (144-bit protocol) are driven by the bot's own encoder instead of the raw
+captures. The captured `power_on` is decoded and becomes the room's preset:
+
+- **On** sends the preset (e.g. bedroom cool 22C fan 3 vane auto)
+- **Powerful** sends the preset with powerful on and fan auto, as the remote does
+- **Off** sends the last state the bot sent, with power off
+
+Supported: cool mode, 16-31C, fan auto/1-4/quiet, vane auto/1-5/swing, powerful. The last state sent
+is kept in `state/ac_state.json` and shown in `/status`; it is what the bot asked for, so it goes stale
+if someone uses the physical remote. Each send is logged with its `ac_state` in `device_events`.
+
+If an aircon ignores the bot's frames, set `AC_ENCODER=off` in `.env` and restart: every aircon goes
+back to sending its captured codes. Daikin aircons, and any capture the encoder cannot read, always
+use the captured codes.
+
 ## Retries and safety
 
 - One device failing never stops the bot from starting; `/status` shows which ones are offline.
@@ -162,7 +179,7 @@ Aircon remotes send the whole state with every press (mode, temperature, fan, sw
 
 ## Coming next
 
-Aircon state engine (set any temperature/mode, not just captured presets), schedules and sleep timers,
+Choosing aircon settings from Telegram (the engine is done, the picker comes with schedules), schedules and sleep timers,
 reminders, usage stats. The LLM assistant (reached over an SSH tunnel to a PC) is still being planned.
 See PLAN.md.
 

@@ -7,13 +7,21 @@ import itertools
 import logging
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from iotbot.devices.hub import BroadlinkHub, HubError
-from iotbot.devices.model import Device, Registry, resolve_feature
+from iotbot.ac.state import AcState
+from iotbot.devices.model import Device, Feature, Registry, resolve_feature
 from iotbot.result import Actor, Result
 from iotbot.store import JsonlLog
 
+if TYPE_CHECKING:
+    from iotbot.ac.service import AcService
+
 logger = logging.getLogger(__name__)
+
+# Pseudo-feature for sending an arbitrary AC state (scheduler, later the LLM)
+SET_STATE = Feature("set_state", "set", idempotent=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,10 +37,13 @@ class LastAction:
 
 
 class DeviceService:
-    def __init__(self, registry: Registry, hub: BroadlinkHub, events: JsonlLog):
+    def __init__(self, registry: Registry, hub: BroadlinkHub, events: JsonlLog,
+                 ac: AcService | None = None):
         self.registry = registry
         self.hub = hub
         self.events = events
+        # None when AC_ENCODER=off: every AC sends its captured codes
+        self.ac = ac
         self.last: dict[str, LastAction] = {}
         self._seq = itertools.count(1)
 
@@ -63,7 +74,26 @@ class DeviceService:
         if f is None:
             # Allowlist (B2): only features built from captured codes / known plug ops
             return Result.fail("feature_not_found", f"{device.id} has no '{feature}'.")
+        if device.kind == "ir" and self.ac and self.ac.manages(device.id, feature):
+            async with self.ac.lock(device.id):
+                state = self.ac.state_for(device.id, feature)
+                return await self._run(device, f, actor, request_id, source, state)
+        return await self._run(device, f, actor, request_id, source)
 
+    async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
+                            request_id: str | None = None, source: str | None = None) -> Result:
+        """Send a full AC state to a managed AC (built by the encoder, never a capture)."""
+        device = self.get(device_id)
+        if device is None:
+            return Result.fail("device_not_found", f"Device '{device_id}' not found.")
+        if not (self.ac and self.ac.manages(device.id)):
+            return Result.fail("not_supported", f"{device.id} cannot be set to an AC state.")
+        async with self.ac.lock(device.id):
+            return await self._run(device, SET_STATE, actor, request_id, source, state)
+
+    async def _run(self, device: Device, f: Feature, actor: Actor, request_id: str | None,
+                   source: str | None, ac_state: AcState | None = None) -> Result:
+        feature = f.key
         prev = self.last.get(device.id)
         seq = next(self._seq)
         self.last[device.id] = LastAction(seq, feature, time.time(), actor.name, None,
@@ -79,7 +109,13 @@ class DeviceService:
                 room = self.registry.rooms.get(device.room)
                 if room is None or not room.rm_mac:
                     raise HubError(f"room '{device.room}' has no RM remote configured")
-                await self.hub.send_ir(room.rm_mac, f.codes, f.gap_s, f.idempotent)
+                codes = f.codes
+                if ac_state is not None:
+                    try:
+                        codes = (self.ac.packet(ac_state),)
+                    except Exception as e:  # noqa: BLE001 -- nothing was sent
+                        raise HubError(f"could not build the AC frame: {e}") from e
+                await self.hub.send_ir(room.rm_mac, codes, f.gap_s, f.idempotent)
             ok, error = True, ""
         except HubError as e:
             ok, error, maybe = False, str(e), e.maybe_delivered
@@ -101,20 +137,33 @@ class DeviceService:
                 "ok": ok, "error": error or None, "maybe_delivered": maybe if not ok else None,
                 "state": state, "ms": ms,
             }
+            if ac_state is not None:
+                record["ac_state"] = ac_state.to_dict()
+
+            async def finish() -> str | None:
+                # A sent AC state is saved first, so the next Off and /status use it
+                warning = None
+                if ok and ac_state is not None:
+                    warning = await self.ac.remember(device.id, ac_state, actor.name)
+                await self.events.append_async(record)
+                return warning
+
             # Shielded so a cancelled caller still leaves a trace of a maybe-sent command
-            await asyncio.shield(self.events.append_async(record))
+            save_warning = await asyncio.shield(finish())
 
         if not ok:
             return Result.fail("send_failed", f"{device.id} {f.label} failed: {error}",
                                data={"device": device.id, "feature": feature, "seq": seq,
                                      "request_id": request_id, "maybe_delivered": maybe, "ms": ms})
+        warnings = [save_warning] if save_warning else []
         if device.kind == "plug":
             what = "nightlight" if "nightlight" in (f.plug_op or "") else "power"
             msg = f"{device.id} {what} is " + ("unknown" if state is None else "ON" if state else "OFF")
         else:
-            msg = f"Sent {device.id} {f.label}"
+            msg = f"Sent {device.id} {f.label}" + (f": {ac_state.describe()}" if ac_state is not None else "")
         return Result.success(msg, data={"device": device.id, "feature": feature, "seq": seq,
-                                         "request_id": request_id, "state": state, "ms": ms})
+                                         "request_id": request_id, "state": state, "ms": ms},
+                              warnings=warnings)
 
 
 def _features_hint(device: Device, limit: int = 8) -> str:

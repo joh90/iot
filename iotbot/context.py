@@ -7,6 +7,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from iotbot.ac.service import AcService
+from iotbot.ac.state import AcStateStore
 from iotbot.config import Settings
 from iotbot.devices.hub import BroadlinkHub, Expected, Transport
 from iotbot.devices.model import Registry, load_registry
@@ -24,6 +26,7 @@ class AppContext:
     hub: BroadlinkHub
     devices: DeviceService
     users: UserService
+    ac: AcService | None = None
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -70,10 +73,23 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     hub = BroadlinkHub(transport or Transport(settings.discover_timeout))
     events = JsonlLog(settings.log_dir, "device_events", settings.timezone)
     audit = JsonlLog(settings.log_dir, "audit", settings.timezone)
+
+    ac = None
+    if settings.ac_encoder:
+        ac_store = AcStateStore(settings.state_dir / "ac_state.json")
+        ac_store.load()
+        if ac_store.load_warning:
+            warnings.append(ac_store.load_warning)
+        ac = AcService(registry, ac_store)
+        warnings += ac.warnings
+    else:
+        logger.info("AC_ENCODER=off: aircons send their captured codes")
+
     ctx = AppContext(
         settings=settings, registry=registry, hub=hub,
-        devices=DeviceService(registry, hub, events),
+        devices=DeviceService(registry, hub, events, ac),
         users=UserService(users_store, audit),
+        ac=ac,
         warnings=warnings,
     )
     for w in warnings:

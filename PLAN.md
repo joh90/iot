@@ -143,15 +143,17 @@ each returning `Result{ok, data, warnings[], conflicts[]}`; writes carry `rev`.
 
 ## Phase 3 decisions (2026-10-09)
 
-| Topic          | Decision                                                                                      |
-|----------------|-----------------------------------------------------------------------------------------------|
-| Target         | Mitsubishi Electric 144-bit, both rooms (live `joh_devices.json`). Daikin codes kept, no encoder |
-| Controls       | Cool mode only; temp 16-31; fan auto/1-5; up/down vane auto/1-5/swing; powerful. No dry/fan-only |
-| "On"           | Fixed room preset = the captured frame's state (bedroom 22C fan 3 vane auto, office 23C fan 3 vane 1) |
-| UI             | None new. Existing On/Off/Powerful buttons go through the encoder. State picker arrives with Phase 2 |
-| Hardware check | Skipped. Golden tests gate the build; user tests by use after cutover and reports odd behaviour |
-| Run            | Full auto through Phase 3 incl. shipping the image to the Pi; stop before cutover (D7)        |
-| Cutover        | After Phase 3                                                                                 |
+| Topic          | Decision                                                                                                                                                   |
+|----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Target         | Mitsubishi Electric 144-bit, both rooms (live `joh_devices.json`). Daikin codes kept, no encoder                                                           |
+| Controls       | Cool mode only; temp 16-31; fan auto/1-4/quiet (protocol has 4 speeds + quiet, corrected from 1-5); up/down vane auto/1-5/swing; powerful. No dry/fan-only |
+| "On"           | Fixed room preset = the captured frame's state (bedroom 22C fan 3 vane auto, office 23C fan 3 vane 1)                                                      |
+| UI             | None new. Existing On/Off/Powerful buttons go through the encoder. State picker arrives with Phase 2. `/status` shows the last state sent per AC           |
+| Buttons        | On = preset (decoded from the captured power_on); Powerful = preset + powerful + fan auto (as captured); Off = last sent state, power and powerful off     |
+| Kill switch    | `AC_ENCODER=off` in `.env` + restart: ACs send captured codes again                                                                                        |
+| Hardware check | Skipped. Golden tests gate the build; user tests by use after cutover and reports odd behaviour                                                            |
+| Run            | Full auto through Phase 3 incl. shipping the image to the Pi; stop before cutover (D7)                                                                     |
+| Cutover        | After Phase 3                                                                                                                                              |
 
 Decoded Mitsubishi captures (18 bytes, sent twice, checksum = sum(b0..b16) & 0xFF):
 
