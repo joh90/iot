@@ -18,21 +18,34 @@ Status: `[ ]` pending, `[~]` in progress, `[r]` built, in review, `[x]` done + r
 | 1.6  | [x]    | Telegram layer on PTB 22 async: /start /ping /status /list /keyboard /on /off /d /user /adduser, compact string callback data (B18), HTML escaping (B11), error handler (B15), UI nits (B26-28) |
 | 1.7  | [x]    | Entry point + README rewrite for Pi/.env/tunnel (B22) + systemd unit example + local smoke run |
 
-## Phase D -- Deploy to the Pi (planned 2026-10-09; in-place upgrade on the real token)
+## Phase D -- Deploy to the Pi in Docker (planned 2026-10-09; in-place upgrade on the real token)
 
-Pi: `johrasp.lan` / 192.168.86.48 (Pi 1/2/3/Zero by MAC prefix b8:27:eb). Old bot stays untouched until D6.
+Pi facts (D2): `johrasp.lan` 192.168.86.48, Pi 3 Model B, 1 GB RAM, Ubuntu 16.04 armhf (32-bit), glibc 2.23,
+kernel 4.4 (2018), Docker 20.10.7 (last apt build for xenial), libseccomp 2.5.1, user `johnson` (uid 1001,
+docker group, sudo needs a password). v1: `johiot.service` as root, `~/iot` at master ad25a7f, data in
+`~/joh_devices.json` + `~/joh_users.json`, token in the unit's ExecStart (visible in `ps`). Disk: 15 GB free
+after removing the stopped Pi-hole container + junk (`~/etc-pihole`, `~/etc-dnsmasq.d` kept: root-owned).
+
+Why Docker: glibc 2.23 is too old for cryptography's armv7 wheel (needs 2.31) and Rust builds on 1 GB are not viable.
+Docker 20.10.7 blocks clone3 with EPERM, so glibc 2.34+ images cannot start threads. Fix (proven on the Pi):
+`deploy/seccomp-clone3.json` = moby v20.10.7 default profile + `clone3 -> SCMP_ACT_TRACE` (no tracer, so ENOSYS,
+glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE.
 
 | #    | Status | Task                                                                                                  |
 |------|--------|-------------------------------------------------------------------------------------------------------|
-| D1   | [ ]    | User installs this PC's key on the Pi (`ssh-copy-id`), says which username                            |
-| D2   | [ ]    | Read-only inspection: arch, OS, glibc, disk, RAM, how v1 runs, its paths, data files, token location  |
-| D3   | [ ]    | Decide OS path from D2 facts (keep OS vs reflash a spare SD with 64-bit Pi OS Lite)                   |
-| D4   | [ ]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
-| D5   | [ ]    | Install v2 next to v1: uv, clone, `uv sync --frozen --no-dev`, copy real data files, `.env`, `--check` |
-| D6   | [ ]    | Cutover: stop + disable v1, start v2 unit, smoke test (/ping /status /keyboard + 1 IR the user picks)  |
-| D7   | [ ]    | Pi -> LLM tunnel: autossh unit on the Pi, key here restricted to forwarding 127.0.0.1:8001, curl /health |
+| D1   | [x]    | Key login works as `johnson@johrasp`                                                                  |
+| D2   | [x]    | Read-only inspection (facts above)                                                                    |
+| D2a  | [x]    | Cleanup: Pi-hole container + image, `.part`, duplicate ASOT webm, ngrok, Youku cookies, pihole.sh (99 MB -> 15 GB free) |
+| D3   | [x]    | Runtime: Docker on the existing OS, custom seccomp profile (threads, clock, DNS, to_thread verified)  |
+| D4   | [ ]    | Docker packaging in repo: Dockerfile (python:3.13-slim, uv, gcc for cffi in a build stage, uid 1001), `deploy/seccomp-clone3.json`, run script, `--check` + hub-only discovery mode, log cap; reviewer |
+| D5   | [ ]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
+| D6   | [ ]    | Install beside v1: clone to `~/iot-bot-v2`, data files copied into `~/iot-bot-v2/data`, `.env` mode 600, `docker build` on the Pi, `--check`, discovery of both RMs (no IR) while v1 keeps running |
+| D7   | [ ]    | Cutover: stop + disable v1 (needs sudo), start v2, smoke test (/ping /status /keyboard + 1 IR the user picks) |
+| D8   | [ ]    | Rotate the bot token in BotFather (old one is in `ps`, the v1 unit and a session log)                 |
+| D9   | [ ]    | Pi -> LLM tunnel: Pi key restricted on this PC to forwarding 127.0.0.1:8001, autossh, curl /health    |
 
-Rollback: stop v2, re-enable v1 (v1 dir untouched), or swap the old SD card back if reflashed.
+Rollback: stop the v2 container, re-enable `johiot` (v1 dir and data untouched). After D8, rollback also needs the
+new token in the v1 unit.
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
