@@ -5,7 +5,7 @@
 FROM python:3.13-slim AS build
 # cffi has no armv7 wheel and compiles here; cryptography ships one (needs glibc >= 2.31, the image has 2.41)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libffi-dev \
+    && apt-get install -y --no-install-recommends gcc libc6-dev libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv==0.10.2
 ENV UV_COMPILE_BYTECODE=1 \
