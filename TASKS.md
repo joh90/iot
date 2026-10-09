@@ -47,11 +47,21 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 Rollback: stop the v2 container, re-enable `johiot` (v1 dir and data untouched). After D8, rollback also needs the
 new token in the v1 unit.
 
+## Phase 3 -- AC state engine (rescoped 2026-10-09, full auto, stop before cutover)
+
+| #    | Status | Task                                                                                                  |
+|------|--------|-------------------------------------------------------------------------------------------------------|
+| 3.1  | [ ]    | AC state model: `AcState(power, mode=cool, temp 16-31, fan auto/1-5, vane auto/1-5/swing, powerful)`, validation, room presets from captures, last-sent state per AC in `state/ac_state.json` |
+| 3.2  | [ ]    | Mitsubishi 144-bit encoder + decoder + Broadlink packet builder (pulses, frame sent twice)            |
+| 3.3  | [ ]    | Golden tests: the 6 captures byte-exact, decode/encode round trip, checksum, packet decodes via broadlink `data_to_pulses` |
+| 3.4  | [ ]    | Service: `AcService.set(device, state or changes, actor)` -> Result; On = fixed room preset, Off, Powerful through the encoder; device_events logs the state sent |
+| 3.5  | [ ]    | Ship the image to the Pi (`deploy/docker.sh ship`), `discover`, update the Pi clone; STOP before D7 |
+
 ## Later phases (coarse; split into numbered subtasks when started)
 
 | #   | Status | Task                                                                                       |
 |-----|--------|--------------------------------------------------------------------------------------------|
-| 3   | [ ]    | AC state engine: per-AC state, Daikin 280-bit encoder, golden tests vs captures, `/ac` + inline remote, 10-state hardware check |
+| 3   | [ ]    | AC state engine (rescoped, see Phase 3 table above)                                       |
 | 2   | [ ]    | Scheduling per PLAN.md "Scheduling design" + adversarial review outcomes                    |
 | 5   | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up, `/prefs`                      |
 | 6   | [ ]    | Telemetry: `turns` JSONL, `/stats` p50/p95                                                  |
