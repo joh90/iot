@@ -224,3 +224,11 @@ async def test_append_async(tmp_path):
     log = JsonlLog(tmp_path, "ev")
     rec = await log.append_async({"a": 1})
     assert rec["a"] == 1
+
+
+def test_use_default_starts_fresh_without_reading(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text("{bad")
+    store = JsonStore(p, dict)
+    assert store.use_default() == {}
+    assert store.data == {} and store.load_warning is None
