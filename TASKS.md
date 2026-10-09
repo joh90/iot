@@ -37,8 +37,8 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D2a  | [x]    | Cleanup: Pi-hole container + image, `.part`, duplicate ASOT webm, ngrok, Youku cookies, pihole.sh (99 MB -> 15 GB free) |
 | D3   | [x]    | Runtime: Docker on the existing OS, custom seccomp profile (threads, clock, DNS, to_thread verified)  |
 | D4   | [x]    | Docker packaging in repo: Dockerfile (python:3.13-slim, uv, gcc for cffi in a build stage, uid 1001), `deploy/seccomp-clone3.json`, run script, `--check` + hub-only discovery mode, log cap; reviewer |
-| D5   | [ ]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
-| D6   | [ ]    | Install beside v1: clone to `~/iot-bot-v2`, data files copied into `~/iot-bot-v2/data`, `.env` mode 600, `docker build` on the Pi, `--check`, discovery of both RMs (no IR). Runs in parallel with v1 on a TEST bot token (one token = one poller); `--restart unless-stopped`, logs capped |
+| D5   | [x]    | Push `v2` branch to GitHub (branch only, no merge to master)                                          |
+| D6   | [x]    | Image cross-built on the PC (`deploy/docker.sh ship`, Pi Docker cannot build with the profile) and loaded on the Pi; `discover` in the container on the Pi: 2/2 RMs online in 10s. v2 not started (cutover deferred) |
 | D7   | [ ]    | Cutover to v2 on the Pi (steps kept outside the repo)                                                                            |
 
 
