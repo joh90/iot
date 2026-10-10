@@ -105,3 +105,36 @@ async def test_app_starts_and_stops_the_scheduler(tmp_path, monkeypatch):
     assert started == [1] and ctx.notifier.send is not None
     await app.post_stop(app)
     stop.assert_awaited_once()
+
+
+async def test_removing_a_user_hands_over_their_schedules(tmp_path):
+    from iotbot.bot import keyboards as kb
+    ctx = make_ctx(tmp_path)
+    bob = Actor(222, "Bob", "button")
+    await ctx.users.add(ALICE, 222, "Bob")
+    p = ctx.schedules.plan(bob, {"device": "bed_ac", "action": ON22, "label": "Bobs",
+                                 "when": {"kind": "weekly", "time": "23:00", "days": ["sun"]}})
+    s = (await ctx.schedules.apply(bob, p.data["plan_id"])).data["schedule"]
+    c = make_context(ctx)
+    u = make_update(ME, data=encode(kb.US, "ask", 222))
+    await hd.on_button(u, c)
+    assert "Their 1 schedule(s) (Bobs) will be handed to you" in u.callback_query.edit_message_text.call_args.args[0]
+    u = make_update(ME, data=encode(kb.US, "del", 222))
+    await hd.on_button(u, c)
+    (text,), _ = u.callback_query.answer.call_args
+    assert "1 schedule(s) are now yours" in text
+    assert ctx.schedules.get(s.id).created_by == ME
+
+
+
+async def test_handover_picks_up_orphans_and_survives_a_fired_timer(tmp_path):
+    from dataclasses import replace
+    ctx = make_ctx(tmp_path)
+    bob = Actor(222, "Bob", "button")
+    p = ctx.schedules.plan(bob, {"device": "bed_ac", "action": ON22,
+                                 "when": {"kind": "weekly", "time": "23:00", "days": ["sun"]}})
+    s = (await ctx.schedules.apply(bob, p.data["plan_id"])).data["schedule"]   # Bob was never approved
+    r = await ctx.schedules.reassign(ALICE, ctx.users.is_allowed, ME)
+    new = ctx.schedules.get(s.id)
+    assert r.ok and r.data["ids"] == [s.id] and new.created_by == ME and new.rev == s.rev
+    assert (await ctx.schedules.reassign(ALICE, ctx.users.is_allowed, ME)).data["ids"] == []

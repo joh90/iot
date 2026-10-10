@@ -14,8 +14,10 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
+from iotbot.bot import acpicker as ap
 from iotbot.bot import keyboards as kb
-from iotbot.bot.callbacks import decode
+from iotbot.bot import wizard as wz
+from iotbot.bot.callbacks import decode, encode
 from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup
 from iotbot.context import AppContext
 from iotbot.result import Actor, Result, Surface
@@ -326,6 +328,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _users_button(update, context, query, action, args)
     elif ns == sn.NS:
         await _schedule_notice_button(update, context, query, action, args)
+    elif ns in (wz.NS, ap.NS):
+        await _wizard_button(update, context, query, ns, action, args)
     else:
         # Buttons from the old bot or a removed feature
         await query.answer("This button is no longer active.")
@@ -346,7 +350,8 @@ async def _remote_button(update: Update, context: ContextTypes.DEFAULT_TYPE, que
         await safe_edit(query, f"Select {h(args[0])} device", kb.room_keyboard(reg, args[0]))
     elif action == "d" and args and args[0] in reg.devices:
         await query.answer()
-        await safe_edit(query, f"Select {h(args[0])} action", kb.device_keyboard(reg, args[0]))
+        await safe_edit(query, f"Select {h(args[0])} action",
+                        kb.device_keyboard(reg, args[0], schedule_buttons(context, args[0])))
     elif action == "f" and len(args) == 2:
         r = await ctx.devices.run(args[0], args[1], actor_of(update, ctx, "button"),
                                   request_id=request_id(update))
@@ -382,10 +387,22 @@ async def _users_button(update: Update, context: ContextTypes.DEFAULT_TYPE, quer
             await query.answer("You cannot remove yourself.", show_alert=True)
             return
         await query.answer()
-        await safe_edit(query, f"Remove {b(ctx.users.name_of(uid))} ({uid})?", kb.confirm_remove_keyboard(uid))
+        text = f"Remove {b(ctx.users.name_of(uid))} ({uid})?"
+        if ctx.schedules is not None and (owned := ctx.schedules.owned_by(uid)):
+            from iotbot.schedule import text as stx
+            names = ", ".join(stx.name(s) for s in owned[:10]) + (", ..." if len(owned) > 10 else "")
+            text += f"\nTheir {len(owned)} schedule(s) ({h(names)}) will be handed to you."
+        await safe_edit(query, text, kb.confirm_remove_keyboard(uid))
     elif action == "del" and args:
         # The service rechecks self-delete and existence at this moment (B13)
-        r = await ctx.users.delete(actor_of(update, ctx, "button"), args[0])
+        actor = actor_of(update, ctx, "button")
+        r = await ctx.users.delete(actor, args[0])
+        if r.ok and ctx.schedules is not None:
+            moved = await ctx.schedules.reassign(actor, ctx.users.is_allowed, actor.user_id)
+            if moved.ok and moved.data.get("ids"):
+                r.message += f" {len(moved.data['ids'])} schedule(s) are now yours."
+            elif not moved.ok:
+                r.message += f" Their schedules could not be handed over: {moved.message}"
         await answer_or_message(query, r.message, alert=not r.ok)
         await safe_edit(query, "Approved users", kb.users_keyboard(ctx.users.list(), me))
     else:
@@ -435,6 +452,115 @@ async def send_notice(bot: Bot, n: sn.Notice) -> None:
         await bot.send_message(n.user_id, part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
                                disable_notification=n.silent,
                                reply_markup=markup if i == len(parts) - 1 else None)
+
+
+def wizard_of(context: ContextTypes.DEFAULT_TYPE) -> wz.Wizard | None:
+    ctx = app_ctx(context)
+    if ctx.schedules is None:
+        return None
+    data = context.application.bot_data
+    if "wizard" not in data:
+        data["wizard"] = wz.Wizard(ctx)
+    return data["wizard"]
+
+
+def schedule_buttons(context: ContextTypes.DEFAULT_TYPE, device: str) -> list[InlineKeyboardButton]:
+    w = wizard_of(context)
+    if w is None or device not in w.schedulable():
+        return []
+    out = [InlineKeyboardButton("Timer", callback_data=encode(wz.NS, "-", "tm", device))] if w.can_timer(device) else []
+    return out + [InlineKeyboardButton("Schedule", callback_data=encode(wz.NS, "-", "newfor", device))]
+
+
+async def _show(query: CallbackQuery, screen: wz.Screen | None, note: str) -> None:
+    await answer_or_message(query, note, alert=bool(note) and screen is None) if note else await query.answer()
+    if screen is not None:
+        await safe_edit(query, screen.text, screen.markup)
+
+
+async def _wizard_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                         ns: str, action: str, args: list[str]) -> None:
+    w = wizard_of(context)
+    if w is None:
+        await query.answer("Schedules are not available.")
+        return
+    actor = actor_of(update, app_ctx(context), "button")
+    if ns == ap.NS:
+        screen, note = await w.picker_tap(actor, action, args[0] if args else "", args[1] if len(args) > 1 else "")
+    elif action == "-":
+        screen, note = await w.menu_tap(actor, args[0] if args else "", args[1:])
+    else:
+        d = w.get_draft(action, actor.user_id)
+        msg = query.message
+        if d is not None and msg is not None and not isinstance(msg, InaccessibleMessage):
+            d.chat_id, d.message_id = getattr(msg, "chat_id", None), getattr(msg, "message_id", None)
+        screen, note = await w.tap(actor, action, args[0] if args else "", args[1:])
+    await _show(query, screen, note)
+
+
+@restricted
+async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    w = wizard_of(context)
+    if w is None:
+        await reply(update, "Schedules are not available.")
+        return
+    if context.args:
+        await schedule_line(update, context, w)
+        return
+    screen = w.menu()
+    await reply(update, screen.text, screen.markup)
+
+
+async def schedule_line(update: Update, context: ContextTypes.DEFAULT_TYPE, w: wz.Wizard) -> None:
+    """`/schedule add ...` (preview card with Save), `tonight`, `list`, `help`."""
+    from iotbot.bot import oneliner
+    sub, rest = context.args[0].lower(), context.args[1:]
+    if sub == "tonight":
+        screen = w.tonight()
+    elif sub == "list":
+        screen = w.list_screen()
+    elif sub == "add" and rest:
+        try:
+            d = oneliner.parse_add(w, update.effective_user.id, " ".join(rest))
+        except oneliner.LineError as e:
+            await reply(update, h(str(e)))
+            return
+        screen = w.preview(d)
+    else:
+        await reply(update, h(oneliner.USAGE))
+        return
+    await reply(update, screen.text, screen.markup)
+
+
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Plain text: only used as the answer to "Type a time". Never answers anyone else
+    (not restricted-with-reply: that would answer every stranger and group message)."""
+    w = wizard_of(context)
+    msg = update.effective_message
+    user = update.effective_user
+    if w is None or msg is None or user is None or not getattr(msg, "text", None):
+        return
+    if not app_ctx(context).users.is_allowed(user.id):
+        return
+    actor = actor_of(update, app_ctx(context), "button")
+    d, screen, note = await w.typed(actor, msg.text)
+    if d is None and not note:
+        return
+    if note:
+        await reply(update, h(note))
+    if screen is not None:
+        if d.chat_id is not None and d.message_id is not None:
+            try:
+                await context.bot.edit_message_text(screen.text, chat_id=d.chat_id, message_id=d.message_id,
+                                                     parse_mode=ParseMode.HTML, reply_markup=screen.markup)
+                return
+            except BadRequest as e:
+                if "not modified" in str(e).lower():
+                    return
+                logger.info("Could not edit the wizard message (%s); sending a new one", e)
+            except TelegramError as e:
+                logger.info("Could not edit the wizard message (%s); sending a new one", e)
+        await reply(update, screen.text, screen.markup)
 
 
 # ---- errors --------------------------------------------------------------------------
