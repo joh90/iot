@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from telegram import BotCommand
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from iotbot.bot import handlers as hd
 from iotbot.context import AppContext, expected_devices
@@ -23,6 +23,7 @@ COMMANDS = [
     ("d", "Run a device action"),
     ("user", "Approved users"),
     ("adduser", "Approve a user"),
+    ("schedule", "Schedules and timers"),
 ]
 
 
@@ -67,7 +68,9 @@ def register(app: Application) -> None:
     for name, func in (("ping", hd.cmd_ping), ("start", hd.cmd_start), ("status", hd.cmd_status),
                        ("list", hd.cmd_list), ("keyboard", hd.cmd_keyboard), ("on", hd.cmd_on),
                        ("off", hd.cmd_off), ("d", hd.cmd_device), ("user", hd.cmd_user),
-                       ("adduser", hd.cmd_adduser)):
+                       ("adduser", hd.cmd_adduser), ("schedule", hd.cmd_schedule)):
         app.add_handler(CommandHandler(name, func, filters=new_only))
+    # Plain text is only read as the answer to the wizard's "Type a time"
+    app.add_handler(MessageHandler(new_only & filters.TEXT & ~filters.COMMAND, hd.on_text))
     app.add_handler(CallbackQueryHandler(hd.on_button))
     app.add_error_handler(hd.on_error)
