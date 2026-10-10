@@ -76,8 +76,10 @@ class DeviceService:
             return Result.fail("feature_not_found", f"{device.id} has no '{feature}'.")
         if device.kind == "ir" and self.ac and self.ac.manages(device.id, feature):
             async with self.ac.lock(device.id):
+                prev = self.ac.last(device.id)
                 state = self.ac.state_for(device.id, feature)
-                return await self._run(device, f, actor, request_id, source, state)
+                r = await self._run(device, f, actor, request_id, source, state)
+                return _with_prev(r, prev)
         return await self._run(device, f, actor, request_id, source)
 
     async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
@@ -89,7 +91,30 @@ class DeviceService:
         if not (self.ac and self.ac.manages(device.id)):
             return Result.fail("not_supported", f"{device.id} cannot be set to an AC state.")
         async with self.ac.lock(device.id):
-            return await self._run(device, SET_STATE, actor, request_id, source, state)
+            prev = self.ac.last(device.id)
+            r = await self._run(device, SET_STATE, actor, request_id, source, state)
+            return _with_prev(r, prev)
+
+    async def adjust_ac_state(self, device_id: str, changes: dict, actor: Actor,
+                              request_id: str | None = None, source: str | None = None) -> Result:
+        """Change some settings of the last state sent to a managed AC. Fails with
+        `ac_off` / `ac_state_unknown` (nothing sent) if that state is off or unknown.
+        Read and send happen under the AC lock, so an Off pressed just before can
+        never be undone by this (adversarial review #3)."""
+        device = self.get(device_id)
+        if device is None:
+            return Result.fail("device_not_found", f"Device '{device_id}' not found.")
+        if not (self.ac and self.ac.manages(device.id)):
+            return Result.fail("not_supported", f"{device.id} cannot be set to an AC state.")
+        async with self.ac.lock(device.id):
+            prev = self.ac.last(device.id)
+            if prev is None:
+                return Result.fail("ac_state_unknown", f"The bot does not know {device.id}'s state yet.")
+            if not prev.state.power:
+                return Result.fail("ac_off", f"{device.id} is off.", data={"prev_state": prev.state})
+            state = prev.state.with_changes(**changes)
+            r = await self._run(device, SET_STATE, actor, request_id, source, state)
+            return _with_prev(r, prev)
 
     async def _run(self, device: Device, f: Feature, actor: Actor, request_id: str | None,
                    source: str | None, ac_state: AcState | None = None) -> Result:
@@ -164,6 +189,13 @@ class DeviceService:
         return Result.success(msg, data={"device": device.id, "feature": feature, "seq": seq,
                                          "request_id": request_id, "state": state, "ms": ms},
                               warnings=warnings)
+
+
+def _with_prev(r: Result, prev) -> Result:
+    """Add the bot-known AC state from before this send (for Undo)."""
+    if isinstance(r.data, dict):
+        r.data["prev_state"] = prev.state if prev else None
+    return r
 
 
 def _features_hint(device: Device, limit: int = 8) -> str:
