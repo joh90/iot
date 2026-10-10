@@ -125,6 +125,12 @@ class AcStateStore:
             logger.warning("Ignoring stored AC state for %s: %s", device_id, e)
             return None
 
+    def latest(self) -> float | None:
+        """Newest save time in the file (for the scheduler's boot clock check)."""
+        stamps = [e.get("at") for e in self._store.data.values() if isinstance(e, dict)]
+        return max((float(t) for t in stamps if isinstance(t, (int, float)) and not isinstance(t, bool)
+                    and math.isfinite(t)), default=None)
+
     async def put(self, device_id: str, state: AcState, actor: str, at: float | None = None) -> None:
         at = time.time() if at is None else at
         if not math.isfinite(at):
