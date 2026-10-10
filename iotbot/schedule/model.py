@@ -191,13 +191,13 @@ def parse_dt(raw: Any, name: str) -> datetime:
 class LastFired:
     at: datetime
     occurrence: str              # "<id>@<local fire time ISO>"
-    result: str                  # started (sending now) | ok | failed | missed | skipped
+    result: str                  # started (sending now) | ok | failed | superseded | missed | skipped
 
     def to_dict(self) -> dict[str, Any]:
         return {"at": self.at.isoformat(), "occurrence": self.occurrence, "result": self.result}
 
 
-RESULTS = ("started", "ok", "failed", "missed", "skipped")
+RESULTS = ("started", "ok", "failed", "superseded", "missed", "skipped")
 
 
 @dataclass(frozen=True, slots=True)
