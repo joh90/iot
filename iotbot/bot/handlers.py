@@ -9,7 +9,7 @@ from functools import wraps
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
-from telegram import CallbackQuery, InaccessibleMessage, InlineKeyboardMarkup, Update
+from telegram import Bot, CallbackQuery, InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
@@ -19,6 +19,7 @@ from iotbot.bot.callbacks import decode
 from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup
 from iotbot.context import AppContext
 from iotbot.result import Actor, Result, Surface
+from iotbot.schedule import notify as sn
 from iotbot.services.users import parse_user_id
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 lines.append(f"- {h(dev_id)}: nothing sent yet (On = {h(preset.describe())})")
     elif not ctx.settings.ac_encoder:
         lines.append("AC encoder: off (AC_ENCODER=off), aircons send captured codes")
+    if ctx.schedules is not None:
+        lines.append("")
+        lines += schedule_status(ctx, now)
     lines.append("")
     lines.append(b("Broadlink devices"))
     for st in ctx.hub.status.values():
@@ -196,6 +200,24 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if len(ctx.warnings) > 10:
             lines.append("- ... see the log for the rest")
     await reply(update, "\n".join(lines))
+
+
+def schedule_status(ctx: AppContext, now: datetime) -> list[str]:
+    from iotbot.schedule import text as stx
+    from iotbot.schedule import timing as stm
+    svc = ctx.schedules
+    all_ = list(svc.store.all().values())
+    paused = sum(1 for s in all_ if not s.enabled or (s.paused_until and s.paused_until > now))
+    timers = sum(1 for s in all_ if s.is_timer)
+    out = [b("Schedules") + f": {len(all_) - timers} weekly, {timers} timers, {paused} paused"
+           + (f", {len(svc.broken())} BROKEN" if svc.broken() else "")]
+    runs = sorted(((r[0], s) for s in all_ if (r := stm.next_runs(s, now, svc.tz))), key=lambda x: (x[0], x[1].id))
+    if runs:
+        at, s = runs[0]
+        out.append(f"Next: {h(stx.describe(s, now, svc.tz))} at {h(stx.fmt_at(at, now, svc.tz))}")
+    if ctx.scheduler and ctx.scheduler.clock_state != "ok":
+        out.append(f"Scheduler: {h(ctx.scheduler.clock_state)}")
+    return out
 
 
 @restricted
@@ -302,6 +324,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _remote_button(update, context, query, action, args)
     elif ns == kb.US:
         await _users_button(update, context, query, action, args)
+    elif ns == sn.NS:
+        await _schedule_notice_button(update, context, query, action, args)
     else:
         # Buttons from the old bot or a removed feature
         await query.answer("This button is no longer active.")
@@ -366,6 +390,51 @@ async def _users_button(update: Update, context: ContextTypes.DEFAULT_TYPE, quer
         await safe_edit(query, "Approved users", kb.users_keyboard(ctx.users.list(), me))
     else:
         await query.answer("This button is no longer active.")
+
+
+async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                                  action: str, args: list[str]) -> None:
+    """Buttons on schedule notices: [Undo] [Retry] [Skip next] [Pause]."""
+    ctx = app_ctx(context)
+    if ctx.notifier is None or ctx.schedules is None or not args:
+        await query.answer("This button is no longer active.")
+        return
+    actor = actor_of(update, ctx, "button")
+    rev = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+    if action == "retry":
+        # Can outlast Telegram's ~15s answer window (rediscovery, timeouts): answer now, report by message
+        try:
+            await query.answer("Retrying...")
+        except TelegramError:
+            pass
+        r = await ctx.notifier.retry(actor, args[0])
+        await _dm(query, h(r.message))
+        return
+    if action == "undo":
+        r = await ctx.notifier.undo(actor, args[0])
+    elif action == "skip":
+        r = await ctx.schedules.skip(actor, args[0], rev=rev)
+    elif action == "pause":
+        r = await ctx.schedules.pause(actor, [args[0]], rev=rev)
+    else:
+        await query.answer("This button is no longer active.")
+        return
+    if r.error == "stale":
+        r.message = "Already changed (maybe a double tap). /schedule shows the current state."
+    await answer_or_message(query, r.message, alert=not r.ok)
+    await ctx.notifier.changed(actor, r)
+
+
+async def send_notice(bot: Bot, n: sn.Notice) -> None:
+    """Deliver a schedule notice. Silent ones arrive without a sound (PLAN: fire messages)."""
+    markup = None
+    if n.buttons:
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data) for label, data in row]
+                                       for row in n.buttons])
+    for i, part in enumerate(parts := split_text(n.text)):
+        await bot.send_message(n.user_id, part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
+                               disable_notification=n.silent,
+                               reply_markup=markup if i == len(parts) - 1 else None)
 
 
 # ---- errors --------------------------------------------------------------------------
