@@ -76,7 +76,7 @@ heads-up [OK][Skip today]), pause, skip. Timezone fixed Asia/Singapore.
 
 | Topic        | Decision                                                                                                                                                                                                                                                                                                           |
 |--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Action       | Per device: managed AC -> `{"kind":"state","state":AcState.to_dict()}` (exact, Phase 3 encoder); non-AC or unmanaged AC -> `{"kind":"capture","key":...}`                                                                                                                                                          |
+| Action       | Typed steps (2026-10-10): managed AC -> `{"kind":"on","state":AcState.to_dict()}` / `{"kind":"off"}` (last state, powered off) / `{"kind":"adjust","changes":{temp,fan,vane,powerful}}`; other devices -> `{"kind":"capture","key":...}`. Code: `iotbot/schedule/model.py`                                         |
 | Send policy  | Always send full state, even if last-sent state matches (IR is one-way; corrects drift)                                                                                                                                                                                                                            |
 | Recurrence   | `when.kind` = `weekly` (time + days) or `once` (ISO datetime). Weekday/weekend = separate entries                                                                                                                                                                                                                  |
 | Pause        | Indefinite (`enabled:false`) or until date (`paused_until`, auto-resumes)                                                                                                                                                                                                                                          |
@@ -103,12 +103,12 @@ heads-up [OK][Skip today]), pause, skip. Timezone fixed Asia/Singapore.
   "version": 1,
   "schedules": {
     "s7f3a": {
-      "id": "s7f3a", "label": "Bedtime", "device": "bedroom_ac",
-      "action": {"kind": "state", "state": {"power": true, "mode": "cool", "temp": 22, "fan": 4, "vane": "swing", "powerful": false}},
-      "when": {"kind": "weekly", "time": "23:00", "days": ["sun", "mon", "tue", "wed", "thu"]},
+      "id": "s7f3a", "rev": 3, "label": "Bedtime", "device": "bedroom_ac",
+      "action": {"kind": "on", "state": {"power": true, "temp": 22, "fan": 4, "vane": "swing", "mode": "cool", "powerful": false}},
+      "when": {"kind": "weekly", "time": "23:00", "days": ["mon", "tue", "wed", "thu", "sun"]},
       "enabled": true, "paused_until": null, "skip_dates": [], "only_if": null,
       "created_by": 123456, "created_at": "...", "updated_by": 123456, "updated_at": "...",
-      "last_fired": {"at": "...", "result": "ok"}
+      "last_fired": {"at": "...", "occurrence": "s7f3a@2026-10-09T23:00:00+08:00", "result": "ok"}
     }
   }
 }
@@ -116,28 +116,28 @@ heads-up [OK][Skip today]), pause, skip. Timezone fixed Asia/Singapore.
 
 ### Adversarial review outcomes (2026-10-09, all adopted unless noted)
 
-| #  | Risk                                                         | Fix                                                                                                                                                                       |
-|----|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1  | Pi has no RTC; stale clock at boot                           | In code (bot runs in Docker; Ubuntu 16.04 has no systemd-time-wait-sync): won't fire until clock >= last saved timestamp. Pi runs `ntp`                                   |
-| 2  | `arbitrary_callback_data` is in-memory; reboot kills buttons | Compact string callback data `sch:skip:s7f3a:r12` (< 64 B). REPLACES the B18 plan                                                                                         |
-| 3  | Full-state frame resurrects an AC someone turned off         | Typed steps (see Step intent)                                                                                                                                             |
-| 4  | Retrying a toggle capture can double-toggle                  | Only idempotent AC state retried; toggles retried only on connect error, never on timeout                                                                                 |
-| 5  | Stale retry lands after a newer action                       | Per-device action sequence; newer action cancels older pending retries                                                                                                    |
-| 7  | Notification fatigue -> muted bot -> missed failures         | Fire msgs always silent                                                                                                                                                   |
-| 9  | Old bot + v2 on one token -> 409 Conflict                    | Superseded: no test bot; v1 is stopped at cutover (D7) before v2 starts                                                                                                   |
-| 10 | Clock jumps double-fire / drift with per-job JobQueue        | Own tick loop (sleep until next due, max 60s); occurrence key `s7f3a@2026-10-09T23:00`; never fire <= last fired. Same path does startup missed detection. NO `run_daily` |
-| 11 | Stale cards / LLM read-then-write races                      | `rev` per schedule; writes carry rev; mismatch -> show current version                                                                                                    |
-| 12 | Midnight ambiguity in skip / pause                           | Skip stores fire date, rendered "Fri night (Sat 01:00)"; `paused_until` = resume datetime, always echoed back                                                             |
-| 13 | Edit past tonight's time                                     | No silent catch-up: "22:30 already passed tonight [Run now][From tomorrow]"                                                                                               |
-| 14 | Creator removed -> orphan schedules                          | Reassign to the remover, listed in the delete confirm                                                                                                                     |
-| 15 | Cross-person conflicts warn only the creator                 | Also notify the other schedule's owner                                                                                                                                    |
-| 16 | Conflict heuristic too weak                                  | Simulate each device's next 7 days: clashes, redundant steps, "on but never off". Powers `/schedule tonight` agenda                                                       |
-| 17 | Device renamed/removed                                       | Mark schedule broken, notify creator, never crash                                                                                                                         |
-| 18 | SD power loss                                                | fsync file + dir, keep `.bak`, load `.bak` on parse failure + loud alert                                                                                                  |
-| 19 | LLM two-phase writes                                         | `schedule.plan(...)` -> normalized + next 3 runs + conflicts + plan_id bound to rev; `schedule.apply(plan_id)`. Wizard uses same preview card                             |
-| 20 | Undo for edits                                               | `schedule_events` JSONL (actor, surface slash/button/llm/scheduler, before/after); `schedule.revert(event_id)`                                                            |
-| 21 | LLM guardrails                                               | Labels unique per device, length cap + escaping; max 50 schedules / 10 timers per device                                                                                  |
-| 22 | Vacation                                                     | Bulk `pause(filter=all|device, until)`                                                                                                                                    |
+| #  | Risk                                                         | Fix                                                                                                                                                                                |
+|----|--------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1  | Pi has no RTC; stale clock at boot                           | In code (bot runs in Docker; Ubuntu 16.04 has no systemd-time-wait-sync): won't fire until clock >= last saved timestamp. Pi runs `ntp`                                            |
+| 2  | `arbitrary_callback_data` is in-memory; reboot kills buttons | Compact string callback data `sch:skip:s7f3a:r12` (< 64 B). REPLACES the B18 plan                                                                                                  |
+| 3  | Full-state frame resurrects an AC someone turned off         | Typed steps (see Step intent)                                                                                                                                                      |
+| 4  | Retrying a toggle capture can double-toggle                  | Only idempotent AC state retried; toggles retried only on connect error, never on timeout                                                                                          |
+| 5  | Stale retry lands after a newer action                       | Per-device action sequence; newer action cancels older pending retries                                                                                                             |
+| 7  | Notification fatigue -> muted bot -> missed failures         | Fire msgs always silent                                                                                                                                                            |
+| 9  | Old bot + v2 on one token -> 409 Conflict                    | Superseded: no test bot; v1 is stopped at cutover (D7) before v2 starts                                                                                                            |
+| 10 | Clock jumps double-fire / drift with per-job JobQueue        | Own tick loop (sleep until next due, max 60s); occurrence key `s7f3a@2026-10-09T23:00:00+08:00`; never fire <= last fired. Same path does startup missed detection. NO `run_daily` |
+| 11 | Stale cards / LLM read-then-write races                      | `rev` per schedule; writes carry rev; mismatch -> show current version                                                                                                             |
+| 12 | Midnight ambiguity in skip / pause                           | Skip stores fire date, rendered "Fri night (Sat 01:00)"; `paused_until` = resume datetime, always echoed back                                                                      |
+| 13 | Edit past tonight's time                                     | No silent catch-up: "22:30 already passed tonight [Run now][From tomorrow]"                                                                                                        |
+| 14 | Creator removed -> orphan schedules                          | Reassign to the remover, listed in the delete confirm                                                                                                                              |
+| 15 | Cross-person conflicts warn only the creator                 | Also notify the other schedule's owner                                                                                                                                             |
+| 16 | Conflict heuristic too weak                                  | Simulate each device's next 7 days: clashes, redundant steps, "on but never off". Powers `/schedule tonight` agenda                                                                |
+| 17 | Device renamed/removed                                       | Mark schedule broken, notify creator, never crash                                                                                                                                  |
+| 18 | SD power loss                                                | fsync file + dir, keep `.bak`, load `.bak` on parse failure + loud alert                                                                                                           |
+| 19 | LLM two-phase writes                                         | `schedule.plan(...)` -> normalized + next 3 runs + conflicts + plan_id bound to rev; `schedule.apply(plan_id)`. Wizard uses same preview card                                      |
+| 20 | Undo for edits                                               | `schedule_events` JSONL (actor, surface slash/button/llm/scheduler, before/after); `schedule.revert(event_id)`                                                                     |
+| 21 | LLM guardrails                                               | Labels unique per device, length cap + escaping; max 50 schedules / 10 timers per device                                                                                           |
+| 22 | Vacation                                                     | Bulk `pause(filter=all|device, until)`                                                                                                                                             |
 
 Deferred ideas: routines (named relative step sequences, e.g. Sleep = on 22 now, 24 at +3h, off at +7h;
 user deferred 2026-10-09), Daikin in-frame off-timer as Pi-dead backup (needs capture to verify),
