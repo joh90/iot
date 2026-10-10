@@ -33,7 +33,19 @@ def build_application(ctx: AppContext) -> Application:
             await app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
         except Exception as e:  # noqa: BLE001 -- cosmetic, never block startup
             logger.warning("Could not set the command menu: %s", e)
+        if ctx.notifier and ctx.scheduler:
+            async def send(n):
+                await hd.send_notice(app.bot, n)
+
+            ctx.notifier.send = send
+            ctx.scheduler.start()
+            await ctx.notifier.report_problems()
         logger.info("%s running", ctx.settings.bot_name)
+
+    async def post_stop(app: Application) -> None:
+        # Before the bot shuts down, so a last fire can still send its notice
+        if ctx.scheduler:
+            await ctx.scheduler.stop()
 
     app = (
         Application.builder()
@@ -41,6 +53,7 @@ def build_application(ctx: AppContext) -> Application:
         # Sends to one RM are serialized by the hub's per-device lock
         .concurrent_updates(8)
         .post_init(post_init)
+        .post_stop(post_stop)
         .build()
     )
     app.bot_data["ctx"] = ctx
