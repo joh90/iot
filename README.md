@@ -170,6 +170,41 @@ If an aircon ignores the bot's frames, set `AC_ENCODER=off` in `.env` and restar
 back to sending its captured codes. Daikin aircons, and any capture the encoder cannot read, always
 use the captured codes.
 
+## Schedules and timers
+
+`/schedule` opens a menu: **+ New**, **My schedules**, **Tonight**. New walks through device, action,
+weekly or once, time, days, then shows a preview with the next runs before anything is saved.
+
+- **Aircon on** uses a picker card: [-] temp [+], fan, vane, Powerful. It starts from the room preset.
+- **Change temp** only changes the temperature, and only if the bot last turned that aircon on; it never
+  switches on an aircon someone turned off.
+- **Timer** on an aircon's buttons: off in 30m / 1h / 2h / 3h, or at a time. Two taps, with Undo.
+- One line instead of buttons:
+
+  ```
+  /schedule add bedroom on 23:00 sun-thu cool 22 fan 3 name=Bedtime
+  /schedule add bedroom off in 2h
+  /schedule add office set 25 14:00 daily
+  /schedule tonight      /schedule list      /schedule help
+  ```
+
+When a schedule runs, its creator gets a silent message with **Undo** (10 minutes, only if nothing newer
+was sent), **Skip next** and **Pause**. Failures and missed runs make a sound; failures offer **Retry**.
+Two schedules for the same device within 5 minutes of each other count as a clash: you choose Keep both
+or Replace. Every change is logged in `logs/schedule_events-*.jsonl` and can be undone from its message.
+
+Rules worth knowing:
+
+- If the bot was not running at a scheduled time, that run is skipped and reported as missed. Nothing is
+  sent late.
+- A run in progress is marked before sending, so a restart never sends it twice.
+- After boot the Pi has no clock until NTP syncs, so schedules wait for NTP before running (shown in
+  `/status`).
+- Weekly schedules are capped at 50, timers at 10 per device. Removing a user hands their schedules to
+  whoever removed them.
+- Schedules live in `state/schedules.json`. A damaged entry is listed as broken and never runs; a
+  damaged file is moved aside (`schedules.json.broken-<time>`) and the bot starts with none.
+
 ## Retries and safety
 
 - One device failing never stops the bot from starting; `/status` shows which ones are offline.
@@ -179,9 +214,8 @@ use the captured codes.
 
 ## Coming next
 
-Choosing aircon settings from Telegram (the engine is done, the picker comes with schedules), schedules and sleep timers,
-reminders, usage stats. The LLM assistant (reached over an SSH tunnel to a PC) is still being planned.
-See PLAN.md.
+Reminders before schedules and `/prefs`, usage stats, weekly recommendations. The LLM assistant (reached
+over an SSH tunnel to a PC) is still being planned. See PLAN.md.
 
 ## Development
 

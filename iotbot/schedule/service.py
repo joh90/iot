@@ -300,6 +300,12 @@ class ScheduleService:
                 # Built from the stored version: keeps what the scheduler wrote since the
                 # preview (last_fired, consumed skip dates)
                 cand = replace(cur, **plan.fields, rev=cur.rev + 1, updated_by=actor.user_id, updated_at=now)
+            # Again on the copy being saved: two saves at the same moment must not both
+            # slip past the clash check (double-tapped timer buttons)
+            again, _ = self.conflicts(cand, pool=d)
+            if again and (resolve is None or {c["with"]: c["rev"] for c in again} != current):
+                raise _Abort(Result.fail("conflict", "This clashes with another schedule.", conflicts=again,
+                                         data={"plan_id": plan_id}))
             gone = []
             for sid, rev in replaced.items():
                 other = d.get(sid)
@@ -385,6 +391,35 @@ class ScheduleService:
             return replace(cur, skip_dates=tuple(d for d in cur.skip_dates if d != day))
 
         return await self._edit(actor, [sid], rev, change, "unskipped", "No longer skipping:")
+
+    def owned_by(self, user_id: int) -> list[Schedule]:
+        return [s for s in self.list() if s.created_by == user_id]
+
+    async def reassign(self, actor: Actor, keep: Callable[[int], bool], to_user: int) -> Result:
+        """Hand every schedule whose creator is no longer approved (`keep` False) to
+        `to_user` (#14). Run on each user removal, so a failed earlier hand-over and
+        older orphans are picked up too. Ownership is bookkeeping: rev is not bumped,
+        so open buttons on those schedules keep working."""
+        def apply(d: dict[str, Schedule]) -> list[tuple[str, dict, Schedule]]:
+            out = []
+            for sid, s in list(d.items()):     # chosen here: a timer that just fired is simply gone
+                if s.created_by != 0 and not keep(s.created_by):
+                    new = replace(s, created_by=to_user)
+                    d[sid] = new
+                    out.append((sid, s.to_dict(), new))
+            return out
+
+        try:
+            changed = await self.store.mutate(apply)
+        except (OSError, StoreError, ScheduleError) as e:
+            logger.error("Could not hand over schedules to %s: %s", to_user, e)
+            return Result.fail("store_error", "Could not save schedules.json; they will be handed over at "
+                                              "the next user removal.")
+        batch = _batch_id()
+        for sid, before, new in changed:
+            await self._log(actor, "reassigned", sid, before, new.to_dict(), batch=batch)
+        return Result.success(f"Handed over {len(changed)} schedule(s).",
+                              data={"ids": [sid for sid, _, _ in changed], "event_id": batch})
 
     def select(self, target: str) -> list[str]:
         """Ids for bulk actions: 'all', a device id, or one schedule id (#22)."""
