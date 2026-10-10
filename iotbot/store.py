@@ -38,8 +38,13 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
-def write_json_atomic(path: Path, data: Any) -> None:
-    """Serialize first, then replace `path` atomically, keeping a `.bak`."""
+def write_json_atomic(path: Path, data: Any, validate: Callable[[Any], None] | None = None) -> None:
+    """Serialize first, then replace `path` atomically, keeping a `.bak`.
+
+    The current file only becomes the `.bak` if it parses and passes `validate`,
+    so a damaged or invalid file never overwrites a good backup. Validators
+    must raise TypeError or ValueError, as for read_json.
+    """
     text = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -48,11 +53,12 @@ def write_json_atomic(path: Path, data: Any) -> None:
         f.flush()
         os.fsync(f.fileno())
     if path.exists():
-        # Only back up a file that still parses, so a bad file never overwrites a good .bak
         try:
-            json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            logger.warning("Not backing up unreadable %s", path)
+            current = json.loads(path.read_text(encoding="utf-8"))
+            if validate:
+                validate(current)
+        except (OSError, ValueError, TypeError) as e:
+            logger.warning("Not backing up unusable %s: %s", path, e)
         else:
             # Hard-link the current (already durable) inode as the backup: atomic, no copy.
             # os.replace below swaps in a new inode, so the link keeps the old content.
@@ -167,7 +173,8 @@ class JsonStore:
             result = fn(draft)
             if self._validate:
                 self._validate(draft)
-            write = asyncio.ensure_future(asyncio.to_thread(write_json_atomic, self.path, draft))
+            write = asyncio.ensure_future(asyncio.to_thread(write_json_atomic, self.path, draft,
+                                                          self._validate))
             try:
                 await asyncio.shield(write)
             except asyncio.CancelledError:
