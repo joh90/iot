@@ -43,6 +43,35 @@ def test_corrupt_file_never_overwrites_good_bak(tmp_path):
     assert json.loads((tmp_path / "a.json.bak").read_text()) == {"v": 1}
 
 
+def _must_be_dict(d):
+    if not isinstance(d, dict):
+        raise TypeError("not a dict")
+
+
+def test_invalid_file_never_overwrites_good_bak(tmp_path):
+    p = tmp_path / "a.json"
+    write_json_atomic(p, {"v": 1})
+    write_json_atomic(p, {"v": 2})  # bak = v1
+    p.write_text("[]")  # parses, fails validate
+    write_json_atomic(p, {"v": 3}, _must_be_dict)
+    assert json.loads((tmp_path / "a.json.bak").read_text()) == {"v": 1}
+    write_json_atomic(p, {"v": 4}, _must_be_dict)  # a valid file is backed up again
+    assert json.loads((tmp_path / "a.json.bak").read_text()) == {"v": 3}
+
+
+async def test_store_update_validates_before_backup(tmp_path):
+    p = tmp_path / "a.json"
+    write_json_atomic(p, {"v": 1})
+    write_json_atomic(p, {"v": 2})  # bak = v1
+    p.write_text("[]")
+    s = JsonStore(p, dict, _must_be_dict)
+    data = s.load()  # main invalid -> loads bak
+    assert data == {"v": 1} and "unusable" in s.load_warning
+    await s.update(lambda d: d.update(v=5))
+    assert json.loads((tmp_path / "a.json.bak").read_text()) == {"v": 1}
+    assert json.loads(p.read_text()) == {"v": 5}
+
+
 def test_missing_file_uses_default_or_bak(tmp_path):
     p = tmp_path / "a.json"
     assert read_json(p, lambda: {"d": 1}) == ({"d": 1}, None)
