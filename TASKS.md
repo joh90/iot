@@ -67,7 +67,7 @@ Ships (2.11) only after D7 and a few days of using the AC buttons.
 | #    | Status | Task                                                                                                                                                                    |
 |------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 2.0  | [x]    | Store fix: `write_json_atomic` backs up the current file only if it parses AND passes `validate`; reviewed                                                              |
-| 2.1  | [ ]    | Schedule model + store: `schedules.json`, short ids, `rev`, limits (50 / 10 timers per device), AC action = AcState dict, typed steps on/off/adjust                     |
+| 2.1  | [x]    | Schedule model + store: `schedules.json`, short ids, `rev`, limits (50 / 10 timers per device), AC action = AcState dict, typed steps on/off/adjust                     |
 | 2.2  | [ ]    | Time engine: weekly/once in Asia/Singapore, skip dates (fire-date semantics), paused_until, occurrence keys, pruning                                                    |
 | 2.3  | [ ]    | Scheduler loop: own tick (sleep to next due, max 60s), never fire <= last fired, clock guard, startup missed detection, per-device action sequence, AC retry 3x/60s     |
 | 2.4  | [ ]    | Schedule service: plan/apply, list/get/update/delete, pause(filter, until)/resume, skip/unskip, `schedule_events` + revert, 7-day conflict simulation, agenda           |
