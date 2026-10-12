@@ -22,9 +22,9 @@ WEEKLY = {"kind": "weekly", "time": "23:00", "days": ["mon", "tue", "wed", "thu"
 @pytest.fixture
 def svc(tmp_path):
     ctx = make_ctx(tmp_path)
-    store = ScheduleStore(tmp_path / "state" / "schedules.json")
-    store.load()
     clock = [T0.timestamp()]
+    store = ScheduleStore(tmp_path / "state" / "schedules.json", clock=lambda: clock[0])
+    store.load()
     woke = []
     s = ScheduleService(store, ctx.devices, JsonlLog(tmp_path / "logs", "schedule_events"), SGT,
                         clock=lambda: clock[0], on_change=lambda: woke.append(1))

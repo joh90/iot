@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -95,12 +96,15 @@ class DeviceService:
             r = await self._run(device, SET_STATE, actor, request_id, source, state)
             return _with_prev(r, prev)
 
-    async def adjust_ac_state(self, device_id: str, changes: dict, actor: Actor,
-                              request_id: str | None = None, source: str | None = None) -> Result:
+    async def adjust_ac_state(self, device_id: str, changes: dict | Callable[[AcState], dict], actor: Actor,
+                              request_id: str | None = None, source: str | None = None,
+                              skip_same: bool = False) -> Result:
         """Change some settings of the last state sent to a managed AC. Fails with
         `ac_off` / `ac_state_unknown` (nothing sent) if that state is off or unknown.
         Read and send happen under the AC lock, so an Off pressed just before can
-        never be undone by this (adversarial review #3)."""
+        never be undone by this (adversarial review #3). `changes` may be a function
+        of the current state (quick buttons: +1C on two fast taps gives +2C).
+        `skip_same`: send nothing and fail with `no_change` if nothing would change."""
         device = self.get(device_id)
         if device is None:
             return Result.fail("device_not_found", f"Device '{device_id}' not found.")
@@ -112,7 +116,10 @@ class DeviceService:
                 return Result.fail("ac_state_unknown", f"The bot does not know {device.id}'s state yet.")
             if not prev.state.power:
                 return Result.fail("ac_off", f"{device.id} is off.", data={"prev_state": prev.state})
-            state = prev.state.with_changes(**changes)
+            state = prev.state.with_changes(**(changes(prev.state) if callable(changes) else changes))
+            if skip_same and state == prev.state:
+                return Result.fail("no_change", f"{device.id} is already {state.describe()}.",
+                                   data={"prev_state": prev.state})
             r = await self._run(device, SET_STATE, actor, request_id, source, state)
             return _with_prev(r, prev)
 

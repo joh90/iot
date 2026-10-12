@@ -29,13 +29,13 @@ def test_rejected_token_not_logged(tmp_path, monkeypatch, caplog):
 
     import iotbot.bot.app as app_mod
 
-    (tmp_path / ".env").write_text("BOT_TOKEN=123:supersecret\n")
+    (tmp_path / ".env").write_text("BOT_TOKEN=123:supersecretsupersecretsupersecret\n")
     (tmp_path / "users.json").write_text('{"1": "A"}')
 
     class FakeApp:
         def run_polling(self, **kw):
             assert kw["bootstrap_retries"] == -1
-            raise InvalidToken("The token `123:supersecret` was rejected by the server.")
+            raise InvalidToken("The token `123:supersecretsupersecretsupersecret` was rejected by the server.")
 
     monkeypatch.setattr(app_mod, "build_application", lambda ctx: FakeApp())
     assert main(["--env-file", str(tmp_path / ".env")]) == 2

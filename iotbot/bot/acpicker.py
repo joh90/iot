@@ -55,9 +55,34 @@ def apply_op(st: AcState, op: str, preset: AcState) -> AcState:
     return st
 
 
-def picker_text(device: str, st: AcState) -> str:
+QUICK = {"t-": "-1C", "t+": "+1C", "sw": "Swing", "fn": "Fan"}
+
+
+def quick_changes(op: str, preset: AcState):
+    """A quick button as a function of the current state, applied under the AC lock.
+    Every quick tap ends Powerful (it forces fan auto), like the remote's other keys.
+    Swing off goes back to the room preset's vane. Fan steps auto, 1-4, quiet, auto."""
+    if op not in QUICK:
+        return None
+
+    def changes(st: AcState) -> dict:
+        if op == "t+":
+            out = {"temp": min(TEMP_MAX, st.temp + 1)}
+        elif op == "t-":
+            out = {"temp": max(TEMP_MIN, st.temp - 1)}
+        elif op == "sw":
+            back = preset.vane if preset.vane != "swing" else "auto"
+            out = {"vane": back if st.vane == "swing" else "swing"}
+        else:
+            out = {"fan": FANS[(FANS.index(st.fan) + 1) % len(FANS)]}
+        return {**out, "powerful": False}
+
+    return changes
+
+
+def picker_text(device: str, st: AcState, done_label: str = "Done") -> str:
     """Plain text; the caller escapes it (device ids are restricted to [A-Za-z0-9_-])."""
-    return f"{device}: {st.describe()[3:]}\nTap to change, then Done."
+    return f"{device}: {st.describe()[3:]}\nTap to change, then {done_label}."
 
 
 def picker_keyboard(owner: str, st: AcState, done_label: str = "Done") -> InlineKeyboardMarkup:

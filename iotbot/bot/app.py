@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import logging
 
-from telegram import BotCommand
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+from telegram import BotCommand, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    TypeHandler,
+    filters,
+)
 
 from iotbot.bot import handlers as hd
+from iotbot.bot.backlog import Backlog, gate
 from iotbot.context import AppContext, expected_devices
 
 logger = logging.getLogger(__name__)
@@ -29,6 +37,8 @@ COMMANDS = [
 
 def build_application(ctx: AppContext) -> Application:
     async def post_init(app: Application) -> None:
+        # First, before polling starts: note what was queued while the bot was offline
+        await app.bot_data["backlog"].load(app.bot)
         await ctx.hub.start(expected_devices(ctx.registry))
         try:
             await app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
@@ -58,11 +68,14 @@ def build_application(ctx: AppContext) -> Application:
         .build()
     )
     app.bot_data["ctx"] = ctx
+    app.bot_data["backlog"] = Backlog()
     register(app)
     return app
 
 
 def register(app: Application) -> None:
+    # Before everything else: drop taps and commands queued while the bot was offline
+    app.add_handler(TypeHandler(Update, gate), group=-1)
     # New messages only: editing an old "/off ac" must not fire IR again
     new_only = filters.UpdateType.MESSAGE
     for name, func in (("ping", hd.cmd_ping), ("start", hd.cmd_start), ("status", hd.cmd_status),
