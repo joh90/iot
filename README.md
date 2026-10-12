@@ -178,7 +178,7 @@ use the captured codes.
 ## Schedules and timers
 
 `/schedule` opens a menu: **+ New**, **My schedules**, **Tonight**. New walks through device, action,
-weekly or once, time, days, then shows a preview with the next runs before anything is saved.
+repeat on days or just once, time, days, then shows a preview with the next runs before anything is saved.
 
 - **Aircon on** uses a picker card: [-] temp [+], fan, vane, Powerful. It starts from the room preset.
 - **Change temp** only changes the temperature, and only if the bot last turned that aircon on; it never
