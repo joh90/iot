@@ -71,6 +71,19 @@ schedules rely on them (2026-10-10).
 | 4     | LLM layer -- after deeper planning                                                                                                                                                                                                                                                                                                                              |
 | --    | Deferred ideas: presence (phone on Wi-Fi), weather (NEA), scenes, `/learn` via Telegram, voice notes                                                                                                                                                                                                                                                            |
 
+## Phase 6 decisions (2026-10-12)
+
+| Topic    | Decision                                                                                                                                                    |
+|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Turn     | Every update (slash, button incl. menus, text) + every schedule fire (surface `scheduler`); /stats splits by surface                                        |
+| Raw text | Kept forever, Pi only, never in git; strangers logged with id, name, text; no /help notice                                                                  |
+| Timing   | `total_ms` inside the bot, `ir_ms` from the device service, `lag_s` from Telegram's message date (messages only)                                            |
+| Hook     | Application subclass wraps `process_update`; device service writes into the current turn via a contextvar                                                   |
+| /stats   | Any approved user; `/stats [days]` default 7, max 365, parsed in a thread                                                                                   |
+| /stats   | p50/p95 by surface, lag, % under 300 ms, failures (who/what), slowest 3 RM/plugs, strangers, offline drops, LLM health (1s /health + /v1/models, `LLM_URL`) |
+| Alerts   | None; /stats on demand only (schedule failures already notify)                                                                                              |
+| Phase 4  | `llm_ms`, `tokens` fields reserved                                                                                                                          |
+
 ## Scheduling design (Phase 2, agreed 2026-10-09)
 
 Use cases: daily/weekly bedtime + wake, sleep timers (one-shot), pre-cool (weekly "on" + Phase 5

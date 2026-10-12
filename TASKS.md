@@ -85,13 +85,25 @@ Ships (2.11) only after D7 and a few days of using the AC buttons.
 | 2.13 | [x]    | AC quick buttons -1C/+1C/Swing/Fan (last state, one change, never turns on, ends Powerful); AC screen shows last state sent; reviewed                                                                                                                                                                     |
 | 2.14 | [x]    | Settings card on each AC: picker + [Send now] (may turn on, says so), back to the AC screen after sending; reviewed                                                                                                                                                                                       |
 
+## Phase 6 -- Telemetry (planned 2026-10-12)
+
+Design: PLAN.md "Phase 6 decisions". No push alerts, no /help notice.
+
+| #   | Status | Task                                                                                                                                                                                     |
+|-----|--------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 6.1 | [ ]    | `iotbot/telemetry.py`: `Turn` in a contextvar, `TurnLog` -> monthly `turns-YYYY-MM.jsonl`, kept forever                                                                                  |
+| 6.2 | [ ]    | Application subclass wraps `process_update`: one line per update (crash + offline drop included), lag_s + total_ms                                                                       |
+| 6.3 | [ ]    | Fill turns: intent from command/button, device service adds ir_ms + outcome; strangers `denied` (id, name, text); scheduler fires as surface `scheduler`                                 |
+| 6.4 | [ ]    | `/stats [days]` (any approved user, default 7, max 365, in a thread): p50/p95 by surface, lag, % under 300 ms, failures by who, slowest 3 RM/plugs, strangers, offline drops, LLM health |
+| 6.5 | [ ]    | Tests, README, reviewer per task; ship to the Pi on user OK (carries 6872a03)                                                                                                            |
+
 ## Later phases (coarse; split into numbered subtasks when started)
 
 | # | Status | Task                                                                   |
 |---|--------|------------------------------------------------------------------------|
 | 3 | [x]    | AC state engine (done 2026-10-09, see Phase 3 table above)             |
 | 2 | [x]    | Scheduling (shipped 2026-10-12, see Phase 2 table above)               |
-| 6 | [ ]    | NEXT (plan first): telemetry `turns` JSONL, `/stats` p50/p95           |
+| 6 | [~]    | Telemetry: planned 2026-10-12, building (see Phase 6 table above)      |
 | 4 | [ ]    | LLM: planning session first (PLAN.md open items), then build           |
 | 7 | [ ]    | Weekly recommendations from device_events, hours-run + kWh/SGD         |
 | 5 | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up, `/prefs` |
