@@ -253,7 +253,7 @@ async def cmd_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if target in reg.rooms and reg.rooms[target].devices:
         await reply(update, f"Select {h(target)} device", kb.room_keyboard(reg, target))
     elif target in reg.devices:
-        await reply(update, f"Select {h(target)} action", kb.device_keyboard(reg, target))
+        await reply(update, device_text(app_ctx(context), target), kb.device_keyboard(reg, target, device_rows(context, target)))
     elif not any(r.devices for r in reg.rooms.values()):
         await reply(update, "No devices yet.")
     else:
@@ -328,6 +328,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _users_button(update, context, query, action, args)
     elif ns == sn.NS:
         await _schedule_notice_button(update, context, query, action, args)
+    elif ns == ap.NS and action.startswith(AC_CARD):
+        await _ac_card_button(update, context, query, action[len(AC_CARD):], args)
     elif ns in (wz.NS, ap.NS):
         await _wizard_button(update, context, query, ns, action, args)
     else:
@@ -350,13 +352,18 @@ async def _remote_button(update: Update, context: ContextTypes.DEFAULT_TYPE, que
         await safe_edit(query, f"Select {h(args[0])} device", kb.room_keyboard(reg, args[0]))
     elif action == "d" and args and args[0] in reg.devices:
         await query.answer()
-        await safe_edit(query, f"Select {h(args[0])} action",
-                        kb.device_keyboard(reg, args[0], schedule_buttons(context, args[0])))
+        await _show_device(context, query, args[0])
+    elif action == "q" and len(args) == 2:
+        await _quick_ac(update, context, query, args[0], args[1])
+    elif action == "set" and args:
+        await _open_ac_card(context, query, args[0])
     elif action == "f" and len(args) == 2:
         r = await ctx.devices.run(args[0], args[1], actor_of(update, ctx, "button"),
                                   request_id=request_id(update))
         text = "\n".join([r.message, *("Note: " + w for w in r.warnings)])
         await answer_or_message(query, text, alert=not r.ok or bool(r.warnings))
+        if r.ok and _managed_ac(ctx, args[0]):
+            await _show_device(context, query, args[0], refresh=True)     # the screen shows the AC's new state
     else:
         await query.answer("That room or device no longer exists. /keyboard to refresh.", show_alert=True)
 
@@ -452,6 +459,122 @@ async def send_notice(bot: Bot, n: sn.Notice) -> None:
         await bot.send_message(n.user_id, part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
                                disable_notification=n.silent,
                                reply_markup=markup if i == len(parts) - 1 else None)
+
+
+# ---- AC quick buttons and the Settings card ---------------------------------------------
+
+AC_CARD = "!"   # picker owner prefix for the Settings card; wizard draft ids never start with it
+
+
+def _managed_ac(ctx: AppContext, device: str) -> bool:
+    return ctx.devices.ac is not None and ctx.devices.ac.manages(device)
+
+
+def device_text(ctx: AppContext, device: str) -> str:
+    text = f"Select {h(device)} action"
+    if _managed_ac(ctx, device):
+        last = ctx.devices.ac.last(device)
+        text += f"\nLast sent: {h(last.state.describe())}" if last else "\nNothing sent yet"
+    return text
+
+
+async def _show_device(context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery, device: str,
+                       refresh: bool = False) -> None:
+    """`refresh`: an update after a send, already reported by popup. Best effort: never posts
+    a new message for an old keyboard, and a failed edit is not an error."""
+    ctx = app_ctx(context)
+    text, markup = device_text(ctx, device), kb.device_keyboard(ctx.registry, device, device_rows(context, device))
+    if not refresh:
+        await safe_edit(query, text, markup)
+        return
+    if query.message is None or isinstance(query.message, InaccessibleMessage):
+        return
+    try:
+        await safe_edit(query, text, markup)
+    except TelegramError as e:
+        logger.info("Could not refresh the %s screen: %s", device, e)
+
+
+def device_rows(context: ContextTypes.DEFAULT_TYPE, device: str) -> list[list[InlineKeyboardButton]]:
+    """Rows under a device's own buttons: AC quick buttons, then [Settings] [Timer] [Schedule]."""
+    rows: list[list[InlineKeyboardButton]] = []
+    last = schedule_buttons(context, device)
+    if _managed_ac(app_ctx(context), device):
+        rows.append([InlineKeyboardButton(label, callback_data=encode(kb.KB, "q", device, op))
+                     for op, label in ap.QUICK.items()])
+        last = [InlineKeyboardButton("Settings", callback_data=encode(kb.KB, "set", device)), *last]
+    return rows + [last]
+
+
+async def _quick_ac(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                    device: str, op: str) -> None:
+    """-1C / +1C / Swing / Fan: the last state the bot sent, one thing changed, sent in full.
+    Never turns an AC on: an AC that is off (or never sent to) gets a popup and nothing is sent."""
+    ctx = app_ctx(context)
+    changes = ap.quick_changes(op, ctx.devices.ac.presets[device]) if _managed_ac(ctx, device) else None
+    if changes is None:
+        await query.answer("This button is no longer active.")
+        return
+    r = await ctx.devices.adjust_ac_state(device, changes, actor_of(update, ctx, "button"),
+                                          request_id=request_id(update), skip_same=True)
+    if r.error == "ac_off":
+        r.message = f"{device} is off as far as the bot knows. Press On first."
+    elif r.error == "ac_state_unknown":
+        r.message = f"The bot has not sent anything to {device} yet. Press On first."
+    text = "\n".join([r.message, *("Note: " + w for w in r.warnings)])
+    await answer_or_message(query, text, alert=r.error not in ("", "no_change") or bool(r.warnings))
+    if r.ok:
+        await _show_device(context, query, device, refresh=True)
+
+
+def _ac_card(ctx: AppContext, device: str, st) -> tuple[str, InlineKeyboardMarkup]:
+    text = ap.picker_text(device, st, "Send now")
+    last = ctx.devices.ac.last(device)
+    if last is None or not last.state.power:
+        text += "\nThe AC is off as far as the bot knows; Send now turns it on."
+    return h(text), ap.picker_keyboard(AC_CARD + device, st, "Send now")
+
+
+async def _open_ac_card(context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery, device: str) -> None:
+    """Starts from the last state sent if the AC is on, else from the room preset."""
+    ctx = app_ctx(context)
+    if not _managed_ac(ctx, device):
+        await query.answer("This button is no longer active.")
+        return
+    last = ctx.devices.ac.last(device)
+    st = last.state if last and last.state.power else ctx.devices.ac.presets[device]
+    await query.answer()
+    await safe_edit(query, *_ac_card(ctx, device, st.with_changes(power=True)))
+
+
+async def _ac_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                          device: str, args: list[str]) -> None:
+    """The whole card state rides in the button, so a tap needs no memory and survives restarts."""
+    ctx = app_ctx(context)
+    code, op = (args + ["", ""])[:2]
+    st = ap.decode_state(code)
+    if st is None or not _managed_ac(ctx, device):
+        await query.answer("This button is no longer active.")
+        return
+    if op == "x":
+        await query.answer()
+        await _show_device(context, query, device)
+    elif op == "noop":
+        await query.answer(f"{st.temp}C")
+    elif op == "done":
+        # Explicit, so this one may turn the AC on
+        r = await ctx.devices.send_ac_state(device, st, actor_of(update, ctx, "button"),
+                                            request_id=request_id(update))
+        text = "\n".join([r.message, *("Note: " + w for w in r.warnings)])
+        await answer_or_message(query, text, alert=not r.ok or bool(r.warnings))
+        if r.ok:
+            # Back to the device screen: no [Send now] left behind to replay by mistake later
+            await _show_device(context, query, device, refresh=True)
+    else:
+        new = ap.apply_op(st, op, ctx.devices.ac.presets[device])
+        await query.answer()
+        if new != st:
+            await safe_edit(query, *_ac_card(ctx, device, new))
 
 
 def wizard_of(context: ContextTypes.DEFAULT_TYPE) -> wz.Wizard | None:

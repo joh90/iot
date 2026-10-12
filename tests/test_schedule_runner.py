@@ -39,9 +39,9 @@ def sched(sid="s7f3a", **kw):
 @pytest.fixture
 async def env(tmp_path):
     ctx = make_ctx(tmp_path)
-    store = ScheduleStore(tmp_path / "state" / "schedules.json")
-    store.load()
     clock = Clock(T0)
+    store = ScheduleStore(tmp_path / "state" / "schedules.json", clock=clock)
+    store.load()
     notes, sleeps = [], []
 
     async def notify(o):

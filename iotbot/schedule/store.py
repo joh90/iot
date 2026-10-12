@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 class ScheduleStore:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, clock: Callable[[], float] = time.time):
         self.path = path
+        self._clock = clock                       # same clock as the scheduler (tests inject one)
         self._store = JsonStore(path, empty_file, validate=validate_file)
         self._parsed: dict[str, Schedule] = {}
         self.broken: dict[str, str] = {}          # id -> reason
@@ -114,7 +115,7 @@ class ScheduleStore:
                 if parse_schedule(entry) != s:
                     raise ScheduleError(f"schedule {sid} would not load back the same: {entry}")
                 raw[sid] = entry
-            data["saved_at"] = time.time()
+            data["saved_at"] = self._clock()
             return result
 
         try:
@@ -129,7 +130,7 @@ class ScheduleStore:
 
         def apply(data: dict) -> None:
             data["schedules"].pop(sid, None)
-            data["saved_at"] = time.time()
+            data["saved_at"] = self._clock()
 
         await self._store.update(apply)
         self._reparse()

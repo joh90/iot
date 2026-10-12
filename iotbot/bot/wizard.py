@@ -260,7 +260,7 @@ class Wizard:
             st = AcState.from_dict(d.action["state"]) if d.action and d.action.get("kind") == "on" \
                 else self.preset(d.device)
             mk = ap.picker_keyboard(d.id, st, "Next")
-            return Screen(h(ap.picker_text(d.device, st)), mk)
+            return Screen(h(ap.picker_text(d.device, st, "Next")), mk)
         if step == "adj":
             temps = [_btn(f"{t}C", d.id, "adj", t) for t in ADJ_TEMPS]
             return Screen(f"{h(d.device)}: set the temperature to (only if it is on at that time)",

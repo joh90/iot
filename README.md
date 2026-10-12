@@ -161,6 +161,11 @@ captures. The captured `power_on` is decoded and becomes the room's preset:
 - **On** sends the preset (e.g. bedroom cool 22C fan 3 vane auto)
 - **Powerful** sends the preset with powerful on and fan auto, as the remote does
 - **Off** sends the last state the bot sent, with power off
+- **-1C / +1C / Swing / Fan** change one thing in the last state sent and send it in full. They never
+  switch an aircon on: if it is off (or the bot has sent nothing yet) they say "Press On first". Each
+  tap ends Powerful. Swing off goes back to the room's vane; Fan steps auto, 1-4, quiet.
+- **Settings** opens a card ([-] temp [+], fan, vane, Powerful) and **Send now** sends that state,
+  switching the aircon on if needed. The aircon's screen shows the last state sent.
 
 Supported: cool mode, 16-31C, fan auto/1-4/quiet, vane auto/1-5/swing, powerful. The last state sent
 is kept in `state/ac_state.json` and shown in `/status`; it is what the bot asked for, so it goes stale
@@ -208,6 +213,9 @@ Rules worth knowing:
 ## Retries and safety
 
 - One device failing never stops the bot from starting; `/status` shows which ones are offline.
+- Taps and commands sent while the bot was offline are not run when it comes back (Telegram keeps
+  them for a day): the sender is told to send again. Messages older than 2 minutes count as offline.
+- The bot token is scrubbed from the logs.
 - A failed send rediscovers the device by MAC and retries once, but only when a repeat is harmless:
   aircon frames (full state) are safe to resend, while toggles like TV power are never resent after an
   unclear reply, so the TV is not switched on and off again.

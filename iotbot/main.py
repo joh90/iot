@@ -11,6 +11,29 @@ from iotbot.config import ConfigError, load_settings
 from iotbot.store import StoreError
 
 
+class RedactFilter(logging.Filter):
+    """Replace the bot token's secret part (also inside URLs and tracebacks) with '<token>'."""
+
+    def __init__(self, token: str):
+        super().__init__()
+        secret = token.split(":", 1)[-1]
+        self.secret = secret if len(secret) >= 20 else ""   # real secrets are 35 chars; never scrub "x"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self.secret:
+            return True
+        msg = record.getMessage()
+        if self.secret in msg:
+            record.msg, record.args = msg.replace(self.secret, "<token>"), None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text and self.secret in record.exc_text:
+            record.exc_text = record.exc_text.replace(self.secret, "<token>")
+        if record.stack_info and self.secret in record.stack_info:
+            record.stack_info = record.stack_info.replace(self.secret, "<token>")
+        return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="iotbot", description="Telegram IR/Broadlink home bot")
     parser.add_argument("--env-file", default=".env", help="path to the .env file (default: ./.env)")
@@ -35,6 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     # httpx logs every Telegram poll at INFO, which includes the bot token in the URL
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # PTB puts the full token in some errors (e.g. a rejected token, logged by its retry loop
+    # before main() can catch it), so scrub it from every record any handler writes
+    if settings.bot_token:
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(RedactFilter(settings.bot_token))
 
     from iotbot.bot.app import build_application
     from iotbot.context import build_context
@@ -61,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         # Keep retrying the first connection: at boot DNS may come up after network-online
         app.run_polling(drop_pending_updates=False, bootstrap_retries=-1)
     except InvalidToken:
-        # Never log the exception text: PTB puts the full token in it
+        # Never log the exception text: PTB puts the full token in it (RedactFilter is the backstop)
         logging.getLogger(__name__).critical("BOT_TOKEN was rejected by Telegram; check .env")
         return 2
     return 0

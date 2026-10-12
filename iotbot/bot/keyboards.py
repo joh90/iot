@@ -34,12 +34,13 @@ def room_keyboard(reg: Registry, room: str) -> InlineKeyboardMarkup:
         Btn("<- Rooms", callback_data=encode(KB, "rooms")), close_button(KB)]])
 
 
-def device_keyboard(reg: Registry, device_id: str, extra: list[Btn] | None = None) -> InlineKeyboardMarkup:
-    """Only features with captured codes get a button (B17). `extra`: e.g. [Timer] [Schedule]."""
+def device_keyboard(reg: Registry, device_id: str, extra: list[list[Btn]] | None = None) -> InlineKeyboardMarkup:
+    """Only features with captured codes get a button (B17). `extra`: more rows, e.g.
+    AC quick buttons and [Settings] [Timer] [Schedule]."""
     dev = reg.devices[device_id]
     feats = [Btn(f.label, callback_data=encode(KB, "f", dev.id, f.key))
              for f in list(dev.features.values())[:MAX_FEATURE_BUTTONS]]
-    return InlineKeyboardMarkup(_rows(feats, 2) + ([extra] if extra else []) + [[
+    return InlineKeyboardMarkup(_rows(feats, 3 if len(feats) == 3 else 2) + [r for r in (extra or []) if r] + [[
         Btn("<- Back", callback_data=encode(KB, "r", dev.room)),
         Btn("Rooms", callback_data=encode(KB, "rooms")),
         close_button(KB),
