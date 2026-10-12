@@ -101,6 +101,50 @@ deploy/docker.sh logs
   the clock is synced (the Pi has no RTC): Telegram TLS fails and is retried until NTP catches up, and
   the first few log timestamps can be wrong.
 
+### 4. Tunnel to the LLM PC (for the coming assistant)
+
+The LLM runs on another machine (llama-server on its `127.0.0.1:8001`). The Pi reaches it with an SSH
+tunnel, so the server never listens on the network. Nothing uses it yet.
+
+```bash
+# on the Pi
+ssh-keygen -t ed25519 -N "" -C iotbot-tunnel@pi -f ~/.ssh/iotbot_tunnel
+ssh-keyscan -t ed25519 <pc-host> >> ~/.ssh/known_hosts    # check the fingerprint against the PC first
+```
+
+On the PC, add the key to `~/.ssh/authorized_keys` so it can only open that one tunnel (no shell, no
+other ports, LAN only):
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:8001",from="192.168.1.*",command="/bin/false" ssh-ed25519 AAAA... iotbot-tunnel@pi
+```
+
+On the Pi, `~/.ssh/config`:
+
+```
+Host iotbot-tunnel
+  HostName <pc-host>
+  User <pc-user>
+  IdentityFile ~/.ssh/iotbot_tunnel
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking yes
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+  ExitOnForwardFailure yes
+  LocalForward 127.0.0.1:8001 127.0.0.1:8001
+```
+
+and `crontab -e` (`sudo apt install autossh` first). `flock` keeps it to one tunnel; the 5-minute line
+restarts it if autossh dies:
+
+```
+@reboot AUTOSSH_GATETIME=0 flock -n $HOME/.iotbot-tunnel.lock autossh -M 0 -N iotbot-tunnel >/dev/null 2>&1
+*/5 * * * * AUTOSSH_GATETIME=0 flock -n $HOME/.iotbot-tunnel.lock autossh -M 0 -N iotbot-tunnel >/dev/null 2>&1
+```
+
+Check: `curl 127.0.0.1:8001/health` on the Pi. The container uses the host network, so it sees the same port.
+
 ## devices.json
 
 ```json

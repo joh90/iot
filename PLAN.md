@@ -9,7 +9,7 @@ bot on the Pi keeps running untouched until the branch is proven.
 | Topic         | Decision                                                                                                                                             |
 |---------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Host          | Bot runs on the Raspberry Pi 24/7. LLM stays on the Fedora PC                                                                                        |
-| Pi -> LLM     | `autossh -N -L 8001:127.0.0.1:8001 fedora` as a systemd unit on the Pi; bot calls 127.0.0.1:8001                                                     |
+| Pi -> LLM     | autossh `iotbot-tunnel` (Pi ~/.ssh/config) from Pi crontab, @reboot + */5 watchdog; bot calls 127.0.0.1:8001                                         |
 | LLM backend   | Local llama-server qwen36-35b-a3b + deterministic fast path                                                                                          |
 | LLM build     | NOT YET. Needs a deeper planning session first (see "LLM: open planning items")                                                                      |
 | Approach      | Restructure on PTB 22 (async), keep device/room/IR model + IR data. Minimal bug-fixing                                                               |

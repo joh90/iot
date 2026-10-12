@@ -43,9 +43,9 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D7  | [x]    | Live 2026-10-12 14:04 on iotbot:8d23986 (johiot disabled by user, token copied from the v1 unit), then b4fed93 at 14:43 (2.11)                                                                                                                               |
 | D8  | n/a    | DROPPED 2026-10-09: user keeps the current token (it stays visible in `ps` and the v1 unit until cutover)                                                                                                                                                    |
 | D8b | [x]    | 2026-10-12: user ran `sudo dpkg --configure -a` + reinstalled linux-firmware; all packages configured; boot files rebuilt (script/dtb same)                                                                                                                  |
-| D9  | [~]    | NEXT (approved 2026-10-12, after the compact): Pi key ~/.ssh/iotbot_tunnel; PC authorized_keys restrict,port-forwarding,permitopen 8001; pin PC host key                                                                                                     |
-| D9b | [ ]    | Pi @reboot cron: autossh -M 0 -N -L 127.0.0.1:8001:127.0.0.1:8001 user@pc-host (ServerAlive 30s, ExitOnForwardFailure); start now; /health                                                                                                         |
-| D10 | [ ]    | Reboot test (user, when home): Pi boots on the rebuilt initrd, iotbot container comes back by itself, `/status` OK                                                                                                                                           |
+| D9  | [x]    | 2026-10-12: Pi key ~/.ssh/iotbot_tunnel; PC authorized_keys restrict,port-forwarding,permitopen 8001,from 192.168.1.*,command /bin/false; PC host key pinned; shell + port 22 refused                                                                       |
+| D9b | [x]    | 2026-10-12: Pi ~/.ssh/config Host iotbot-tunnel; crontab @reboot + */5 watchdog, flock + autossh -M 0 -N; /health OK from Pi and container                                                                                                                   |
+| D10 | [ ]    | Reboot test (user, when home): Pi boots on the rebuilt initrd, iotbot container comes back by itself, `/status` OK, tunnel back (curl 127.0.0.1:8001/health)                                                                                                 |
 
 Follow-up from the 3.1 review (a parseable-but-invalid file could replace a good `.bak`): fixed in 2.0.
 
@@ -91,7 +91,7 @@ Ships (2.11) only after D7 and a few days of using the AC buttons.
 |---|--------|------------------------------------------------------------------------|
 | 3 | [x]    | AC state engine (done 2026-10-09, see Phase 3 table above)             |
 | 2 | [x]    | Scheduling (shipped 2026-10-12, see Phase 2 table above)               |
-| 6 | [ ]    | NEXT after D9: telemetry `turns` JSONL, `/stats` p50/p95               |
+| 6 | [ ]    | NEXT (plan first): telemetry `turns` JSONL, `/stats` p50/p95           |
 | 4 | [ ]    | LLM: planning session first (PLAN.md open items), then build           |
 | 7 | [ ]    | Weekly recommendations from device_events, hours-run + kWh/SGD         |
 | 5 | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up, `/prefs` |
