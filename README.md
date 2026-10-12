@@ -101,6 +101,12 @@ deploy/docker.sh logs
   the clock is synced (the Pi has no RTC): Telegram TLS fails and is retried until NTP catches up, and
   the first few log timestamps can be wrong.
 
+### 4. The LLM (for the chat assistant)
+
+The chat assistant and `/stats` talk to a llama-server at `LLM_URL` in `.env` (default
+`http://127.0.0.1:8001`). How the Pi reaches that server is set up outside this repo; keep the
+server off the open network.
+
 ## devices.json
 
 ```json

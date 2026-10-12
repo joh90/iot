@@ -85,7 +85,7 @@ Ships (2.11) only after D7 and a few days of using the AC buttons.
 |---|--------|------------------------------------------------------------------------|
 | 3 | [x]    | AC state engine (done 2026-10-09, see Phase 3 table above)             |
 | 2 | [x]    | Scheduling (shipped 2026-10-12, see Phase 2 table above)               |
-| 6 | [ ]    | NEXT after D9: telemetry `turns` JSONL, `/stats` p50/p95               |
+| 6 | [ ]    | NEXT (plan first): telemetry `turns` JSONL, `/stats` p50/p95           |
 | 4 | [ ]    | LLM: planning session first (PLAN.md open items), then build           |
 | 7 | [ ]    | Weekly recommendations from device_events, hours-run + kWh/SGD         |
 | 5 | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up, `/prefs` |
