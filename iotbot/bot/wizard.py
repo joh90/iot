@@ -267,7 +267,7 @@ class Wizard:
                           InlineKeyboardMarkup(_rows(temps, 5) + [nav]))
         if step == "kind":
             return Screen("When?", InlineKeyboardMarkup([
-                [_btn("Every week", d.id, "kind", "w"), _btn("Once (timer)", d.id, "kind", "o")], nav]))
+                [_btn("Repeat on days", d.id, "kind", "w"), _btn("Just once", d.id, "kind", "o")], nav]))
         if step == "time":
             picks = [_btn(t, d.id, "time", t.replace(":", "")) for t in QUICK_TIMES]
             return Screen("Time? Pick one, or tap Type a time and send it (23:00, 11pm, 2330).",
