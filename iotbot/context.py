@@ -19,6 +19,7 @@ from iotbot.schedule.store import ScheduleStore
 from iotbot.services.devices import DeviceService
 from iotbot.services.users import UserService, validate_users
 from iotbot.store import JsonlLog, JsonStore, read_json
+from iotbot.telemetry import Tracker
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class AppContext:
     schedules: ScheduleService | None = None
     scheduler: Scheduler | None = None
     notifier: Notifier | None = None
+    tracker: Tracker | None = None
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -80,6 +82,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     hub = BroadlinkHub(transport or Transport(settings.discover_timeout))
     events = JsonlLog(settings.log_dir, "device_events", settings.timezone)
     audit = JsonlLog(settings.log_dir, "audit", settings.timezone)
+    tracker = Tracker(JsonlLog(settings.log_dir, "turns", settings.timezone))
 
     ac = None
     if settings.ac_encoder:
@@ -106,6 +109,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     scheduler = Scheduler(sched_store, devices, settings.timezone,
                           floor=(lambda: ac.store.latest()) if ac else None)
     schedules.on_change = scheduler.wake
+    scheduler.tracker = tracker
 
     def recipients(creator: int) -> list[int]:
         # The creator; if they are no longer approved, everyone, so nothing goes unseen
@@ -119,7 +123,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     ctx = AppContext(
         settings=settings, registry=registry, hub=hub,
         devices=devices, users=users, ac=ac,
-        schedules=schedules, scheduler=scheduler, notifier=notifier,
+        schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker,
         warnings=warnings,
     )
     for w in warnings:

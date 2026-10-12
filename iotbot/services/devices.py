@@ -6,12 +6,14 @@ import asyncio
 import itertools
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import wraps
 from typing import TYPE_CHECKING
 
-from iotbot.devices.hub import BroadlinkHub, HubError
+from iotbot import telemetry
 from iotbot.ac.state import AcState
+from iotbot.devices.hub import BroadlinkHub, HubError
 from iotbot.devices.model import Device, Feature, Registry, resolve_feature
 from iotbot.result import Actor, Result
 from iotbot.store import JsonlLog
@@ -23,6 +25,17 @@ logger = logging.getLogger(__name__)
 
 # Pseudo-feature for sending an arbitrary AC state (scheduler, later the LLM)
 SET_STATE = Feature("set_state", "set", idempotent=True)
+
+
+def _tracked(method: Callable[..., Awaitable[Result]]) -> Callable[..., Awaitable[Result]]:
+    """Report the call's outcome (ok / error code) to the current turn, if any."""
+    @wraps(method)
+    async def wrapper(*args, **kwargs) -> Result:
+        r = await method(*args, **kwargs)
+        telemetry.note_result(r.ok, r.error)
+        return r
+
+    return wrapper
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +77,7 @@ class DeviceService:
                                f"{device.id} has no '{' '.join(words)}'. Try: {_features_hint(device)}")
         return Result.success(data={"device": device.id, "feature": feature})
 
+    @_tracked
     async def run(self, device_id: str, feature: str, actor: Actor,
                   request_id: str | None = None, source: str | None = None) -> Result:
         """Run one feature. `request_id` correlates surfaces (e.g. a Telegram update);
@@ -83,6 +97,7 @@ class DeviceService:
                 return _with_prev(r, prev)
         return await self._run(device, f, actor, request_id, source)
 
+    @_tracked
     async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
                             request_id: str | None = None, source: str | None = None) -> Result:
         """Send a full AC state to a managed AC (built by the encoder, never a capture)."""
@@ -96,6 +111,7 @@ class DeviceService:
             r = await self._run(device, SET_STATE, actor, request_id, source, state)
             return _with_prev(r, prev)
 
+    @_tracked
     async def adjust_ac_state(self, device_id: str, changes: dict | Callable[[AcState], dict], actor: Actor,
                               request_id: str | None = None, source: str | None = None,
                               skip_same: bool = False) -> Result:
@@ -180,6 +196,7 @@ class DeviceService:
                 await self.events.append_async(record)
                 return warning
 
+            telemetry.note_send(device.id, ms, ok, bool(maybe))
             # Shielded so a cancelled caller still leaves a trace of a maybe-sent command
             save_warning = await asyncio.shield(finish())
 

@@ -25,6 +25,8 @@ from telegram import Bot, Update
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
+from iotbot import telemetry
+
 logger = logging.getLogger(__name__)
 
 MAX_AGE_S = 120
@@ -72,6 +74,7 @@ async def gate(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if backlog is None or not isinstance(update, Update) or (why := backlog.stale(update)) is None:
         return
     user = update.effective_user
+    telemetry.note(outcome="dropped_offline")
     logger.info("Dropped a %s queued while offline (update %s, user %s)", why, update.update_id,
                 user.id if user else None)
     try:
