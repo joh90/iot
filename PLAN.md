@@ -53,7 +53,9 @@ change), B12 (/on /off silent), B21 (broadlink_cli / discovery scripts).
 
 ## Phases
 
-Build order (decided 2026-10-09): 1, 3, 2, 5, 6, 7; 4 (LLM) after its planning session. The Phase 3
+Build order (decided 2026-10-09): 1, 3, 2, 5, 6, 7; 4 (LLM) after its planning session.
+Re-ordered 2026-10-12: D9 tunnel, 6, plan 4, build 4, 7, 5 (6 first so LLM turns are measured from
+day one; 7 before 5 so hours-run is built once; 4's tool list must take 5's tools later). The Phase 3
 hardware check was dropped; Phase 2 ships only after the D7 cutover and a few days of using the AC
 buttons, and untested AC states (fan 2/4/quiet, vane 2-5) get tried through the picker before
 schedules rely on them (2026-10-10).
