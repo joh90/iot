@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
@@ -14,8 +15,10 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
+from iotbot import telemetry
 from iotbot.bot import acpicker as ap
 from iotbot.bot import keyboards as kb
+from iotbot.bot import stats
 from iotbot.bot import wizard as wz
 from iotbot.bot.callbacks import decode, encode
 from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup
@@ -52,6 +55,7 @@ def restricted(func: Handler) -> Handler:
         if user is not None and ctx.users.is_allowed(user.id):
             return await func(update, context)
         logger.info("Rejected user %s", user.id if user else None)
+        telemetry.note(outcome="denied")
         if update.callback_query:
             await update.callback_query.answer(NOT_ALLOWED, show_alert=True)
         elif update.effective_message:
@@ -97,6 +101,7 @@ async def reply(update: Update, text: str, markup: InlineKeyboardMarkup | None =
 
 
 async def reply_result(update: Update, r: Result) -> None:
+    telemetry.note_result(r.ok, r.error)     # refusals that never reached a device call
     text = h(r.message)
     if r.warnings:
         text += "\n" + "\n".join("Note: " + h(w) for w in r.warnings)
@@ -202,6 +207,34 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if len(ctx.warnings) > 10:
             lines.append("- ... see the log for the rest")
     await reply(update, "\n".join(lines))
+
+
+_STATS_LOCK = asyncio.Lock()
+
+
+@restricted
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ctx = app_ctx(context)
+    args = context.args or []
+    days = stats.DEFAULT_DAYS
+    if args:
+        if len(args) > 1 or not args[0].isascii() or not args[0].isdigit() \
+                or not 1 <= int(args[0]) <= stats.MAX_DAYS:
+            await reply(update, f"Usage: /stats [days], 1 to {stats.MAX_DAYS} (default {stats.DEFAULT_DAYS}).")
+            return
+        days = int(args[0])
+    now = datetime.now(ZoneInfo(ctx.settings.timezone))
+    since = now - timedelta(days=days)
+
+    def load() -> list[str]:
+        # Up to a year of lines: parsed off the event loop
+        turns = stats.read_since(ctx.tracker.log, since, now, stats.TURN_KEYS) if ctx.tracker else []
+        events = stats.read_since(ctx.devices.events, since, now, stats.EVENT_KEYS)
+        return stats.summary(turns, events, ctx.registry, days, ctx.users.name_of)
+
+    async with _STATS_LOCK:          # one at a time: a year of logs is heavy on a Pi 3
+        lines, llm = await asyncio.gather(asyncio.to_thread(load), stats.llm_health(ctx.settings.llm_url))
+    await reply(update, "\n".join([*lines, "", b("Assistant PC (LLM)"), f"- {llm} ({h(ctx.settings.llm_url)})"]))
 
 
 def schedule_status(ctx: AppContext, now: datetime) -> list[str]:
@@ -432,6 +465,7 @@ async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_
         except TelegramError:
             pass
         r = await ctx.notifier.retry(actor, args[0])
+        telemetry.note_result(r.ok, r.error)
         await _dm(query, h(r.message))
         return
     if action == "undo":
@@ -443,6 +477,7 @@ async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_
     else:
         await query.answer("This button is no longer active.")
         return
+    telemetry.note_result(r.ok, r.error)
     if r.error == "stale":
         r.message = "Already changed (maybe a double tap). /schedule shows the current state."
     await answer_or_message(query, r.message, alert=not r.ok)
@@ -692,6 +727,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the update id and the exception only -- no message text or user data (B15)."""
     uid = getattr(update, "update_id", None)
     logger.error("Error handling update %s", uid, exc_info=context.error)
+    telemetry.note(outcome="error", error=context.error.__class__.__name__ if context.error else None)
     if uid is None:
         return  # not caused by an update (e.g. a job)
     try:

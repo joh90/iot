@@ -29,6 +29,8 @@ class Settings:
     log_level: str
     # False (AC_ENCODER=off): ACs send their captured codes, as v1 did
     ac_encoder: bool = True
+    # The PC llama-server through the SSH tunnel (README "Tunnel to the LLM PC")
+    llm_url: str = "http://127.0.0.1:8001"
 
 
 def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
@@ -94,4 +96,5 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         discover_timeout=discover_timeout,
         log_level=(environ.get("LOG_LEVEL") or "INFO").upper(),
         ac_encoder=ac_raw == "on",
+        llm_url=(environ.get("LLM_URL") or "http://127.0.0.1:8001").rstrip("/"),
     )

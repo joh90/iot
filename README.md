@@ -15,20 +15,22 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 - `/list` shows rooms, devices and the actions each one has
 - `/user` lists approved users with a Remove button; `/adduser <user id> <name>` approves someone
 - `/ping` works for anyone and shows their Telegram user id (needed to approve them)
+- `/stats [days]` shows how fast the bot answers (p50/p95 per surface, share under 300 ms), the slowest
+  remotes, failed sends and who or what sent them, strangers, and whether the LLM PC answers (default 7 days)
 
 A device only gets the actions whose IR codes were captured in `commands.json`, so every button works.
 Only approved Telegram user ids can use the bot; usernames are not checked.
 
 ## Files
 
-| File               | Tracked | What it holds                                              |
-|--------------------|---------|------------------------------------------------------------|
-| `.env`             | no      | Bot token and paths (copy `.env.example`)                  |
-| `devices.json`     | no      | Your rooms, RM remotes, devices and plugs (`devices.example.json`) |
-| `users.json`       | no      | Approved users `{"<telegram id>": "<name>"}` (`users.example.json`) |
-| `commands.json`    | yes     | Captured IR codes by device type / brand / model           |
-| `logs/*.jsonl`     | no      | `device_events-YYYY-MM.jsonl` (every action), `audit-YYYY-MM.jsonl` (user changes) |
-| `state/`           | no      | `ac_state.json` (last state sent per aircon); later schedules |
+| File            | Tracked | What it holds                                                                                                                                                                                              |
+|-----------------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.env`          | no      | Bot token and paths (copy `.env.example`)                                                                                                                                                                  |
+| `devices.json`  | no      | Your rooms, RM remotes, devices and plugs (`devices.example.json`)                                                                                                                                         |
+| `users.json`    | no      | Approved users `{"<telegram id>": "<name>"}` (`users.example.json`)                                                                                                                                        |
+| `commands.json` | yes     | Captured IR codes by device type / brand / model                                                                                                                                                           |
+| `logs/*.jsonl`  | no      | `device_events-YYYY-MM.jsonl` (every send), `turns-YYYY-MM.jsonl` (every message, tap and schedule fire, with its text and timings), `audit-YYYY-MM.jsonl` (user changes), `schedule_events-YYYY-MM.jsonl` |
+| `state/`        | no      | `ac_state.json` (last state sent per aircon); later schedules                                                                                                                                              |
 
 JSON files are written atomically (temp file, fsync, rename) with a `.bak` of the previous good
 version. If a file is damaged after a power cut, the bot loads the `.bak` and says so in `/status`.
@@ -263,6 +265,14 @@ Rules worth knowing:
 - A failed send rediscovers the device by MAC and retries once, but only when a repeat is harmless:
   aircon frames (full state) are safe to resend, while toggles like TV power are never resent after an
   unclear reply, so the TV is not switched on and off again.
+
+## Usage log
+
+`turns-YYYY-MM.jsonl` has one line per message, button tap or schedule fire: who (strangers too, with
+their Telegram name), the raw text or button data, the outcome, time inside the bot (`total_ms`), time
+spent sending IR (`ir_ms`) and, for messages, the delay from Telegram (`lag_s`, whole seconds). Lines
+link to `device_events` by `request_id`. Nothing is deleted: the raw text is kept on purpose, as real
+phrasing to test the LLM assistant against later. The files stay on the Pi and are never committed.
 
 ## Coming next
 

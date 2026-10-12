@@ -89,13 +89,13 @@ Ships (2.11) only after D7 and a few days of using the AC buttons.
 
 Design: PLAN.md "Phase 6 decisions". No push alerts, no /help notice.
 
-| #   | Status | Task                                                                                                                                                                                     |
-|-----|--------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 6.1 | [ ]    | `iotbot/telemetry.py`: `Turn` in a contextvar, `TurnLog` -> monthly `turns-YYYY-MM.jsonl`, kept forever                                                                                  |
-| 6.2 | [ ]    | Application subclass wraps `process_update`: one line per update (crash + offline drop included), lag_s + total_ms                                                                       |
-| 6.3 | [ ]    | Fill turns: intent from command/button, device service adds ir_ms + outcome; strangers `denied` (id, name, text); scheduler fires as surface `scheduler`                                 |
-| 6.4 | [ ]    | `/stats [days]` (any approved user, default 7, max 365, in a thread): p50/p95 by surface, lag, % under 300 ms, failures by who, slowest 3 RM/plugs, strangers, offline drops, LLM health |
-| 6.5 | [ ]    | Tests, README, reviewer per task; ship to the Pi on user OK (carries 6872a03)                                                                                                            |
+| #   | Status | Task                                                                                                                                                                                               |
+|-----|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 6.1 | [x]    | `iotbot/telemetry.py`: `Turn` in a contextvar, `TurnLog` -> monthly `turns-YYYY-MM.jsonl`, kept forever                                                                                            |
+| 6.2 | [x]    | Application subclass wraps `process_update`: one line per update (crash + offline drop included), lag_s + total_ms                                                                                 |
+| 6.3 | [x]    | Fill turns: intent from command/button, device service adds ir_ms + outcome; strangers `denied` (id, name, text); scheduler fires as surface `scheduler`; reviewed                                 |
+| 6.4 | [x]    | `/stats [days]` (any approved user, default 7, max 365, in a thread): p50/p95 by surface, lag, % under 300 ms, failures by who, slowest 3 RM/plugs, strangers, offline drops, LLM health; reviewed |
+| 6.5 | [~]    | Tests, README, reviewer per task; ship to the Pi on user OK (carries 6872a03) -- tests (626) + README done; ship pending                                                                           |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 

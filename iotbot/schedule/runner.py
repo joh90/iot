@@ -24,6 +24,7 @@ import ctypes.util
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -34,6 +35,7 @@ from iotbot.schedule import timing as tm
 from iotbot.schedule.model import Adjust, LastFired, Off, On, Once, Schedule
 from iotbot.schedule.store import ScheduleStore
 from iotbot.services.devices import DeviceService
+from iotbot.telemetry import Tracker, Turn
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,15 @@ def schedule_actor(s: Schedule) -> Actor:
     return Actor(SYSTEM_USER_ID, f"schedule {s.label or s.id}", "scheduler")
 
 
+def _note_outcome(t: Turn | None, o: FireOutcome) -> None:
+    """Scheduler turns keep the fire result as outcome and the device code or reason as error."""
+    if t is None:
+        return
+    t.outcome = o.result
+    t.error = (o.result_obj.error if o.result_obj is not None and o.result_obj.error else o.reason) or None
+    t.attempts = o.attempts
+
+
 class Scheduler:
     def __init__(self, store: ScheduleStore, devices: DeviceService, tz: str | ZoneInfo,
                  notify: Notify | None = None, clock: Callable[[], float] = time.time,
@@ -94,6 +105,7 @@ class Scheduler:
         self._sleep = sleep
         self._floor = floor            # extra "newest saved time" sources (e.g. AC state)
         self._synced = synced
+        self.tracker: Tracker | None = None   # one `turns` line per fire (Phase 6)
         self.clock_state = "starting"  # shown in /status
         self._cursor: datetime | None = None
         self._wake = asyncio.Event()
@@ -306,9 +318,11 @@ class Scheduler:
                 # Without the marker a restart could send it again: do not send at all
                 outcome = FireOutcome(s, at, key, "failed", "could not save the schedule state, so it was "
                                       "not sent")
+                async with self._turn(s, key) as t:
+                    _note_outcome(t, outcome)
                 await self._notify(outcome)
                 return
-            outcome = await self.execute(s, at, key)
+            outcome = await self._execute_tracked(s, at, key)
             if not await self._record(outcome):
                 self._unsaved[key] = outcome
             await self._notify(outcome)
@@ -318,6 +332,20 @@ class Scheduler:
             logger.exception("Schedule %s at %s failed unexpectedly", s.id, at)
 
     # ---- sending -------------------------------------------------------------------------
+
+    def _turn(self, s: Schedule, key: str) -> AbstractAsyncContextManager[Turn | None]:
+        """One `turns` line per fire (Phase 6); nothing without a tracker."""
+        if self.tracker is None:
+            return nullcontext()
+        kind = type(s.action).__name__.lower()
+        return self.tracker.turn(surface="scheduler", user_id=SYSTEM_USER_ID, name=schedule_actor(s).name,
+                                 raw=f"{s.id} {kind} {s.device}", intent=f"schedule:{kind}", request_id=key)
+
+    async def _execute_tracked(self, s: Schedule, at: datetime, key: str) -> FireOutcome:
+        async with self._turn(s, key) as t:
+            outcome = await self.execute(s, at, key)
+            _note_outcome(t, outcome)
+            return outcome
 
     async def execute(self, s: Schedule, at: datetime, key: str, actor: Actor | None = None,
                       retries: bool = True) -> FireOutcome:

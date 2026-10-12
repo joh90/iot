@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from typing import Any
 
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -20,6 +22,8 @@ from iotbot.context import AppContext, expected_devices
 
 logger = logging.getLogger(__name__)
 
+MAX_CLOCK_SKEW_S = 5
+
 COMMANDS = [
     ("start", "Help and command list"),
     ("ping", "Your user id"),
@@ -32,7 +36,75 @@ COMMANDS = [
     ("user", "Approved users"),
     ("adduser", "Approve a user"),
     ("schedule", "Schedules and timers"),
+    ("stats", "Speed, failures, LLM health"),
 ]
+
+
+def button_intent(data: str | None) -> str | None:
+    """Group button taps by what they do, not by the draft or picker id inside them."""
+    parts = (data or "").split(":")
+    if not parts[0]:
+        return None
+    if parts[0] == "sw":                     # sw:<draft or ->:<action>:...
+        return f"sw:{parts[2]}" if len(parts) > 2 else "sw"
+    if parts[0] == "ap":                     # ap:<owner>:<state>:<op>; owner "!<device>" = Settings card
+        card = "card" if len(parts) > 1 and parts[1].startswith("!") else "ap"
+        return f"{card}:{parts[-1]}" if len(parts) > 3 else card
+    return ":".join(parts[:2])
+
+
+def turn_fields(update: Update, ctx: AppContext, now: float | None = None) -> dict[str, Any]:
+    """What is known about a turn before any handler runs."""
+    user = update.effective_user
+    allowed = user is not None and ctx.users.is_allowed(user.id)
+    name = (ctx.users.name_of(user.id) if allowed else user.full_name) if user else None
+    msg, query = update.message, update.callback_query
+    raw = intent = lag = None
+    if query is not None:
+        surface, raw, intent = "button", query.data, button_intent(query.data)
+    elif msg is not None:
+        raw = msg.text or msg.caption
+        if raw and raw.startswith("/"):
+            surface = "slash"
+            intent = raw.split()[0].split("@")[0]
+        else:
+            surface, intent = "text", "text"
+        if msg.date is not None:
+            lag = round((now if now is not None else time.time()) - msg.date.timestamp())
+            if lag < -MAX_CLOCK_SKEW_S:
+                lag = None                   # Pi clock behind (no RTC, before NTP): meaningless
+    else:
+        surface = "other"
+    return {
+        "surface": surface,
+        "user_id": user.id if user else None,
+        "name": name,
+        "allowed": allowed,
+        "raw": raw,
+        "intent": intent,
+        "update_id": update.update_id,
+        "request_id": f"tg:{update.update_id}",
+        "lag_s": lag,
+    }
+
+
+class TrackedApplication(Application):
+    """Writes one `turns` line per update: start to end, crashes and dropped updates included.
+    Handlers must stay blocking (the default): a `block=False` handler would finish after the
+    line is written and its notes would be lost."""
+
+    async def process_update(self, update: object) -> None:
+        ctx: AppContext | None = self.bot_data.get("ctx")
+        if ctx is None or ctx.tracker is None or not isinstance(update, Update):
+            await super().process_update(update)
+            return
+        try:
+            fields = turn_fields(update, ctx)
+        except Exception:  # noqa: BLE001 -- telemetry never stops an update
+            logger.exception("Could not read turn fields")
+            fields = {"surface": "other", "update_id": update.update_id}
+        async with ctx.tracker.turn(**fields):
+            await super().process_update(update)
 
 
 def build_application(ctx: AppContext) -> Application:
@@ -60,6 +132,7 @@ def build_application(ctx: AppContext) -> Application:
 
     app = (
         Application.builder()
+        .application_class(TrackedApplication)
         .token(ctx.settings.bot_token)
         # Sends to one RM are serialized by the hub's per-device lock
         .concurrent_updates(8)
@@ -81,7 +154,8 @@ def register(app: Application) -> None:
     for name, func in (("ping", hd.cmd_ping), ("start", hd.cmd_start), ("status", hd.cmd_status),
                        ("list", hd.cmd_list), ("keyboard", hd.cmd_keyboard), ("on", hd.cmd_on),
                        ("off", hd.cmd_off), ("d", hd.cmd_device), ("user", hd.cmd_user),
-                       ("adduser", hd.cmd_adduser), ("schedule", hd.cmd_schedule)):
+                       ("adduser", hd.cmd_adduser), ("schedule", hd.cmd_schedule),
+                       ("stats", hd.cmd_stats)):
         app.add_handler(CommandHandler(name, func, filters=new_only))
     # Plain text is only read as the answer to the wizard's "Type a time"
     app.add_handler(MessageHandler(new_only & filters.TEXT & ~filters.COMMAND, hd.on_text))
