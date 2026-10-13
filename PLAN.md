@@ -252,6 +252,30 @@ Planned over 11 question rounds plus an independent plan audit. Replaces the L1-
 | Times          | LLM outputs plain fields (HH:MM, date/days, in_minutes); code resolves in TZ_NAME and reuses the wizard Draft/preview/plan/apply                                             |
 | Later          | 6.6 speed after Phase 4; habit nudges ('turn it on?') + daily brief in Phase 7; voice much later; no proactive outside alerts ever                                           |
 
+### 4.0 spike results (2026-10-13)
+
+Real Qwen3.6-35B-A3B calls from inside the iotbot container on the Pi, through the tunnel, slot 1,
+4 fake tools (home state, set_ac, add_timer, outside), ~910-token prompt, no IR.
+
+| Measure                      | Thinking off                    | Thinking on                    |
+|------------------------------|---------------------------------|--------------------------------|
+| One LLM round (from the Pi)  | 170-670 ms (first call cold)    | 620-1380 ms                    |
+| Full turn (tool + reply)     | 460-690 ms                      | not measured                   |
+| Tool choice, 6 + 6 cases     | all correct                     | all correct, same answers      |
+| Prompt cache                 | 890 of ~910 tokens reused       | same                           |
+
+Correct: off/on, temp + swing, "the big room" house fact, 11pm timer, off-topic refusal, "is the aircon
+on?" -> state tool, "a bit cooler" -> read state then -1C, follow-up "make it 23 and swing" via context.
+
+Design changes from the spike:
+- After a WRITE tool the loop stops and code draws the reply (the confirm card). The model said "Both
+  aircons are now off" although the tool result said a confirm card was pending. Model text is only
+  used for read-only answers.
+- Tool results carry code-computed labels: the model called PSI 146 "moderate" (NEA band: unhealthy)
+  and said "currently dry" with no rain data returned. Outside tool returns bands and only asked fields;
+  prompt forbids stating data a tool did not return.
+- Thinking stays off (same answers, 3-4x slower).
+
 ## Pending before build
 
 - Pi facts (user to paste): `uname -m; cat /etc/os-release; python3 --version; ldd --version | head -1; df -h /; ps aux | grep main.py`
