@@ -104,7 +104,7 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 
 | #    | Status | Task                                                                                                                          |
 |------|--------|-------------------------------------------------------------------------------------------------------------------------------|
-| 4.0  | [ ]    | Spike: real Qwen tool calls from the Pi through the tunnel; latency, prompt size, cache hits, thinking off; results into PLAN |
+| 4.0  | [x]    | Spike done 2026-10-13: 460-690 ms full turn from the Pi, 12/12 correct; see PLAN '4.0 spike results'                          |
 | 4.1  | [ ]    | LLM client: OpenAI-style tool calls, slot 1, health/busy check, 3 rounds / 20 s, strict tool-call validation, LLM_ENABLED     |
 | 4.2  | [ ]    | Text routing (private chats, wizard rule), per-person lock + rate limit, chat context, tool registry (open for 5/7)           |
 | 4.3  | [ ]    | Confirm cards + Undo button (code-drawn, stale check by seq/rev, short callback tokens)                                       |
