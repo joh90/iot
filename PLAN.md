@@ -218,15 +218,39 @@ Phase 1 removes the main costs: sequential PTB 13 dispatcher + `time.sleep`, 5s 
 hex->bytes on every send. Add reaction ack, edit-in-place keyboards. Measure with Phase 6 timings.
 Target: < 300 ms slash -> IR send.
 
-## LLM: open planning items (deeper session before any build)
+## Phase 4 decisions (2026-10-13)
 
-Draft design L1-L12 discussed: fast-path parser first, typed tools with enum devices, two-phase writes
-with code-rendered confirm cards expiring after TTL, static system prompt for prompt-cache hits, 6-turn
-memory with 10-min idle reset, structured time output validated in code, max 3 rounds / 20s / no thinking,
-cached `/health` probe (1s) so a dead tunnel fails fast, 1 slot max on the shared llama-server, streaming
-via `sendMessageDraft`, ~60-utterance English + Singlish eval set, confirm-outcome telemetry.
-Still to decide: fast-path grammar scope, exact tool list, memory, Singlish coverage, evals, tunnel
-failure UX, voice notes.
+Planned over 11 question rounds plus an independent plan audit. Replaces the L1-L12 draft
+(no fast path, no evals before ship: training wheels instead; evals later replay the llm log).
+
+| Topic          | Decision                                                                                                                                                                     |
+|----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Scope          | Home only: devices, AC settings, timers/schedules, home questions, outside conditions, holidays; polite refusal otherwise                                                    |
+| Routing        | All free text from approved users in PRIVATE chats goes to the LLM (no fast path); strangers and groups never; buttons/slash unchanged                                       |
+| Wizard text    | If the wizard waits for a time and the text parses as one, the wizard takes it; otherwise it stops waiting and the text goes to the LLM                                      |
+| Users          | All approved users from day one                                                                                                                                              |
+| Model          | Whatever is loaded on 8001 (model name logged per turn); pinned to slot 1 of 2, slot 0 left for the owner; busy -> fail in 2 s                                               |
+| Language       | English replies; casual/Singlish input accepted, not specially tested                                                                                                        |
+| Thinking       | Off (chat_template_kwargs enable_thinking false); max 3 tool rounds, 20 s cap; 'typing...' then one reply                                                                    |
+| Confirm        | Training wheels: EVERY chat action shows a code-drawn card [Do it] [Cancel] (5 min). No 'act on clear' mode until we decide later                                            |
+| Undo           | Code-drawn [Undo] button under every assistant action (10 min, refused if something newer was sent); not an LLM tool                                                         |
+| Devices        | Managed ACs + idempotent features only; toggle IR stays button-only                                                                                                          |
+| AC truth       | Answers say it is what the bot last sent, when and by whom (remote changes are invisible)                                                                                    |
+| Bulk           | Card lists every item, max 10                                                                                                                                                |
+| Limits         | 1 turn in flight per person, 20 per 10 min; LLM_ENABLED kill switch (off: one-line reply, wizard still works)                                                                |
+| Memory: chat   | Last 6 messages per person, reset after 10 min idle                                                                                                                          |
+| Memory: facts  | Per person + house facts; bot proposes and shows 'Remembered: ... [Undo]'; tidy on write; caps 30/person, 30 house; 200 chars                                                |
+| Memory: safety | Facts are quoted data, never rules; cannot change confirm rules or tool rights; instruction-like facts refused on save                                                       |
+| House facts    | Any approved user adds/removes; nobody pinged; /memory shows who added and when                                                                                              |
+| Recipes        | Only created when a person spells out the steps and taps Save; stored as exact validated actions, immediate only (no delays); first run confirms (training wheels: always)   |
+| Privacy        | Actions shared ('who turned on the AC?'); facts and recipes private to their owner                                                                                           |
+| Diary          | Search tool (max 20 lines) over device + schedule events and the asker's OWN past messages; lines matching forgotten facts hidden (best effort)                              |
+| /memory        | Lists your facts, recipes and house facts with [Forget]; Phase 5 prefs stay typed settings shown here, never LLM facts                                                       |
+| Outside        | NEA data.gov.sg v2, keyless, 10-min cache, <= 5 calls/10 s: 2h forecast (home area), 24h + 4-day, PSI/PM2.5 (east), rain now, lightning, humidity, wind; on request only |
+| Holidays       | Read-only 'is X a public holiday' from the MOM list (cached); NO schedule skip logic                                                                                         |
+| Telemetry      | turns: llm_ms, tokens, model, tool calls, confirm outcome; llm-YYYY-MM-DD.jsonl full request/response, kept 90 days, for replay evals                                        |
+| Times          | LLM outputs plain fields (HH:MM, date/days, in_minutes); code resolves in TZ_NAME and reuses the wizard Draft/preview/plan/apply                                             |
+| Later          | 6.6 speed after Phase 4; habit nudges ('turn it on?') + daily brief in Phase 7; voice much later; no proactive outside alerts ever                                           |
 
 ## Pending before build
 

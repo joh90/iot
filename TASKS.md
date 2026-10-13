@@ -96,14 +96,33 @@ Design: PLAN.md "Phase 6 decisions". No push alerts, no /help notice.
 | 6.3 | [x]    | Fill turns: intent from command/button, device service adds ir_ms + outcome; strangers `denied` (id, name, text); scheduler fires as surface `scheduler`; reviewed                                 |
 | 6.4 | [x]    | `/stats [days]` (any approved user, default 7, max 365, in a thread): p50/p95 by surface, lag, % under 300 ms, failures by who, slowest 3 RM/plugs, strangers, offline drops, LLM health; reviewed |
 | 6.5 | [~]    | Tests, README, reviewer per task; ship to the Pi on user OK (carries 6872a03) -- tests (626) + README done; ship pending                                                                           |
+| 6.6 | [ ]    | Speed (after Phase 4): time-until-feedback metric, why one IR send takes ~570 ms, fewer Telegram round trips                                                                                       |
+
+## Phase 4 -- LLM assistant (planned 2026-10-13)
+
+Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and the user's OK.
+
+| #    | Status | Task                                                                                                                          |
+|------|--------|-------------------------------------------------------------------------------------------------------------------------------|
+| 4.0  | [ ]    | Spike: real Qwen tool calls from the Pi through the tunnel; latency, prompt size, cache hits, thinking off; results into PLAN |
+| 4.1  | [ ]    | LLM client: OpenAI-style tool calls, slot 1, health/busy check, 3 rounds / 20 s, strict tool-call validation, LLM_ENABLED     |
+| 4.2  | [ ]    | Text routing (private chats, wizard rule), per-person lock + rate limit, chat context, tool registry (open for 5/7)           |
+| 4.3  | [ ]    | Confirm cards + Undo button (code-drawn, stale check by seq/rev, short callback tokens)                                       |
+| 4.4  | [ ]    | Home tools: home state, AC set/adjust, idempotent features, timers + schedules via wizard Draft                               |
+| 4.5  | [ ]    | Telemetry + replay log (turn fields, llm JSONL 90 days), /stats LLM section; WAVE 1 ship                                      |
+| 4.6  | [ ]    | Memory store: facts, house facts, recipes (Save card), tidy on write, guardrails, /memory                                     |
+| 4.7  | [ ]    | Diary search (events + own messages, forgotten filter); WAVE 2 ship                                                           |
+| 4.8  | [ ]    | Outside tool (NEA feeds, cache, throttle)                                                                                     |
+| 4.9  | [ ]    | Holiday lookup tool; WAVE 3 ship                                                                                              |
+| 4.10 | [ ]    | Tests throughout (fake LLM server, broken replies, no IR), README, reviewer per task                                          |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
-| # | Status | Task                                                                   |
-|---|--------|------------------------------------------------------------------------|
-| 3 | [x]    | AC state engine (done 2026-10-09, see Phase 3 table above)             |
-| 2 | [x]    | Scheduling (shipped 2026-10-12, see Phase 2 table above)               |
-| 6 | [~]    | Telemetry: planned 2026-10-12, building (see Phase 6 table above)      |
-| 4 | [ ]    | LLM: planning session first (PLAN.md open items), then build           |
-| 7 | [ ]    | Weekly recommendations from device_events, hours-run + kWh/SGD         |
-| 5 | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up, `/prefs` |
+| # | Status | Task                                                                                          |
+|---|--------|-----------------------------------------------------------------------------------------------|
+| 3 | [x]    | AC state engine (done 2026-10-09, see Phase 3 table above)                                    |
+| 2 | [x]    | Scheduling (shipped 2026-10-12, see Phase 2 table above)                                      |
+| 6 | [~]    | Telemetry: shipped 3347df5; user verifies 6.5; 6.6 speed after Phase 4                        |
+| 4 | [~]    | LLM: planned 2026-10-13, building (see Phase 4 table above)                                   |
+| 7 | [ ]    | Weekly report + hours-run + kWh/SGD; habit nudges ('turn it on?', live); daily brief (opt-in) |
+| 5 | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up; prefs shown in /memory          |
