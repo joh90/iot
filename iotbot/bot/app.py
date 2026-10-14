@@ -126,7 +126,7 @@ def build_application(ctx: AppContext) -> Application:
             ctx.notifier.send = send
             ctx.scheduler.start()
             await ctx.notifier.report_problems()
-        if ctx.holidays:
+        if ctx.holidays and ctx.assistant:
             # MOM's list: refreshed in the background when over a month old (never blocks startup)
             app.bot_data["holidays_task"] = asyncio.create_task(ctx.holidays.run())
         logger.info("%s running", ctx.settings.bot_name)
@@ -143,8 +143,9 @@ def build_application(ctx: AppContext) -> Application:
         task = app.bot_data.get("holidays_task")
         if task:
             task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         if ctx.holidays:
-            await ctx.holidays.http.aclose()
+            await ctx.holidays.aclose()
 
     app = (
         Application.builder()

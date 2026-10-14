@@ -1,8 +1,8 @@
 """Outside conditions for one place, worded in code (Phase 4.8).
 
-Home is the configured area (2h forecast area) with air readings for the east AND central regions
-(PLAN "Outside"); any other of NEA's 47 forecast areas can be named, and then its nearest
-region and stations are used. Every part says when NEA measured it ("as of 01:00"), and
+Home is one of NEA's 47 forecast areas with its air regions (OUTSIDE_AREA, OUTSIDE_REGIONS in
+.env, PLAN "Outside"); any other area can be named, and then its nearest region and stations
+are used. Every part says when NEA measured it ("as of 01:00"), and
 stale data (NEA not answering) says how old it is. The chat tool and /outside share this.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import logging
 import math
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -19,8 +20,8 @@ from zoneinfo import ZoneInfo
 from iotbot.outside import air
 from iotbot.outside.nea import Fetched, NeaClient, NeaError
 
-HOME = "City"
-HOME_REGIONS = ("east", "central")
+logger = logging.getLogger(__name__)
+
 REGIONS = ("north", "south", "east", "west", "central")
 AREAS = (
     "Ang Mo Kio", "Bedok", "Bishan", "Boon Lay", "Bukit Batok", "Bukit Merah", "Bukit Panjang", "Bukit Timah",
@@ -55,8 +56,11 @@ def _loc(d: dict[str, Any]) -> tuple[float, float]:
 
 
 class Outside:
-    def __init__(self, nea: NeaClient, tz: str, clock: Callable[[], float] | None = None):
+    def __init__(self, nea: NeaClient, tz: str, clock: Callable[[], float] | None = None,
+                 home: str = "City", home_regions: tuple[str, ...] = ("central",)):
         self.nea = nea
+        self.home = home
+        self.home_regions = home_regions
         self.tz = ZoneInfo(tz)
         self._clock = clock or nea._clock
 
@@ -69,42 +73,42 @@ class Outside:
                      region: str | None = None) -> dict[str, Any]:
         """{"area": ..., "lines": [...]} for the chat tool; parts that fail say so in their line.
         `region` (north/south/east/west/central) picks the air readings instead of the area's."""
-        area = area if area in AREAS else HOME
+        area = area if area in AREAS else self.home
         region = region if region in REGIONS else None
         token = _REGION.set(region)
         try:
-            lines: list[str] = []
-            for part in parts:
-                lines += await self._part(area, part)
+            # In parallel: a slow NEA costs one timeout, not one per part
+            done = await asyncio.gather(*(self._part(area, p) for p in parts))
+            lines = [line for part in done for line in part]
         finally:
             _REGION.reset(token)
-        out = {"area": area + (" (home)" if area == HOME else ""), "lines": lines}
+        out = {"area": area + (" (home)" if area == self.home else ""), "lines": lines}
         if region:
             out["region"] = region
         return out
 
-    async def summary(self, area: str | None = None) -> str:
+    async def summary(self, area: str | None = None, region: str | None = None) -> str:
         """The /outside message: plain text, one screen."""
-        r = await self.report(area, SUMMARY)
+        r = await self.report(area, SUMMARY, region)
         if any("thunder" in line.lower() for line in r["lines"][:1]):
-            r["lines"][1:1] = await self._part(area if area in AREAS else HOME, "lightning")
-        if area in AREAS and area != HOME:
+            r["lines"][1:1] = await self._part(area if area in AREAS else self.home, "lightning")
+        if region in REGIONS:
+            head = f"Outside, home ({self.home}), air for the {region}:"
+        elif area in AREAS and area != self.home:
             head = f"Outside, {area}:"
         else:
-            head = f"Outside, home ({HOME}):"
+            head = f"Outside, home ({self.home}):"
         return head + "\n" + "\n".join(r["lines"])
 
     @staticmethod
-    def match_area(text: str) -> str | None:
-        """'/outside jurong east' -> 'Jurong East'; a unique prefix is enough ('toa' -> 'Toa Payoh')."""
+    def match_area(text: str) -> list[str]:
+        """'/outside jurong east' -> ['Jurong East']; a unique prefix is enough ('toa' -> ['Toa Payoh']).
+        Several hits = ambiguous ('jurong'); none = unknown."""
         t = " ".join(text.lower().split())
         if not t:
-            return None
+            return []
         exact = [a for a in AREAS if a.lower() == t]
-        if exact:
-            return exact[0]
-        hits = [a for a in AREAS if a.lower().startswith(t)]
-        return hits[0] if len(hits) == 1 else None
+        return exact or [a for a in AREAS if a.lower().startswith(t)]
 
     # ---- parts -------------------------------------------------------------------------
 
@@ -116,8 +120,11 @@ class Outside:
             return await fn(area)
         except NeaError as e:
             return [f"{part.replace('_', ' ')}: {e}"]
-        except (Unclear, KeyError, IndexError, TypeError, ValueError):
+        except (Unclear, KeyError, IndexError, TypeError, ValueError, AttributeError):
             return [f"{part.replace('_', ' ')}: NEA's reply was not understood, so I cannot say"]
+        except Exception:  # noqa: BLE001 -- one odd reply must not cost the whole answer
+            logger.exception("Outside part %s failed", part)
+            return [f"{part.replace('_', ' ')}: something went wrong reading NEA's reply"]
 
     def _as_of(self, f: Fetched, stamp: str | None) -> str:
         at = self._time(stamp)
@@ -144,21 +151,29 @@ class Outside:
     async def _p_forecast_2h(self, area: str) -> list[str]:
         f, _ = await self._area_loc(area)
         item = f.data["items"][0]
-        text = next(x["forecast"] for x in item["forecasts"] if x["area"] == area)
+        text = next((x["forecast"] for x in item["forecasts"] if x["area"] == area), None)
+        if not text:
+            raise Unclear(area)
         period = item.get("valid_period", {}).get("text") or "next 2 hours"
         return [f"Next 2h ({period}): {text} ({self._as_of(f, item.get('update_timestamp'))})"]
 
-    async def _stations(self, feed: str, loc: tuple[float, float]) -> tuple[Fetched, str, float, float, str]:
-        """Nearest station with a reading: (fetched, name, km, value, timestamp)."""
+    async def _stations(self, feed: str, loc: tuple[float, float],
+                        need: set[str] | None = None) -> tuple[Fetched, str, float, float, str]:
+        """Nearest station with a reading: (fetched, name, km, value, timestamp). Stations with no
+        value (null) are skipped; `need` limits the choice to these station ids."""
         f = await self.nea.get(feed)
         d = f.data
         reading = d["readings"][0]
-        values = {x["stationId"]: x["value"] for x in reading["data"]}
-        best = min(((km(loc, _loc(s["location"])), s) for s in d["stations"] if s["id"] in values),
-                   key=lambda t: t[0], default=None)
+        values = {x["stationId"]: x["value"] for x in reading["data"] if isinstance(x.get("value"), (int, float))}
+        best = min(((km(loc, _loc(s["location"])), s) for s in d["stations"]
+                    if s["id"] in values and (need is None or s["id"] in need)), key=lambda t: t[0], default=None)
         if best is None:
             raise Unclear(feed)
         return f, best[1]["name"], best[0], float(values[best[1]["id"]]), reading["timestamp"]
+
+    async def _ids(self, feed: str) -> set[str]:
+        f = await self.nea.get(feed)
+        return {x["stationId"] for x in f.data["readings"][0]["data"] if isinstance(x.get("value"), (int, float))}
 
     async def _p_now(self, area: str) -> list[str]:
         _, loc = await self._area_loc(area)
@@ -177,15 +192,16 @@ class Outside:
         f, name, dist, rain, ts = await self._stations("rainfall", loc)
         near = f.data["readings"][0]["data"]
         by_id = {s["id"]: s for s in f.data["stations"]}
-        wet = sum(1 for x in near if x["value"] and x["stationId"] in by_id
+        wet = sum(1 for x in near if isinstance(x.get("value"), (int, float)) and x["value"] > 0 and x["stationId"] in by_id
                   and km(loc, _loc(by_id[x["stationId"]]["location"])) <= 5)
         extra = f"; rain at {wet} station(s) within 5 km" if wet else "; no rain at stations within 5 km"
         return [f"Rain: {_rain(rain)} in the last 5 min ({name}, {dist:.0f} km{extra}, {self._as_of(f, ts)})"]
 
     async def _p_wind(self, area: str) -> list[str]:
         _, loc = await self._area_loc(area)
+        both = (await self._ids("wind-speed")) & (await self._ids("wind-direction"))   # one station for both
         (sf, name, _, speed, ts), (_, _, _, deg, _) = await asyncio.gather(
-            self._stations("wind-speed", loc), self._stations("wind-direction", loc))
+            self._stations("wind-speed", loc, both), self._stations("wind-direction", loc, both))
         compass = COMPASS[round(deg / 22.5) % 16]
         return [f"Wind: {speed:.0f} knots ({speed * 1.852:.0f} km/h) from the {compass} ({name}, {self._as_of(sf, ts)})"]
 
@@ -193,7 +209,10 @@ class Outside:
         _, loc = await self._area_loc(area)
         f = await self.nea.get("weather", {"api": "wbgt"})
         rec = f.data["records"][0]
-        best = min(rec["item"]["readings"], key=lambda r: km(loc, _loc(r["location"])))
+        ok = [r for r in rec["item"]["readings"] if r.get("wbgt") not in (None, "") and r.get("heatStress")]
+        if not ok:
+            raise Unclear("wbgt")
+        best = min(ok, key=lambda r: km(loc, _loc(r["location"])))
         return [(f"Heat stress: {str(best['heatStress']).lower()} (WBGT {float(best['wbgt']):.1f}C, "
                  f"{best['station']['name']}, {self._as_of(f, rec.get('datetime'))})")]
 
@@ -204,7 +223,7 @@ class Outside:
         at = self._time(latest["hour"])
         value = int(latest["value"])
         when = (f"{at:%H:%M}" if at.date() == self.now().date() else f"{at:%a %H:%M}") if at else "?"
-        stale = ", NEA not answering now" if f.stale else ""
+        stale = f", NEA not answering now, {_age(f.age_s(self._clock()))} old" if f.stale else ""
         note = "" if at is None or self.now() - at < timedelta(hours=2) else " (NEA gives UV in daylight hours only)"
         return [f"UV index: {value} ({air.uv_band(value)}), island-wide, at {when}{stale}{note}"]
 
@@ -213,22 +232,29 @@ class Outside:
         if _REGION.get():
             regions: tuple[str, ...] = (_REGION.get(),)
         else:
-            regions = HOME_REGIONS if area == HOME else (await self._region(area, psi_f),)
+            regions = self.home_regions if area == self.home else (await self._region(area, psi_f),)
         psi_item = psi_f.data["items"][0]
         pm_item = pm_f.data["items"][0]
         readings = psi_item["readings"]
-        lines, worst = [], 0
+        lines: list[str] = []
+        worst = None
+        psi_stale = f", {self._as_of(psi_f, psi_item.get('timestamp'))}" if psi_f.stale else ""
         for reg in regions:
-            pm = pm_item["readings"]["pm25_one_hourly"][reg]
-            psi = int(readings["psi_twenty_four_hourly"][reg])
-            subs = {k: readings[k][reg] for k in air.OTHER_SUB_INDICES if reg in readings.get(k, {})}
+            pm = pm_item["readings"]["pm25_one_hourly"].get(reg)
+            psi = readings["psi_twenty_four_hourly"].get(reg)
+            if not isinstance(pm, (int, float)) or not isinstance(psi, (int, float)):
+                lines.append(f"Air, {reg}: NEA has no reading for this region right now")
+                continue
+            psi = int(psi)
+            subs = {k: readings[k][reg] for k in air.OTHER_SUB_INDICES if reg in (readings.get(k) or {})}
             value, by = air.aqi(pm, subs)
-            worst = max(worst, psi)
+            worst = max(worst or 0, psi)
             lines += [f"Air, {reg} ({self._as_of(pm_f, pm_item.get('timestamp'))}):",
                       f"AQI {value} {air.aqi_band(value)} (aqicn-style, {by} now)",
-                      f"PSI {psi} {air.psi_band(psi)} (NEA 24h)",
+                      f"PSI {psi} {air.psi_band(psi)} (NEA 24h{psi_stale})",
                       f"PM2.5 1h {pm} ({air.pm25_1h_band(int(pm))})"]
-        lines.append(f"NEA advice for healthy people: {air.psi_advice(worst)}.")
+        if worst is not None:
+            lines.append(f"NEA advice for healthy people: {air.psi_advice(worst)}.")
         return lines
 
     async def _region(self, area: str, psi_f: Fetched) -> str:
@@ -240,8 +266,10 @@ class Outside:
         f = await self.nea.get("twenty-four-hr-forecast")
         rec = f.data["records"][0]
         g = rec["general"]
-        reg = _REGION.get() or ("east" if area == HOME else await self._region(area, await self.nea.get("psi")))
-        lines = [(f"Today ({self._as_of(f, rec.get('updatedTimestamp'))}): {g['forecast']['text']}, "
+        reg = _REGION.get() or (self.home_regions[0] if area == self.home
+                                else await self._region(area, await self.nea.get("psi")))
+        valid = (g.get("validPeriod") or {}).get("text") or "next 24 hours"
+        lines = [(f"24h forecast, {valid} ({self._as_of(f, rec.get('updatedTimestamp'))}): {g['forecast']['text']}, "
                   f"{g['temperature']['low']}-{g['temperature']['high']}C, humidity "
                   f"{g['relativeHumidity']['low']}-{g['relativeHumidity']['high']}%, wind {g['wind']['direction']} "
                   f"{g['wind']['speed']['low']}-{g['wind']['speed']['high']} km/h")]
@@ -274,6 +302,8 @@ class Outside:
                     dist = km(loc, _loc(r["location"]))
                     if at and at >= since and dist <= LIGHTNING_KM:
                         hits.append((dist, "ground" if r.get("type") == "G" else "cloud"))
+        if last and last.stale and last.age_s(self._clock()) > 300:
+            return [f"Lightning: cannot tell, NEA not answering now (last data {_age(last.age_s(self._clock()))} old)"]
         stale = ", NEA not answering now" if last and last.stale else ""
         if not hits:
             return [f"Lightning: none within {LIGHTNING_KM:.0f} km in the last {LIGHTNING_MIN} min{stale}"]

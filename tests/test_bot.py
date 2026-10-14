@@ -44,6 +44,8 @@ def ctx(tmp_path):
 
     c.hub.send_ir = send_ir
     c.sent = sent
+    from tests.test_ac_service import no_network
+    no_network(c)
     return c
 
 

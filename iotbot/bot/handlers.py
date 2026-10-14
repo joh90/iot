@@ -25,6 +25,7 @@ from iotbot.bot import chat
 from iotbot.bot.chat import on_chat
 from iotbot.bot.text import NOT_ALLOWED, START, b, dm, h, human_duration, popup, reply, safe_edit, split_text
 from iotbot.context import AppContext
+from iotbot.outside.weather import REGIONS
 from iotbot.store import read_since
 from iotbot.result import Actor, Result, Surface
 from iotbot.schedule import notify as sn
@@ -208,15 +209,20 @@ async def cmd_outside(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     """Weather and air from NEA without the LLM (works when the PC is off)."""
     ctx = app_ctx(context)
     text = " ".join(context.args or [])
-    area = None
-    if text:
-        area = ctx.outside.match_area(text)
-        if area is None:
-            await reply(update, f"I don't know the area '{h(text[:40])}'. Use an NEA area such as Bedok, "
-                                "Jurong West or Toa Payoh, or just /outside for home.")
+    area = region = None
+    if text.lower() in REGIONS:
+        region = text.lower()                                  # "/outside west": that region's air
+    elif text:
+        hits = ctx.outside.match_area(text)
+        if len(hits) != 1:
+            why = (f"'{h(text[:40])}' could be {h(', '.join(hits[:6]))}" if hits
+                   else f"I don't know the area '{h(text[:40])}'")
+            await reply(update, f"{why}. Use an NEA area such as Bedok, Jurong West or Toa Payoh, a region "
+                                "(north, south, east, west, central), or just /outside for home.")
             return
+        area = hits[0]
     telemetry.note(intent="/outside")
-    await reply(update, h(await ctx.outside.summary(area)))
+    await reply(update, h(await ctx.outside.summary(area, region)))
 
 
 @restricted

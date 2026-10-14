@@ -9,6 +9,8 @@ O3 29, SO2 4, CO 17 -> AQI 170, as aqicn showed. PSI is NEA's official 24-hour i
 
 from __future__ import annotations
 
+import math
+
 # (C low, C high, I low, I high), ug/m3, EPA before the 2024 revision
 PM25_BREAKPOINTS = (
     (0.0, 12.0, 0, 50), (12.1, 35.4, 51, 100), (35.5, 55.4, 101, 150), (55.5, 150.4, 151, 200),
@@ -37,7 +39,8 @@ def aqi_pm25(conc: float) -> int:
     c = int(conc * 10) / 10                  # EPA truncates to 0.1 ug/m3
     for c_lo, c_hi, i_lo, i_hi in PM25_BREAKPOINTS:
         if c <= c_hi:
-            return round((i_hi - i_lo) / (c_hi - c_lo) * (max(c, c_lo) - c_lo) + i_lo)
+            # EPA rounds half up (Python's round() would give 3 ug/m3 -> 12, EPA says 13)
+            return math.floor((i_hi - i_lo) / (c_hi - c_lo) * (max(c, c_lo) - c_lo) + i_lo + 0.5)
     return 500
 
 
