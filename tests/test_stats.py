@@ -10,7 +10,7 @@ from iotbot.bot import handlers as hd
 from iotbot.bot import stats
 from iotbot.devices.hub import HubError
 from iotbot.result import Actor
-from iotbot.store import JsonlLog
+from iotbot.store import JsonlLog, read_since
 from tests.test_ac_service import ALICE, make_ctx
 from tests.test_bot import ME, make_context, make_update, replied
 
@@ -96,7 +96,7 @@ def test_read_since_spans_months_and_cuts_old(tmp_path):
     now = datetime(2026, 11, 2, 12, 0, tzinfo=SGT)
     for when in (datetime(2026, 9, 30, tzinfo=SGT), datetime(2026, 10, 20, tzinfo=SGT), now - timedelta(hours=1)):
         log.append({"at": when.isoformat()}, when=when)
-    got = stats.read_since(log, now - timedelta(days=30), now)
+    got = read_since(log, now - timedelta(days=30), now)
     assert [r["at"][:10] for r in got] == ["2026-10-20", "2026-11-02"]
 
 
@@ -175,7 +175,7 @@ def test_read_since_year_rollover_bad_lines_and_keys(tmp_path):
     with open(tmp_path / "turns-2026-12.jsonl", "a") as f:
         f.write('{"no_ts": 1}\n["not", "a", "dict"]\n{"ts": "2026-12-31T00:00:00"}\n')
     log.append({"raw": "x", "total_ms": 7}, when=datetime(2027, 1, 2, tzinfo=SGT))
-    got = stats.read_since(log, now - timedelta(days=7), now, ("total_ms",))
+    got = read_since(log, now - timedelta(days=7), now, ("total_ms",))
     assert got == [{"total_ms": 5}, {"total_ms": 7}]
 
 

@@ -188,6 +188,9 @@ class JsonStore:
             return result
 
 
+_WARNED: set[tuple[Path, int]] = set()
+
+
 class JsonlLog:
     """Append-only JSON-lines log split by month: `<dir>/<prefix>-YYYY-MM.jsonl`.
 
@@ -229,17 +232,38 @@ class JsonlLog:
     async def append_async(self, record: dict[str, Any], when: datetime | None = None) -> dict[str, Any]:
         return await asyncio.to_thread(self.append, record, when)
 
-    def read_month(self, year: int, month: int) -> Iterator[dict[str, Any]]:
+    def read_month(self, year: int, month: int, contains: tuple[str, ...] = ()) -> Iterator[dict[str, Any]]:
+        """`contains`: skip lines without all these substrings before parsing (cheap on a Pi)."""
         path = self.directory / f"{self.prefix}-{year:04d}-{month:02d}.jsonl"
         if not path.exists():
             return
         with open(path, encoding="utf-8", errors="replace") as f:
             for n, line in enumerate(f, 1):
                 line = line.strip()
-                if not line:
+                if not line or not all(c in line for c in contains):
                     continue
                 try:
                     yield json.loads(line)
                 except ValueError:
-                    # A torn last line after a power cut; skip it
-                    logger.warning("Skipping bad line %d in %s", n, path.name)
+                    # A torn last line after a power cut; skip it (and say so once per file)
+                    if (path, n) not in _WARNED:
+                        _WARNED.add((path, n))
+                        logger.warning("Skipping bad line %d in %s", n, path.name)
+
+
+def read_since(log: JsonlLog, since: datetime, now: datetime,
+               keys: tuple[str, ...] | None = None, contains: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """Every record from `since` to `now`, reading only the monthly files in that range.
+    `keys`: keep only these fields of each record. `contains`: see JsonlLog.read_month."""
+    out: list[dict[str, Any]] = []
+    y, m = since.astimezone(log.tz).year, since.astimezone(log.tz).month
+    end = (now.astimezone(log.tz).year, now.astimezone(log.tz).month)
+    while (y, m) <= end:
+        for rec in log.read_month(y, m, contains):
+            try:
+                if datetime.fromisoformat(rec["ts"]) >= since:
+                    out.append({k: rec.get(k) for k in keys} if keys else rec)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue                     # a line without a usable timestamp
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out

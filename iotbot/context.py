@@ -14,6 +14,7 @@ from iotbot.devices.hub import BroadlinkHub, Expected, Transport
 from iotbot.devices.model import Registry, load_registry
 from iotbot.llm.assistant import Assistant
 from iotbot.llm.client import LlmClient
+from iotbot.llm.diary import DiaryTools
 from iotbot.llm.home import HomeTools
 from iotbot.llm.memory import Memory, MemoryTools
 from iotbot.llm.replay import ReplayLog
@@ -153,6 +154,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         home = HomeTools(ctx)
         assistant.add_tools(home.tools)
         assistant.add_tools(MemoryTools(memory, home).tools)
+        assistant.add_tools(DiaryTools(ctx, memory).tools)
     for w in warnings:
         logger.warning("Config: %s", w)
     return ctx

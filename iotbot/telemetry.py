@@ -106,6 +106,8 @@ class Tracker:
         t = Turn(**fields)
         token = _current.set(t)
         started = self._clock()
+        # Logged at its start: a chat turn that waited for a card sorts before what it caused
+        began = self.log.now()
         cancelled = False
         try:
             yield t
@@ -122,9 +124,9 @@ class Tracker:
             if t.outcome is None:
                 t.outcome = "ok"
             if cancelled:
-                self.log.append(t.record())      # an await here would be cancelled too
+                self.log.append(t.record(), when=began)      # an await here would be cancelled too
             else:
                 try:
-                    await self.log.append_async(t.record())
+                    await self.log.append_async(t.record(), when=began)
                 except Exception:  # noqa: BLE001 -- a log line never breaks a reply
                     logger.exception("Could not write a turn")

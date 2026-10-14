@@ -25,6 +25,7 @@ from iotbot.bot import chat
 from iotbot.bot.chat import on_chat
 from iotbot.bot.text import NOT_ALLOWED, START, b, dm, h, human_duration, popup, reply, safe_edit, split_text
 from iotbot.context import AppContext
+from iotbot.store import read_since
 from iotbot.result import Actor, Result, Surface
 from iotbot.schedule import notify as sn
 from iotbot.services.users import parse_user_id
@@ -169,8 +170,8 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     def load() -> list[str]:
         # Up to a year of lines: parsed off the event loop
-        turns = stats.read_since(ctx.tracker.log, since, now, stats.TURN_KEYS) if ctx.tracker else []
-        events = stats.read_since(ctx.devices.events, since, now, stats.EVENT_KEYS)
+        turns = read_since(ctx.tracker.log, since, now, stats.TURN_KEYS) if ctx.tracker else []
+        events = read_since(ctx.devices.events, since, now, stats.EVENT_KEYS)
         return stats.summary(turns, events, ctx.registry, days, ctx.users.name_of)
 
     async with _STATS_LOCK:          # one at a time: a year of logs is heavy on a Pi 3

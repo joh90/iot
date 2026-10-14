@@ -111,7 +111,7 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4.4  | [x]    | Home tools: home state, AC set/adjust, idempotent features, timers + schedules via wizard Draft                               |
 | 4.5  | [x]    | Telemetry + replay log (turn fields, llm JSONL 90 days), /stats LLM section; WAVE 1 ship                                      |
 | 4.6  | [x]    | Memory store: facts, house facts, recipes (Save card), tidy on write, guardrails, /memory                                     |
-| 4.7  | [ ]    | Diary search (events + own messages, forgotten filter); WAVE 2 ship                                                           |
+| 4.7  | [x]    | Diary search (events + own messages, forgotten filter); WAVE 2 ship                                                           |
 | 4.8  | [ ]    | Outside tool (NEA feeds, cache, throttle)                                                                                     |
 | 4.9  | [ ]    | Holiday lookup tool; WAVE 3 ship                                                                                              |
 | 4.10 | [ ]    | Tests throughout (fake LLM server, broken replies, no IR), README, reviewer per task                                          |

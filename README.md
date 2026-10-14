@@ -284,6 +284,11 @@ has loaded, thinking off) reads the message and picks tools; code does everythin
   Undo re-sends the earlier aircon state (or restores the schedule), and refuses a line if something
   newer happened to it.
 - What it says about an aircon is what the bot last sent; the physical remote is invisible to it.
+- It can look things up in the bot's own logs: "who turned on the bedroom aircon last night?", "when
+  did the office timer change?", "what did I ask you about the office?". It sees every aircon change
+  and schedule change (who, when, ok or failed) and only your own past messages, never anyone else's.
+  Messages that mention a note you told it to forget are hidden (best effort; the usage log on the
+  Pi still has the old messages, as it keeps everything).
 - It remembers your last 3 messages and its replies for 10 minutes, so "make it 23 and swing" works
   as a follow-up.
 - Limits: one message at a time per person, 20 per 10 minutes. If the PC is off or busy you get a
@@ -317,8 +322,8 @@ phrasing to test the LLM assistant against later. The files stay on the Pi and a
 
 ## Coming next
 
-Assistant memory (facts, house names, saved recipes) and a diary search, outside weather and haze
-from NEA, public holiday lookups; then weekly reports and reminders before schedules. See PLAN.md.
+Outside weather and haze from NEA and public holiday lookups for the assistant; then weekly reports
+and reminders before schedules. See PLAN.md.
 
 ## Development
 
