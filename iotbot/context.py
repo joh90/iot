@@ -18,6 +18,9 @@ from iotbot.llm.diary import DiaryTools
 from iotbot.llm.home import HomeTools
 from iotbot.llm.memory import Memory, MemoryTools
 from iotbot.llm.replay import ReplayLog
+from iotbot.llm.world import OutsideTools
+from iotbot.outside.nea import NeaClient
+from iotbot.outside.weather import Outside
 from iotbot.schedule.notify import Notifier
 from iotbot.schedule.runner import Scheduler
 from iotbot.schedule.service import ScheduleService
@@ -44,6 +47,7 @@ class AppContext:
     tracker: Tracker | None = None
     assistant: Assistant | None = None          # None: LLM_ENABLED=off
     memory: Memory | None = None
+    outside: Outside | None = None
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -133,6 +137,9 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     notifier = Notifier(schedules, scheduler, recipients)
     scheduler.notify = notifier.on_fire
 
+    # NEA: keyless, read-only, also used by /outside when the LLM is off
+    outside = Outside(NeaClient(), settings.timezone)
+
     assistant = memory = None
     if settings.llm_enabled:
         memory = Memory(settings.state_dir / "memory.json", settings.timezone)
@@ -148,13 +155,14 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         settings=settings, registry=registry, hub=hub,
         devices=devices, users=users, ac=ac,
         schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant, memory=memory,
-        warnings=warnings,
+        outside=outside, warnings=warnings,
     )
     if assistant is not None:
         home = HomeTools(ctx)
         assistant.add_tools(home.tools)
         assistant.add_tools(MemoryTools(memory, home).tools)
         assistant.add_tools(DiaryTools(ctx, memory).tools)
+        assistant.add_tools(OutsideTools(outside).tools)
     for w in warnings:
         logger.warning("Config: %s", w)
     return ctx

@@ -50,6 +50,9 @@ def make_ctx(tmp_path, env=None, commands=None):
     if ctx.assistant:
         # Never the real llama-server on this machine; tests that want a model install a fake one
         ctx.assistant.llm = LlmClient("http://llm", 1, httpx.AsyncClient(transport=httpx.MockTransport(_no_llm)))
+    if ctx.outside:
+        # Never the real NEA; tests that want data install the recorded replies (tests/test_outside.py)
+        ctx.outside.nea.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
     return ctx
 
 

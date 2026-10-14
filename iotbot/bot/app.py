@@ -38,6 +38,7 @@ COMMANDS = [
     ("schedule", "Schedules and timers"),
     ("stats", "Speed, failures, LLM health"),
     ("memory", "What the assistant remembers"),
+    ("outside", "Weather and air (NEA)"),
 ]
 
 
@@ -133,6 +134,8 @@ def build_application(ctx: AppContext) -> Application:
         if ctx.assistant:
             await ctx.assistant.drain()
             await ctx.assistant.llm.aclose()
+        if ctx.outside:
+            await ctx.outside.nea.aclose()
 
     app = (
         Application.builder()
@@ -159,7 +162,7 @@ def register(app: Application) -> None:
                        ("list", hd.cmd_list), ("keyboard", hd.cmd_keyboard), ("on", hd.cmd_on),
                        ("off", hd.cmd_off), ("d", hd.cmd_device), ("user", hd.cmd_user),
                        ("adduser", hd.cmd_adduser), ("schedule", hd.cmd_schedule),
-                       ("stats", hd.cmd_stats), ("memory", hd.cmd_memory)):
+                       ("stats", hd.cmd_stats), ("memory", hd.cmd_memory), ("outside", hd.cmd_outside)):
         app.add_handler(CommandHandler(name, func, filters=new_only))
     # Plain text: the wizard's "Type a time", else the chat assistant (private chats only)
     app.add_handler(MessageHandler(new_only & filters.TEXT & ~filters.COMMAND, hd.on_text))

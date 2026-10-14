@@ -50,6 +50,7 @@ Commands:
 /adduser &lt;user id&gt; &lt;name&gt; - approve a user
 /stats [days] - speed, failed sends, LLM health (default 7 days)
 /memory - what the chat assistant remembers (forget items)
+/outside [area] - weather and air from NEA (default: home)
 
 Or just type, e.g. "a bit cooler in the bedroom" or "off the office aircon at 7am weekdays"."""
 
