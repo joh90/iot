@@ -58,6 +58,15 @@ Rules:
 - Never state data that no tool returned. If a tool has no answer, say you do not know.
 - Questions about the past (who changed something, when, what happened, what the person asked
   before) need the diary tool, every time: earlier answers in this chat are not a record.
+- Questions about now (is it on, what is it set to, is a schedule paused, what is scheduled)
+  need a fresh tool call every time: earlier answers and cards in this chat may be out of date.
+- A message can ask for a change AND ask you to check or tell something ("add X, also check
+  I have Y", "off the office and what is the bedroom at?"). Call the read tools for the check
+  together with the write tools. The change goes on a card; then answer the check in one or
+  two short sentences (shown above the card). Never say the change is done.
+- If a tool says there is nothing to change, tell the person it is already like that.
+- Schedule ids (like s9a4a) are only for tool calls. To the person, name a schedule by what it
+  does and when ("the 12:00 bedroom off").
 - If a request could mean more than one device or schedule, ask which one. "Everything" or
   "all" means every device: "turn everything off" = call set_ac for each aircon right away.
 - Do not ask "are you sure?": the card the person taps is the confirmation.
@@ -66,12 +75,19 @@ Rules:
 - Reply in short plain English, no emoji, no markdown."""
 
 
+# Schedule ids ("s9a4a", "(id t3f0c)") are for tool calls; people get names (rule above)
+ID_RE = re.compile(r"\s*\((?:id:?\s*)?[st](?=[0-9a-f]*\d)[0-9a-f]{4}\)|,?\s*\bid:?\s*[st][0-9a-f]{4}\b|"
+                   r"\b[st](?=[0-9a-f]*\d)[0-9a-f]{4}\b:?\s*")
+# A message that may ask something besides a change ("add X, also is Y paused?")
+ASKS_RE = re.compile(r"\?|\b(check|tell me|show me|let me know|do i have)\b", re.IGNORECASE)
 STAMP_RE = re.compile(r"^\[From [^\]\n]{1,300}\]\s*(\[[^\]]*\]\s*)?")
 
 
 def clean_answer(text: str) -> str:
     """The model sometimes echoes our [From ...] stamp or writes markdown; Telegram shows it raw."""
     text = STAMP_RE.sub("", text.strip())
+    text = ID_RE.sub(lambda m: " " if m.group(0)[:1].isspace() and not m.group(0).strip().startswith("(") else "",
+                     text)
     text = text.replace("**", "").replace("__", "")
     return re.sub(r"(?m)^[ \t]*[*-][ \t]+", "- ", text).strip()
 
@@ -152,15 +168,16 @@ class Assistant:
         self._keep(user_id, [{"role": "user", "content": user_text}, msg])
         return msg
 
-    def remember_card(self, user_id: int, user_text: str, actions: list[lp.Action]) -> list[dict[str, Any]]:
-        """Keep a card as the tool calls that drew it; returns the tool results, which the
-        card code rewrites as the person taps (see bot/chat.py _context_note)."""
+    def remember_card(self, user_id: int, user_text: str, actions: list[lp.Action],
+                      note: str = "") -> list[dict[str, Any]]:
+        """Keep a card as the tool calls that drew it (and the note shown above it); returns
+        the tool results, which the card code rewrites as the person taps (bot/chat.py)."""
         tag = secrets.token_hex(3)                       # unique across the kept exchanges
         calls = [{"id": f"card{tag}{i}", "type": "function",
                   "function": {"name": a.tool.name, "arguments": json.dumps(a.args)}} for i, a in enumerate(actions)]
         results = [{"role": "tool", "tool_call_id": c["id"], "content": ""} for c in calls]
         self._keep(user_id, [{"role": "user", "content": user_text},
-                             {"role": "assistant", "content": "", "tool_calls": calls}, *results])
+                             {"role": "assistant", "content": note, "tool_calls": calls}, *results])
         return results
 
     def forget(self, user_id: int) -> None:
@@ -212,16 +229,17 @@ class Assistant:
         try:
             messages = [{"role": "system", "content": self.system_prompt()},
                         *self.context(uid), {"role": "user", "content": self.stamp(actor, text)}]
-            turn = await lp.run_turn(self.llm, messages, self.tools_for(actor))
+            turn = await lp.run_turn(self.llm, messages, self.tools_for(actor), ask_rest=bool(ASKS_RE.search(text)))
         finally:
             self.in_flight.discard(uid)
         if turn.kind == "answer":
             turn.text = clean_answer(turn.text)
             if not turn.text:
                 turn.kind, turn.error = "failed", "empty"
-
             else:
                 self.remember(uid, text, turn.text)
+        elif turn.kind == "actions":
+            turn.text = clean_answer(turn.text)              # the note above the card, often empty
         if turn.kind == "failed" and turn.error in NOT_COUNTED:
             self._refund(uid)
         if self.replay is not None and turn.exchanges:

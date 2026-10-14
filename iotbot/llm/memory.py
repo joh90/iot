@@ -389,7 +389,8 @@ class MemoryTools:
 
             return Done(True, "ok", undo)
 
-        return Prepared("note", line, run, self._version(actor), ask="Remember this?", do_label="Remember")
+        return Prepared("note", line, run, self._version(actor), ask="Remember this?", do_label="Remember",
+                        key=None)
 
     async def _prep_forget(self, actor: Actor, args: dict[str, Any]) -> Prepared:
         found = self.memory.find(actor.user_id, args["id"])
@@ -410,7 +411,8 @@ class MemoryTools:
 
             return Done(True, "ok", undo)
 
-        return Prepared("forget", what, run, self._version(actor), ask="Forget this?", do_label="Forget")
+        return Prepared("forget", what, run, self._version(actor), ask="Forget this?", do_label="Forget",
+                        key=None)
 
     @staticmethod
     def _check_steps(steps: list[dict[str, Any]]) -> list[str]:
@@ -459,7 +461,8 @@ class MemoryTools:
 
             return Done(True, "ok", undo)
 
-        return Prepared("recipe", line, run, self._version(actor), ask="Save this recipe?", do_label="Save")
+        return Prepared("recipe", line, run, self._version(actor), ask="Save this recipe?", do_label="Save",
+                        key=None)
 
     async def _prep_run_recipe(self, actor: Actor, args: dict[str, Any]) -> list[Prepared]:
         r = self.memory.recipe(actor.user_id, args["name"])
@@ -474,7 +477,7 @@ class MemoryTools:
             except AlreadyError:
                 continue                                  # that step is already done: skip it
         if not items:
-            raise ArgError(f"everything in '{r['name']}' is already as the recipe says")
+            raise AlreadyError(f"everything in '{r['name']}' is already as the recipe says")
         return items
 
 

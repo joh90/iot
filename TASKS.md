@@ -115,6 +115,7 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4.8  | [ ]    | Outside tool (NEA feeds, cache, throttle)                                                                                     |
 | 4.9  | [ ]    | Holiday lookup tool; WAVE 3 ship                                                                                              |
 | 4.10 | [ ]    | Tests throughout (fake LLM server, broken replies, no IR), README, reviewer per task                                          |
+| 4.11 | [x]    | Live-test fixes: answer + card for mixed asks, already-paused refused, no ids, fresh state, 2 new schedules per card          |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 

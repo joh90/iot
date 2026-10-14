@@ -22,6 +22,10 @@ class ArgError(ValueError):
     pass
 
 
+class AlreadyError(ArgError):
+    """Nothing to change: it is already like that (the card says so; a recipe skips the step)."""
+
+
 @dataclass(frozen=True, slots=True)
 class Tool:
     name: str

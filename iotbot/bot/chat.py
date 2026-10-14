@@ -112,7 +112,7 @@ def card_screen(card: Card) -> tuple[str, InlineKeyboardMarkup]:
     kinds = {(p.ask, p.do_label) for p in card.items}
     ask, label = kinds.pop() if len(kinds) == 1 else ("Do this?", "Do it")
     no = "Cancel" if label == "Do it" else "No"
-    text = f"{h(ask)}\n" + "\n".join(_lines(card)) + f"\nExpires in {CARD_TTL_S // 60} min."
+    text = _note(card) + f"{h(ask)}\n" + "\n".join(_lines(card)) + f"\nExpires in {CARD_TTL_S // 60} min."
     return text, InlineKeyboardMarkup([[_btn(label, "do", card), _btn(no, "x", card)]])
 
 
@@ -125,7 +125,7 @@ def _mark(r: Done | None) -> str:
 def result_screen(card: Card, who: str, at: str) -> tuple[str, InlineKeyboardMarkup | None]:
     ok = sum(1 for r in card.results if r and r.ok)
     head = f"Done (by {h(who)}, {at}):" if ok == len(card.items) else f"Done ({ok} of {len(card.items)}):"
-    text = head + "\n" + "\n".join(_lines(card, [_mark(r) for r in card.results]))
+    text = _note(card) + head + "\n" + "\n".join(_lines(card, [_mark(r) for r in card.results]))
     row = []
     if any(r and not r.ok for r in card.results):
         row.append(_btn("Retry failed", "retry", card))
@@ -138,14 +138,23 @@ def closed_screen(card: Card, why: str) -> str:
     return h(why) + "\n" + "\n".join(_lines(card))
 
 
+def _note(card: Card) -> str:
+    """The model's short answer to the rest of the message, on the pending and done screens;
+    in italics, so it reads as an answer and never as a card line."""
+    return f"<i>{h(card.note)}</i>\n\n" if card.note else ""
+
+
 def _context_note(card: Card, status: str, marks: list[str] | None = None) -> None:
-    """Rewrite the card's tool results in the chat context: what the person did, per line."""
+    """Rewrite the card's tool results in the chat context: what the person did, each call
+    with only its own lines."""
     if not card.context:
         return
-    note = json.dumps({"card": status, "lines": [
-        f"{p.name}: {p.line}" + (f" ({marks[i]})" if marks and marks[i] else "") for i, p in enumerate(card.items)]})
-    for msg in card.context:
-        msg["content"] = note
+    lines = [f"{p.name}: {p.line}" + (f" ({marks[i]})" if marks and marks[i] else "")
+             for i, p in enumerate(card.items)]
+    at = 0
+    for msg, n in card.context:
+        msg["content"] = json.dumps({"card": status, "lines": lines[at:at + n]})
+        at += n
 
 
 async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant: Assistant,
@@ -162,12 +171,14 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
         telemetry.note(outcome="bug", error="no card line")
         await reply(update, h(FAILED_OTHER))
         return
-    card, replaced = assistant.cards.new(actor.user_id, items)
+    note = o.text if o.turn else ""
+    card, replaced = assistant.cards.new(actor.user_id, items, note)
     telemetry.note(card="shown", card_id=card.id)
     body, markup = card_screen(card)
     sent = await update.effective_message.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
     card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
-    card.context = assistant.remember_card(actor.user_id, text, o.turn.actions)
+    sizes = [len(a.prepared) if isinstance(a.prepared, list) else 1 for a in o.turn.actions]
+    card.context = list(zip(assistant.remember_card(actor.user_id, text, o.turn.actions, note), sizes, strict=True))
     _context_note(card, "shown to the person, waiting for their tap")
     for old in replaced:
         _context_note(old, "replaced by a newer request; nothing was done")

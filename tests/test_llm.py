@@ -278,11 +278,66 @@ async def test_write_on_the_last_call_is_accepted():
     assert (out.kind, out.rounds) == ("actions", 4)
 
 
-async def test_reads_with_writes_drop_the_reads_and_duplicates_merge():
+async def test_reads_with_writes_read_first_then_card_with_note():
     w = {"device": "office-aircon", "power": False}
-    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a"), call("set_ac", w, "b"), call("set_ac", w, "c")])])
+    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a"), call("set_ac", w, "b"), call("set_ac", w, "c")]),
+                      completion("The bedroom is on at 24C.")])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert out.kind == "actions" and [a.args for a in out.actions] == [w]     # duplicates merge
+    assert out.text == "The bedroom is on at 24C." and out.rounds == 2
+    results = [m for m in srv.requests[1]["messages"] if m.get("role") == "tool"]
+    assert "bedroom-aircon" in results[0]["content"] and "ready" in results[1]["content"]
+
+
+async def test_waiting_card_survives_reads_new_writes_timeouts_and_errors():
+    w, w2 = {"device": "office-aircon", "power": False}, {"device": "office-aircon", "power": True}
+    first = completion(calls=[call("get_home_state", {}, "a"), call("set_ac", w, "b")])
+    srv = FakeServer([first, completion(calls=[call("get_home_state", {}, "c")]),
+                      completion("Done, it is now off.")])                   # a claim: the note is dropped
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert out.kind == "actions" and [a.args for a in out.actions] == [w] and out.text == ""
+    # A write after "ready" never swaps or drops the card's lines
+    srv = FakeServer([first, completion(calls=[call("set_ac", w2, "c")]), completion("The bedroom is on.")])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert [a.args for a in out.actions] == [w] and out.text == "The bedroom is on."
+    assert "already made" in [m for m in srv.requests[2]["messages"] if m.get("role") == "tool"][-1]["content"]
+    cut = completion("x")
+    cut["choices"][0]["finish_reason"] = "length"
+    out = await lp.run_turn(FakeServer([first, cut]).client(), msgs(), [STATE, SET_AC])
+    assert out.kind == "actions" and out.text == ""
+    # The answer call times out or the server errors: the card still shows, without a note
+    out = await lp.run_turn(FakeServer([first]).client(), msgs(), [STATE, SET_AC])   # no 2nd reply: error
+    assert out.kind == "actions" and [a.args for a in out.actions] == [w] and out.note_error
+
+
+async def test_reads_in_an_earlier_round_still_get_their_answer():
+    w = {"device": "office-aircon", "power": False}
+    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a")]), completion(calls=[call("set_ac", w, "b")]),
+                      completion("The bedroom is on at 24C.")])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert out.kind == "actions" and out.text == "The bedroom is on at 24C." and out.rounds == 3
+
+
+async def test_reads_with_writes_in_the_last_round_make_the_card():
+    w = {"device": "office-aircon", "power": False}
+    srv = FakeServer([completion(calls=[call("get_home_state", {}, str(i))]) for i in range(lp.MAX_TOOL_ROUNDS)]
+                     + [completion(calls=[call("get_home_state", {}, "x"), call("set_ac", w, "y")])])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.kind == "actions" and [a.args for a in out.actions] == [w]
+
+
+@pytest.mark.parametrize("text", ["Done!", "Saved.", "The office aircon is now off.", "Turned it off for you.",
+                                  "Sure", "I'll turn it off now.", "<tool_call>x"])
+async def test_card_note_never_claims_a_result(text):
+    srv = FakeServer([completion(text, [call("set_ac", {"device": "office-aircon", "power": False}, "a")])])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert out.kind == "actions" and out.text == ""
+
+
+async def test_card_note_is_capped():
+    srv = FakeServer([completion("word " * 400, [call("set_ac", {"device": "office-aircon", "power": False}, "a")])])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert out.text.endswith("...") and len(out.text) <= lp.MAX_NOTE_CHARS + 3
 
 
 async def test_unexpected_crash_is_a_failed_turn(monkeypatch):
@@ -326,3 +381,54 @@ async def test_leaked_tool_call_markup_is_retried_never_shown():
     srv = FakeServer([completion(leak)] * 5)
     out = await lp.run_turn(srv.client(), msgs(), [STATE])
     assert (out.kind, out.error, out.text) == ("failed", "bad_tool_call", "")
+
+
+@pytest.mark.parametrize("text,note", [
+    ("I have added the schedule. You have a 07:00 on schedule, and it is paused.",
+     "You have a 07:00 on schedule, and it is paused."),
+    ("The timer is added for 2 hours from now. Bed time is on, not paused.", "Bed time is on, not paused."),
+    ("The new schedule is ready for confirmation.\n\nThe 07:00 one is paused.", "The 07:00 one is paused."),
+    ("The bedroom aircon is set to turn off. The office is ON cool 25C.", "The office is ON cool 25C."),
+    ("-", ""),
+    ("The 7:00 schedule was created by Mary on Monday.", "The 7:00 schedule was created by Mary on Monday."),
+    ("I checked: the bedroom is set to 24C.", "I checked: the bedroom is set to 24C."),
+    ("Turning off the office aircon now. All set!", ""),
+    ("Okay, the office aircon goes off at 7.", ""),
+])
+def test_card_note_keeps_only_sentences_that_claim_nothing(text, note):
+    assert lp._note(text) == note
+
+
+async def test_ask_rest_asks_once_more_when_the_card_came_without_reads():
+    w = {"device": "office-aircon", "power": False}
+    srv = FakeServer([completion(calls=[call("set_ac", w, "a")]), completion("Bed time is on.")])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC], ask_rest=True)
+    assert out.kind == "actions" and out.text == "Bed time is on." and out.rounds == 2
+    srv = FakeServer([completion(calls=[call("set_ac", w, "a")])])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])          # no question: one call
+    assert out.kind == "actions" and out.rounds == 1
+
+
+async def test_already_like_that_becomes_the_left_out_note():
+    from iotbot.llm.cards import Prepared
+    from iotbot.llm.tools import AlreadyError
+
+    async def prep(args):
+        if args["device"] == "office-aircon":
+            raise AlreadyError("office-aircon is already OFF (as last sent)")
+        return Prepared(args["device"], "ON -> OFF", None, lambda: 0)
+
+    tool = Tool("set_ac", "Set", SET_AC.parameters, write=True, prepare=prep)
+    off = [call("set_ac", {"device": d, "power": False}, d) for d in ("bedroom-aircon", "office-aircon")]
+    srv = FakeServer([completion(calls=off), completion(calls=[off[0]])])
+    out = await lp.run_turn(srv.client(), msgs(), [tool])
+    assert out.kind == "actions" and len(out.actions) == 1
+    assert out.text == "Left out: office-aircon is already OFF (as last sent)."
+
+
+def test_card_note_drops_state_claims_about_what_the_card_changes():
+    from iotbot.llm.cards import Prepared
+    acts = [lp.Action(SET_AC, {"device": "office-aircon"}, Prepared("office-aircon", "ON -> OFF", None, lambda: 0))]
+    subj = lp._subjects(acts)
+    assert lp._note("The office aircon is off. The bedroom is on at 24C.", subj) == "The bedroom is on at 24C."
+    assert lp._note("The office aircon is set to 23C.", subj) == "The office aircon is set to 23C."

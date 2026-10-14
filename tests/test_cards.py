@@ -285,6 +285,28 @@ async def test_card_flow_end_to_end(tmp_path):
     assert text.startswith("Undone (by Alice") and bed.sent == ["OFF", "ON cool 24C"]
 
 
+async def test_note_above_card_and_each_call_keeps_its_own_line(tmp_path):
+    bed, office = Thing("bed-ac", "ON cool 24C"), Thing("office-ac", "ON cool 23C")
+    ctx = card_ctx(tmp_path, {"bed": bed, "office": office}, [completion(
+        "Your 07:00 on schedule is paused.", [call("set", {"device": "bed", "to": "OFF"}, "a"),
+                                              call("set", {"device": "office", "to": "OFF"}, "b")])])
+    context = tg_context(ctx)
+    u = say("off both, and is my 7am paused?")
+    u.effective_message.reply_text = AsyncMock(return_value=SimpleNamespace(chat_id=ME, message_id=9))
+    await hd.on_text(u, context)
+    (text,), _ = u.effective_message.reply_text.call_args
+    assert text.startswith("<i>Your 07:00 on schedule is paused.</i>\n\nDo this?\n")
+    hist = ctx.assistant.context(ME)
+    assert hist[1]["content"] == "Your 07:00 on schedule is paused."
+    assert [json.loads(m["content"])["lines"] for m in hist[2:]] == [["bed-ac: ON cool 24C -> OFF"],
+                                                                    ["office-ac: ON cool 23C -> OFF"]]
+    card = next(iter(ctx.assistant.cards.cards.values()))
+    t = tap(card.id, "do")
+    await hd.on_button(t, context)
+    (text,), _ = t.callback_query.edit_message_text.call_args
+    assert text.startswith("<i>Your 07:00 on schedule is paused.</i>\n\nDone (by Alice")
+
+
 async def test_failed_line_shows_retry_and_cancel_and_stale_taps(tmp_path):
     office = Thing("office-ac", "on", fail=True)
     ctx = card_ctx(tmp_path, {"office": office}, [completion(calls=[call("set", {"device": "office", "to": "OFF"})]),

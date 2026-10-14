@@ -46,9 +46,14 @@ class Prepared:
     seen: Any = None                                  # version() when drawn
     ask: str = "Do this?"                             # card heading and button, e.g. "Remember this?"
     do_label: str = "Do it"
+    # What this line changes ("" = its name): a card holds one line per key, because a second
+    # line for the same device or schedule would always fail as stale. None = no limit (notes).
+    key: str | None = ""
 
     def __post_init__(self) -> None:
         self.seen = self.version()
+        if self.key == "":
+            self.key = self.name
 
     def changed(self) -> bool:
         return self.version() != self.seen
@@ -65,7 +70,10 @@ class Card:
     undo_until: float = 0.0
     chat_id: int | None = None
     message_id: int | None = None
-    context: list[dict[str, Any]] | None = None       # its tool results in the chat context (updated on taps)
+    # Its tool results in the chat context (rewritten on taps), each with how many card lines
+    # its call made (a recipe makes several)
+    context: list[tuple[dict[str, Any], int]] | None = None
+    note: str = ""                                     # the model's short answer shown above the card
 
 
 INTERRUPTED = Done(False, "interrupted, may not have been sent")
@@ -80,7 +88,7 @@ class Cards:
         self._clock = clock
         self.cards: dict[str, Card] = {}
 
-    def new(self, user_id: int, items: list[Prepared]) -> tuple[Card, list[Card]]:
+    def new(self, user_id: int, items: list[Prepared], note: str = "") -> tuple[Card, list[Card]]:
         """A new pending card; returns it and the person's older pending cards, now replaced."""
         replaced = [c for c in self.cards.values() if c.user_id == user_id and c.status == "pending"]
         for c in replaced:
@@ -88,7 +96,7 @@ class Cards:
         cid = secrets.token_hex(4)
         while cid in self.cards:
             cid = secrets.token_hex(4)
-        card = Card(cid, user_id, items, self._clock() + CARD_TTL_S)
+        card = Card(cid, user_id, items, self._clock() + CARD_TTL_S, note=note)
         self.cards[cid] = card
         self._prune()
         return card, replaced
@@ -127,7 +135,7 @@ class Cards:
                 c.status = "expired"
             if c.status != "pending":
                 raise CardError(_not_pending(c))
-            changed = [p.name for p in c.items if p.changed()]
+            changed = list(dict.fromkeys(p.name for p in c.items if p.changed()))
             if changed:
                 c.status = "expired"
                 raise CardError(f"{', '.join(changed)} changed since this card was drawn, so nothing was "
