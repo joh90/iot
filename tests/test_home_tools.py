@@ -1,6 +1,7 @@
 """Phase 4.4: the assistant's aircon and schedule tools (fake hub: IR only lands in ctx.sent)."""
 
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -373,3 +374,14 @@ async def test_keep_both_only_for_the_clashes_on_the_card(home):
     assert (await other.run(ALICE)).ok                           # a new clash the first card never showed
     done = await clash.run(ALICE)
     assert not done.ok and "clashes changed" in done.text and len(home.ctx.schedules.list()) == 2
+
+
+async def test_schedule_card_notes_a_public_holiday_run(home):
+    svc = home.ctx.schedules
+    day = (svc.now() + timedelta(days=3)).date()
+    home.ctx.holidays.days[day] = "Test Day"
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "08:00", "date": day.isoformat()})
+    assert p.line.endswith(f"Runs on a public holiday: {day:%a} {day.day} {day:%b} (Test Day)")
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "08:00",
+                                          "date": (day + timedelta(days=1)).isoformat()})
+    assert "public holiday" not in p.line

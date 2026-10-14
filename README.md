@@ -322,6 +322,15 @@ Outside (`/outside [area]`, or ask in chat: "how's the haze?", "will it rain in 
   10 seconds. If NEA is down, the last good data is shown with its age, up to 6 hours old.
 - `/outside` works without the PC (no LLM). Outside conditions only come up when you ask.
 
+Holidays ("is next Monday a PH?", "next long weekend?", "holidays next year"):
+
+- MOM's public holiday list (with "Observed" Mondays and days such as polling day) from data.gov.sg,
+  refreshed monthly in the background and saved in `state/holidays.json`; a built-in 2026-2027 list is the
+  fallback. Christmas Eve, New Year's Eve and CNY eve are known as eves, not holidays.
+- Long weekends (3+ days off with a holiday) are worked out in code.
+- Schedules still run on holidays. A schedule or timer card says when it will run on one, and the
+  assistant sees holidays marked on the dates of the coming week.
+
 Every chat turn that reached the model has its full requests and replies in
 `logs/llm/llm-YYYY-MM-DD.jsonl` (kept 90 days), to replay against a new model or prompt later. Group chats and strangers never reach the model.
 
@@ -335,7 +344,7 @@ phrasing to test the LLM assistant against later. The files stay on the Pi and a
 
 ## Coming next
 
-Public holiday lookups for the assistant; then weekly usage patterns and reminders. See PLAN.md.
+Weekly usage patterns and reminders ("turn on the bedroom aircon?" at your usual time). See PLAN.md.
 
 ## Development
 

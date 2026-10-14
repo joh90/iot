@@ -1,0 +1,113 @@
+{
+ "source": "MOM public holidays via data.gov.sg collection 691; fallback when the live list cannot be fetched",
+ "years": {
+  "2026": [
+   {
+    "date": "2026-01-01",
+    "name": "New Year's Day"
+   },
+   {
+    "date": "2026-02-17",
+    "name": "Chinese New Year"
+   },
+   {
+    "date": "2026-02-18",
+    "name": "Chinese New Year"
+   },
+   {
+    "date": "2026-03-21",
+    "name": "Hari Raya Puasa"
+   },
+   {
+    "date": "2026-04-03",
+    "name": "Good Friday"
+   },
+   {
+    "date": "2026-05-01",
+    "name": "Labour Day"
+   },
+   {
+    "date": "2026-05-27",
+    "name": "Hari Raya Haji"
+   },
+   {
+    "date": "2026-05-31",
+    "name": "Vesak Day"
+   },
+   {
+    "date": "2026-06-01",
+    "name": "Vesak Day (Observed)"
+   },
+   {
+    "date": "2026-08-09",
+    "name": "National Day"
+   },
+   {
+    "date": "2026-08-10",
+    "name": "National Day (Observed)"
+   },
+   {
+    "date": "2026-11-08",
+    "name": "Deepavali"
+   },
+   {
+    "date": "2026-11-09",
+    "name": "Deepavali (Observed)"
+   },
+   {
+    "date": "2026-12-25",
+    "name": "Christmas Day"
+   }
+  ],
+  "2027": [
+   {
+    "date": "2027-01-01",
+    "name": "New Year's Day"
+   },
+   {
+    "date": "2027-02-06",
+    "name": "Chinese New Year"
+   },
+   {
+    "date": "2027-02-07",
+    "name": "Chinese New Year"
+   },
+   {
+    "date": "2027-02-08",
+    "name": "Chinese New Year (Observed)"
+   },
+   {
+    "date": "2027-03-10",
+    "name": "Hari Raya Puasa"
+   },
+   {
+    "date": "2027-03-26",
+    "name": "Good Friday"
+   },
+   {
+    "date": "2027-05-01",
+    "name": "Labour Day"
+   },
+   {
+    "date": "2027-05-17",
+    "name": "Hari Raya Haji"
+   },
+   {
+    "date": "2027-05-20",
+    "name": "Vesak Day"
+   },
+   {
+    "date": "2027-08-09",
+    "name": "National Day"
+   },
+   {
+    "date": "2027-10-28",
+    "name": "Deepavali"
+   },
+   {
+    "date": "2027-12-25",
+    "name": "Christmas Day"
+   }
+  ]
+ }
+}

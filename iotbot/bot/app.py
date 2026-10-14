@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -125,6 +126,9 @@ def build_application(ctx: AppContext) -> Application:
             ctx.notifier.send = send
             ctx.scheduler.start()
             await ctx.notifier.report_problems()
+        if ctx.holidays:
+            # MOM's list: refreshed in the background when over a month old (never blocks startup)
+            app.bot_data["holidays_task"] = asyncio.create_task(ctx.holidays.run())
         logger.info("%s running", ctx.settings.bot_name)
 
     async def post_stop(app: Application) -> None:
@@ -136,6 +140,11 @@ def build_application(ctx: AppContext) -> Application:
             await ctx.assistant.llm.aclose()
         if ctx.outside:
             await ctx.outside.nea.aclose()
+        task = app.bot_data.get("holidays_task")
+        if task:
+            task.cancel()
+        if ctx.holidays:
+            await ctx.holidays.http.aclose()
 
     app = (
         Application.builder()

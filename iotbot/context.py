@@ -18,7 +18,8 @@ from iotbot.llm.diary import DiaryTools
 from iotbot.llm.home import HomeTools
 from iotbot.llm.memory import Memory, MemoryTools
 from iotbot.llm.replay import ReplayLog
-from iotbot.llm.world import OutsideTools
+from iotbot.llm.world import HolidayTools, OutsideTools
+from iotbot.outside.holidays import Holidays
 from iotbot.outside.nea import NeaClient
 from iotbot.outside.weather import Outside
 from iotbot.schedule.notify import Notifier
@@ -48,6 +49,7 @@ class AppContext:
     assistant: Assistant | None = None          # None: LLM_ENABLED=off
     memory: Memory | None = None
     outside: Outside | None = None
+    holidays: Holidays | None = None
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -139,6 +141,9 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
 
     # NEA: keyless, read-only, also used by /outside when the LLM is off
     outside = Outside(NeaClient(), settings.timezone)
+    holidays = Holidays(settings.state_dir / "holidays.json", settings.timezone)
+    if (w := holidays.load()):
+        warnings.append(w)
 
     assistant = memory = None
     if settings.llm_enabled:
@@ -147,7 +152,8 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
             warnings.append(w)
         llm = LlmClient(settings.llm_url, None if settings.llm_slot == -1 else settings.llm_slot)
         assistant = Assistant(llm, lambda: assistant_devices(registry, ac), settings.timezone,
-                              replay=ReplayLog(settings.log_dir / "llm", settings.timezone), memory=memory)
+                              replay=ReplayLog(settings.log_dir / "llm", settings.timezone), memory=memory,
+                              day_label=holidays.label)
     else:
         logger.info("LLM_ENABLED=off: the chat assistant is switched off")
 
@@ -155,7 +161,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         settings=settings, registry=registry, hub=hub,
         devices=devices, users=users, ac=ac,
         schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant, memory=memory,
-        outside=outside, warnings=warnings,
+        outside=outside, holidays=holidays, warnings=warnings,
     )
     if assistant is not None:
         home = HomeTools(ctx)
@@ -163,6 +169,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         assistant.add_tools(MemoryTools(memory, home).tools)
         assistant.add_tools(DiaryTools(ctx, memory).tools)
         assistant.add_tools(OutsideTools(outside).tools)
+        assistant.add_tools(HolidayTools(holidays).tools)
     for w in warnings:
         logger.warning("Config: %s", w)
     return ctx

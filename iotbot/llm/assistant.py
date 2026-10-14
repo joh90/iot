@@ -18,7 +18,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -69,6 +69,8 @@ Rules:
   "as of" times; never guess. Do not bring up outside conditions unless asked.
 - Going out, running, opening windows, is it safe: get now, heat and air, and give NEA's
   advice line as it is. Never add health or window advice of your own.
+- Holidays: dates in [From ...] are marked "(PH: ...)" or "(eve: ...)". Schedules still run on
+  holidays (the card says when one does). Other holiday questions: the holidays tool.
 - Schedule ids (like s9a4a) are only for tool calls. To the person, name a schedule by what it
   does and when ("the 12:00 bedroom off").
 - If a request could mean more than one device or schedule, ask which one. "Everything" or
@@ -116,10 +118,11 @@ ToolProvider = Callable[[Actor], list[Tool]]
 class Assistant:
     def __init__(self, llm: LlmClient, devices: Callable[[], list[str]], tz: str,
                  clock: Callable[[], float] = time.time, replay: ReplayLog | None = None,
-                 memory: Memory | None = None):
+                 memory: Memory | None = None, day_label: Callable[[date], str | None] | None = None):
         self.llm = llm
         self.replay = replay
         self.memory = memory
+        self.day_label = day_label                   # "PH: Deepavali" for the dates in the stamp
         self.devices = devices                       # one prompt line per device the assistant may use
         self.tz = ZoneInfo(tz)
         self._clock = clock
@@ -148,10 +151,16 @@ class Assistant:
         """Who and when, plus the person's own notes and recipes (private: only on their turns)."""
         now = self.now()
         mine = self.memory.person_prompt(actor.user_id, actor.name) if self.memory else ""
-        # The next days spelled out: the model gets "next Monday" wrong when it counts itself
-        week = ", ".join(f"{now + timedelta(days=i):%a %d %b}" for i in range(1, 8))
-        head = f"[From {actor.name}, {now:%a %d %b %Y %H:%M}; next days: {week}]" + (f"\n[{mine}]" if mine else "")
+        # The next days spelled out: the model gets "next Monday" wrong when it counts itself.
+        # Holidays and eves are marked, so a card can mention one (information only)
+        week = ", ".join(self._day(now + timedelta(days=i), "%a %d %b") for i in range(1, 8))
+        head = (f"[From {actor.name}, {self._day(now, '%a %d %b %Y %H:%M')}; next days: {week}]"
+                + (f"\n[{mine}]" if mine else ""))
         return f"{head}\n{text}"
+
+    def _day(self, at: datetime, fmt: str) -> str:
+        label = self.day_label(at.date()) if self.day_label else None
+        return f"{at:{fmt}}" + (f" ({label})" if label else "")
 
     def context(self, user_id: int) -> list[dict[str, Any]]:
         chat = self.chats.get(user_id)

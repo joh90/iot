@@ -113,7 +113,7 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4.6  | [x]    | Memory store: facts, house facts, recipes (Save card), tidy on write, guardrails, /memory                                     |
 | 4.7  | [x]    | Diary search (events + own messages, forgotten filter); WAVE 2 ship                                                           |
 | 4.8  | [x]    | Outside tool + /outside (NEA, AQI as aqicn, bands, cache, throttle, stale data)                                               |
-| 4.9  | [ ]    | Holiday lookup tool; WAVE 3 ship                                                                                              |
+| 4.9  | [x]    | Holidays tool (MOM list, eves, long weekends), PH marks on dates and schedule cards; WAVE 3 ship                              |
 | 4.10 | [ ]    | Tests throughout (fake LLM server, broken replies, no IR), README, reviewer per task                                          |
 | 4.11 | [x]    | Live-test fixes: answer + card for mixed asks, already-paused refused, no ids, fresh state, 2 new schedules per card          |
 
