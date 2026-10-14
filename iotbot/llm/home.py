@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from iotbot.ac.state import FANS, TEMP_MAX, TEMP_MIN, VANES, AcStateError
 from iotbot.llm.cards import Done, Prepared
-from iotbot.llm.tools import ArgError, Tool
+from iotbot.llm.tools import AlreadyError, ArgError, Tool
 from iotbot.result import Actor, Result
 from iotbot.schedule import text as tx
 from iotbot.schedule.model import DAYS, Schedule
@@ -34,10 +34,6 @@ SETTINGS = {
     "powerful": {"type": "boolean"},
 }
 STATE_NOTE = "This is what the bot last sent. Someone may have used the physical remote since."
-
-
-class AlreadyError(ArgError):
-    """Nothing to change: the device is already like that (a recipe skips such a step)."""
 
 
 def _setting(key: str, raw: Any) -> Any:
@@ -110,7 +106,7 @@ class HomeTools:
                  {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID}},
                  write=True, prepare=lambda a: self._prep_simple(actor, a, "delete")),
             Tool("pause_schedule", "Pause a repeating schedule (until a date, or until resumed).",
-                 {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID, "until": DATE}},
+                 {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID, "until": {**DATE, "description": "YYYY-MM-DD, only if the person gave a date"}}},
                  write=True, prepare=lambda a: self._prep_simple(actor, a, "pause")),
             Tool("resume_schedule", "Resume a paused schedule.",
                  {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID}},
@@ -144,7 +140,7 @@ class HomeTools:
                 continue                                 # chat handles managed aircons only
             paused = s.paused_until is not None and s.paused_until > now
             status = "paused" if not s.enabled else (
-                f"paused until {tx.fmt_at(s.paused_until, now, self.tz)}" if paused else "on")
+                f"paused until {tx.fmt_at(s.paused_until, now, self.tz)}" if paused else "active")
             rows.append({"id": s.id, "status": status, "text": tx.describe(s, now, self.tz)})
         return {"schedules": rows or "none"}
 
@@ -177,7 +173,7 @@ class HomeTools:
         except AcStateError as e:
             raise ArgError(str(e)) from None
         if before == after:
-            raise AlreadyError(f"{d} is already {after.describe()} (as last sent); nothing to change")
+            raise AlreadyError(f"{d} is already {after.describe()} (as last sent)")
         line = f"{before.describe() if before else 'unknown'} -> {after.describe()}"
 
         async def run(who: Actor) -> Done:
@@ -336,7 +332,8 @@ class HomeTools:
             return await self._schedule_done(who, r2)
 
         name = _sched_name(cur) if cur else f"new {'timer' if cand.is_timer else 'schedule'}"
-        return Prepared(name, line, run, self._sched_version(cur.id if cur else None))
+        return Prepared(name, line, run, self._sched_version(cur.id if cur else None),
+                        key=f"schedule {cur.id}" if cur else None)
 
     async def _prep_simple(self, actor: Actor, args: dict[str, Any], op: str) -> Prepared:
         svc = self.ctx.schedules
@@ -354,7 +351,9 @@ class HomeTools:
             if until <= now:
                 raise ArgError("until must be a future date")
         if op == "resume" and s.enabled and not (s.paused_until and s.paused_until > now):
-            raise ArgError(f"{tx.name(s)} is not paused")
+            raise AlreadyError(f"{tx.describe(s, now, self.tz)} is not paused")
+        if op == "pause" and (not s.enabled if until is None else (s.enabled and s.paused_until == until)):
+            raise AlreadyError(f"{tx.describe(s, now, self.tz)} is already paused")
         line = {"delete": "delete", "pause": f"pause until {until:%a %d %b}" if until else "pause",
                 "resume": "resume"}[op] + f": {tx.describe(s, now, self.tz)}"
         rev = s.rev
@@ -368,7 +367,7 @@ class HomeTools:
                 r = await svc.resume(who, [s.id], rev)
             return await self._schedule_done(who, r)
 
-        return Prepared(_sched_name(s), line, run, self._sched_version(s.id))
+        return Prepared(_sched_name(s), line, run, self._sched_version(s.id), key=f"schedule {s.id}")
 
     def _sched_version(self, sid: str | None):
         if sid is None:
@@ -395,7 +394,9 @@ class HomeTools:
 
 
 def _sched_name(s: Schedule) -> str:
-    return f"{'timer' if s.is_timer else 'schedule'} {s.label or s.id}"
+    """The card line's name: never the id (people read it); the line itself says what it does."""
+    kind = "timer" if s.is_timer else "schedule"
+    return f"{kind} {s.label}" if s.label else kind
 
 
 def _why(r: Result) -> str:

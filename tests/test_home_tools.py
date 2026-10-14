@@ -8,7 +8,7 @@ import pytest
 
 from iotbot.ac.state import AcState
 from iotbot.bot import handlers as hd
-from iotbot.llm.home import HomeTools
+from iotbot.llm.home import AlreadyError, HomeTools
 from iotbot.llm.tools import ArgError, parse_args, schema_problems
 from iotbot.result import Actor
 from tests.test_ac_service import make_ctx
@@ -207,6 +207,34 @@ async def test_delete_pause_resume_with_undo(home):
         await prep(home, "pause_schedule", {"schedule_id": sid, "until": "2020-01-01"})
 
 
+async def test_pause_refuses_an_already_paused_schedule(home):
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "07:00", "days": ["mon"]})
+    await p.run(ALICE)
+    sid = home.ctx.schedules.list()[0].id
+    assert (await (await prep(home, "pause_schedule", {"schedule_id": sid})).run(ALICE)).ok
+    with pytest.raises(AlreadyError, match="already paused"):
+        await prep(home, "pause_schedule", {"schedule_id": sid})
+    # Paused for good -> paused until a date is a real change; the same date again is not
+    p = await prep(home, "pause_schedule", {"schedule_id": sid, "until": "2099-01-01"})
+    assert (await p.run(ALICE)).ok
+    with pytest.raises(AlreadyError, match="already paused"):
+        await prep(home, "pause_schedule", {"schedule_id": sid, "until": "2099-01-01"})
+
+
+async def test_card_names_hide_ids_and_two_new_schedules_fit_one_card(home):
+    from iotbot.llm import loop as lp
+    calls = [lp.Action(home.tools["add_schedule"], {"device": "bed_ac", "action": "on", "at": "07:00", "days": ["mon"]}),
+             lp.Action(home.tools["add_schedule"], {"device": "bed_ac", "action": "off", "at": "09:00", "days": ["mon"]})]
+    assert await lp._prepare(calls) == {}
+    await calls[0].prepared.run(ALICE)
+    sid = home.ctx.schedules.list()[0].id
+    twice = [lp.Action(home.tools["pause_schedule"], {"schedule_id": sid}),
+             lp.Action(home.tools["delete_schedule"], {"schedule_id": sid})]
+    refused = await lp._prepare(twice)
+    assert len(refused) == 1 and "already changes that" in next(iter(refused.values()))
+    assert twice[0].prepared.name == "schedule" and sid not in twice[0].prepared.name
+
+
 # ---- end to end --------------------------------------------------------------------------
 
 async def test_chat_to_card_to_ir_and_undo(tmp_path):
@@ -304,7 +332,7 @@ async def test_expired_pause_reads_as_on(home):
     s = home.ctx.schedules.list()[0]
     past = home.ctx.schedules.now() - timedelta(days=1)
     await home.ctx.schedules.store.mutate(lambda d: d.__setitem__(s.id, replace(d[s.id], paused_until=past)))
-    assert (await home.tools["list_schedules"].run({}))["schedules"][0]["status"] == "on"
+    assert (await home.tools["list_schedules"].run({}))["schedules"][0]["status"] == "active"
     with pytest.raises(ArgError, match="not paused"):
         await prep(home, "resume_schedule", {"schedule_id": s.id})
 

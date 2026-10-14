@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 
 from iotbot.bot import handlers as hd
 from iotbot.bot.chat import outcome_text
@@ -329,3 +330,13 @@ async def test_an_answer_claiming_an_action_is_nudged_then_refused():
                  "No, a credit card cannot pay for that.", "I remember that you sleep at 23:00."):
         a, _ = make_assistant([completion(fine)])
         assert (await a.handle(ALICE, "x")).kind == "answer", fine
+
+
+@pytest.mark.parametrize("text,out", [
+    ("You have a schedule (sf81d) that turns it on.", "You have a schedule that turns it on."),
+    ("1. s9a4a: Turns the bedroom off.\n2. s537d: on at 7", "1. Turns the bedroom off.\n2. on at 7"),
+    ("the 07:00 on (daily, id sf81d) is paused", "the 07:00 on (daily) is paused"),
+    ("Set 5 stars and seed sabe", "Set 5 stars and seed sabe"),            # no digit: not an id
+])
+def test_schedule_ids_never_reach_the_person(text, out):
+    assert asst.clean_answer(text) == out
