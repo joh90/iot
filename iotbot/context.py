@@ -15,6 +15,7 @@ from iotbot.devices.model import Registry, load_registry
 from iotbot.llm.assistant import Assistant
 from iotbot.llm.client import LlmClient
 from iotbot.llm.home import HomeTools
+from iotbot.llm.memory import Memory, MemoryTools
 from iotbot.llm.replay import ReplayLog
 from iotbot.schedule.notify import Notifier
 from iotbot.schedule.runner import Scheduler
@@ -41,6 +42,7 @@ class AppContext:
     notifier: Notifier | None = None
     tracker: Tracker | None = None
     assistant: Assistant | None = None          # None: LLM_ENABLED=off
+    memory: Memory | None = None
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -130,22 +132,27 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     notifier = Notifier(schedules, scheduler, recipients)
     scheduler.notify = notifier.on_fire
 
-    assistant = None
+    assistant = memory = None
     if settings.llm_enabled:
+        memory = Memory(settings.state_dir / "memory.json", settings.timezone)
+        if (w := memory.load()):
+            warnings.append(w)
         llm = LlmClient(settings.llm_url, None if settings.llm_slot == -1 else settings.llm_slot)
         assistant = Assistant(llm, lambda: assistant_devices(registry, ac), settings.timezone,
-                              replay=ReplayLog(settings.log_dir / "llm", settings.timezone))
+                              replay=ReplayLog(settings.log_dir / "llm", settings.timezone), memory=memory)
     else:
         logger.info("LLM_ENABLED=off: the chat assistant is switched off")
 
     ctx = AppContext(
         settings=settings, registry=registry, hub=hub,
         devices=devices, users=users, ac=ac,
-        schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant,
+        schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant, memory=memory,
         warnings=warnings,
     )
     if assistant is not None:
-        assistant.add_tools(HomeTools(ctx).tools)
+        home = HomeTools(ctx)
+        assistant.add_tools(home.tools)
+        assistant.add_tools(MemoryTools(memory, home).tools)
     for w in warnings:
         logger.warning("Config: %s", w)
     return ctx

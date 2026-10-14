@@ -44,6 +44,8 @@ class Prepared:
     # Retry compares it after Do, when the card's other lines have changed their own)
     version: Callable[[], Any]
     seen: Any = None                                  # version() when drawn
+    ask: str = "Do this?"                             # card heading and button, e.g. "Remember this?"
+    do_label: str = "Do it"
 
     def __post_init__(self) -> None:
         self.seen = self.version()
@@ -63,7 +65,7 @@ class Card:
     undo_until: float = 0.0
     chat_id: int | None = None
     message_id: int | None = None
-    context: dict[str, Any] | None = None             # the chat-context message to update
+    context: list[dict[str, Any]] | None = None       # its tool results in the chat context (updated on taps)
 
 
 INTERRUPTED = Done(False, "interrupted, may not have been sent")

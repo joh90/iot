@@ -1,6 +1,7 @@
 """Phase 4.3: confirm cards, Undo and Retry (fake devices, no IR)."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -259,7 +260,11 @@ async def test_card_flow_end_to_end(tmp_path):
     assert text.startswith("Do this?\n- <b>bed-ac</b>: ON cool 24C -&gt; OFF") and "Done!" not in text
     assert [b.text for b in kw["reply_markup"].inline_keyboard[0]] == ["Do it", "Cancel"]
     card = next(iter(ctx.assistant.cards.cards.values()))
-    assert "waiting for the person to tap Do it" in ctx.assistant.context(ME)[-1]["content"]
+    hist = ctx.assistant.context(ME)
+    assert [m["role"] for m in hist] == ["user", "assistant", "tool"]          # a card is kept as tool calls
+    assert hist[1]["tool_calls"][0]["function"] == {"name": "set", "arguments": '{"device": "bed", "to": "OFF"}'}
+    assert json.loads(hist[2]["content"]) == {"card": "shown to the person, waiting for their tap",
+                                              "lines": ["bed-ac: ON cool 24C -> OFF"]}
     assert bed.sent == []                                         # nothing before the tap
 
     t = tap(card.id, "do")
@@ -271,7 +276,8 @@ async def test_card_flow_end_to_end(tmp_path):
     await hd.on_button(t, context)
     t.callback_query.answer.assert_called_once_with("Already done.", show_alert=True)
     assert [b.text for b in kw["reply_markup"].inline_keyboard[0]] == ["Undo"]
-    assert "tapped Do it" in ctx.assistant.context(ME)[-1]["content"]
+    assert json.loads(ctx.assistant.context(ME)[-1]["content"]) == {
+        "card": "the person tapped Do it", "lines": ["bed-ac: ON cool 24C -> OFF (ok)"]}
 
     t = tap(card.id, "undo")
     await hd.on_button(t, context)

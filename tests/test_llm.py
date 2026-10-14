@@ -315,3 +315,14 @@ def test_enum_matches_type_too_and_schema_typos_are_caught():
                                                                "l": {"type": "array", "items": {"type": "str"}}}}
     assert schema_problems(bad) == ["parameters: required 'z' is not a property", "a: unsupported type 'number'",
                                     "l[]: unsupported type 'str'"]
+
+
+async def test_leaked_tool_call_markup_is_retried_never_shown():
+    leak = "<tool_call>=call>\n<parameter=action>\nresume_schedule\n</parameter>"
+    srv = FakeServer([completion(leak), completion("Resumed? No: it was not paused.")])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE])
+    assert (out.kind, out.text, out.tool_calls) == ("answer", "Resumed? No: it was not paused.", ["?!"])
+    assert "could not be read" in srv.requests[1]["messages"][-1]["content"]
+    srv = FakeServer([completion(leak)] * 5)
+    out = await lp.run_turn(srv.client(), msgs(), [STATE])
+    assert (out.kind, out.error, out.text) == ("failed", "bad_tool_call", "")

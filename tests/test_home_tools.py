@@ -127,8 +127,8 @@ async def test_timer_in_minutes_then_undo_deletes_it(home):
 
 async def test_weekly_and_next_occurrence(home):
     p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "on", "at": "23:00", "days": ["sun", "mon"],
-                                          "temp": 22, "fan": "3", "label": "Bed time"})
-    assert p.name == "new schedule" and "Bed time: bed_ac on, cool 22C fan 3" in p.line
+                                          "temp": 22, "fan": "3"})
+    assert p.name == "new schedule" and "bed_ac on, cool 22C fan 3" in p.line
     assert (await p.run(ALICE)).ok
     s = home.ctx.schedules.list()[0]
     assert s.when.days == ("mon", "sun") and s.action.state.fan == 3
@@ -154,10 +154,10 @@ async def test_bad_schedule_requests_go_back_to_the_model(home, args, why):
 
 
 async def test_edit_shows_before_and_after_and_undo_restores(home):
-    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "07:00", "days": ["mon"],
-                                          "label": "Wake"})
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "07:00", "days": ["mon"]})
     await p.run(ALICE)
     sid = home.ctx.schedules.list()[0].id
+    await (await prep(home, "edit_schedule", {"schedule_id": sid, "label": "Wake"})).run(ALICE)
     p = await prep(home, "edit_schedule", {"schedule_id": sid, "at": "07:30"})
     assert p.name == "schedule Wake" and p.line.startswith("Wake: bed_ac off, 07:00") and "-> Wake: bed_ac off, 07:30" in p.line
     done = await p.run(ALICE)

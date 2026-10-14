@@ -47,8 +47,9 @@ async def test_prompt_is_stable_and_the_new_message_says_who_and_when():
     first, second = srv.requests[0]["messages"], srv.requests[1]["messages"]
     assert first[0] == second[0]                                  # cacheable prefix
     assert first[0]["content"].startswith(asst.RULES) and "- bed_ac: aircon in room 'bedroom'" in first[0]["content"]
-    assert first[-1]["content"] == "[From Alice, Fri 15 Jan 2027 16:00]\nhello"
-    assert second[-1]["content"] == "[From Bob, Fri 15 Jan 2027 17:00]\nhey"
+    week = "Sat 16 Jan, Sun 17 Jan, Mon 18 Jan, Tue 19 Jan, Wed 20 Jan, Thu 21 Jan, Fri 22 Jan"
+    assert first[-1]["content"] == f"[From Alice, Fri 15 Jan 2027 16:00; next days: {week}]\nhello"
+    assert second[-1]["content"] == f"[From Bob, Fri 15 Jan 2027 17:00; next days: {week}]\nhey"
     assert srv.requests[0]["tools"][0]["function"]["name"] == "get_home_state"
 
 
@@ -298,6 +299,8 @@ async def test_typing_stops_after_the_reply(tmp_path, monkeypatch):
 
 def test_answers_lose_echoed_stamps_and_markdown():
     assert asst.clean_answer("[From Alice, Wed 14 Oct 2026 20:00]\nWhich room?") == "Which room?"
+    assert asst.clean_answer("[From Alice, Wed 14 Oct 2026 20:00; next days: Thu 15 Oct, Fri 16 Oct]\n"
+                             "[Alice's notes: x]\nWhich room?") == "Which room?"
     assert asst.clean_answer("Two:\n* **Office**: off\n  - bed on") == "Two:\n- Office: off\n- bed on"
     assert asst.clean_answer("Two:\n\n- a") == "Two:\n\n- a"                   # blank lines stay
 
@@ -307,3 +310,22 @@ async def test_an_answer_that_is_only_a_stamp_is_a_failure():
     o = await a.handle(ALICE, "hi")
     assert (o.kind, o.turn.error) == ("failed", "empty") and a.context(ME) == []
     assert len(a.recent[ME]) == 0                                            # not counted
+
+
+async def test_an_answer_claiming_an_action_is_nudged_then_refused():
+    for fake in ("Card shown: Run recipe \"good night\"", "Do this?\n- bed: off",
+                 "I will turn off the bedroom aircon now.\n\n[Card: Confirm action]", "Done, the office AC is now off.",
+                 "Turning the bedroom off for you", "I have noted that you sleep at 23:00.", "I'll remember that."):
+        a, srv = make_assistant([completion(fake), completion(fake)])
+        o = await a.handle(ALICE, "off the bedroom ac")
+        assert (o.kind, o.turn.error) == ("failed", "fake_card"), fake
+        assert "no card exists" in srv.requests[1]["messages"][-1]["content"]
+        assert "could not work that out" in outcome_text(o) and a.context(ME) == []
+    a, _ = make_assistant([completion("I will turn it off."), completion("Which aircon?")])
+    o = await a.handle(ALICE, "off it")
+    assert (o.kind, o.text, o.turn.tool_calls) == ("answer", "Which aircon?", ["claim!"])
+    for fine in ("The office AC is already off.", "The bedroom aircon was last set by the bot to ON cool 24C.",
+                 "The office aircon is now off (last set by the bot).", "The card asked to turn off the office.",
+                 "No, a credit card cannot pay for that.", "I remember that you sleep at 23:00."):
+        a, _ = make_assistant([completion(fine)])
+        assert (await a.handle(ALICE, "x")).kind == "answer", fine

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -20,6 +21,8 @@ from iotbot.bot.callbacks import encode
 from iotbot.bot.text import b, h, popup, reply, safe_edit
 from iotbot.llm.assistant import MAX_INPUT_CHARS, Assistant, Outcome
 from iotbot.llm.cards import CARD_TTL_S, Card, CardError, Done, Prepared
+from iotbot.llm.loop import MAX_WRITES
+from iotbot.llm.memory import Memory, step_text
 from iotbot.result import Actor
 
 logger = logging.getLogger(__name__)
@@ -105,8 +108,12 @@ def _lines(card: Card, marks: list[str] | None = None) -> list[str]:
 
 
 def card_screen(card: Card) -> tuple[str, InlineKeyboardMarkup]:
-    text = "Do this?\n" + "\n".join(_lines(card)) + f"\nExpires in {CARD_TTL_S // 60} min."
-    return text, InlineKeyboardMarkup([[_btn("Do it", "do", card), _btn("Cancel", "x", card)]])
+    # A card of memory lines asks "Remember this?" [Remember] [No]; anything mixed is "Do this?"
+    kinds = {(p.ask, p.do_label) for p in card.items}
+    ask, label = kinds.pop() if len(kinds) == 1 else ("Do this?", "Do it")
+    no = "Cancel" if label == "Do it" else "No"
+    text = f"{h(ask)}\n" + "\n".join(_lines(card)) + f"\nExpires in {CARD_TTL_S // 60} min."
+    return text, InlineKeyboardMarkup([[_btn(label, "do", card), _btn(no, "x", card)]])
 
 
 def _mark(r: Done | None) -> str:
@@ -131,16 +138,24 @@ def closed_screen(card: Card, why: str) -> str:
     return h(why) + "\n" + "\n".join(_lines(card))
 
 
-def _context_note(card: Card, note: str, marks: list[str] | None = None) -> None:
-    if card.context is not None:
-        card.context["content"] = note + "\n" + "\n".join(
-            f"- {p.name}: {p.line}" + (f" ({marks[i]})" if marks and marks[i] else "")
-            for i, p in enumerate(card.items))
+def _context_note(card: Card, status: str, marks: list[str] | None = None) -> None:
+    """Rewrite the card's tool results in the chat context: what the person did, per line."""
+    if not card.context:
+        return
+    note = json.dumps({"card": status, "lines": [
+        f"{p.name}: {p.line}" + (f" ({marks[i]})" if marks and marks[i] else "") for i, p in enumerate(card.items)]})
+    for msg in card.context:
+        msg["content"] = note
 
 
 async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant: Assistant,
                        actor: Actor, text: str, o: Outcome) -> None:
-    items = [a.prepared for a in o.turn.actions] if o.turn else []
+    # One call may give several lines (a recipe); a card shows at most MAX_WRITES of them
+    items = [p for a in (o.turn.actions if o.turn else [])
+             for p in (a.prepared if isinstance(a.prepared, list) else [a.prepared])]
+    if len(items) > MAX_WRITES:
+        await reply(update, h(FAILED["too_many"]))
+        return
     if not items or any(not isinstance(p, Prepared) for p in items):
         # A write tool without a card line is a coding mistake: never run it blind
         logger.error("Chat action without a card line: %s", [a.tool.name for a in o.turn.actions])
@@ -152,10 +167,10 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
     body, markup = card_screen(card)
     sent = await update.effective_message.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
     card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
-    card.context = assistant.remember(actor.user_id, text, "")
-    _context_note(card, "Card shown, waiting for the person to tap Do it:")
+    card.context = assistant.remember_card(actor.user_id, text, o.turn.actions)
+    _context_note(card, "shown to the person, waiting for their tap")
     for old in replaced:
-        _context_note(old, "Card replaced by a newer request; nothing was done:")
+        _context_note(old, "replaced by a newer request; nothing was done")
         if old.chat_id is not None and old.message_id is not None:
             with contextlib.suppress(TelegramError):
                 await context.bot.edit_message_text(closed_screen(old, "Replaced by your newer request; nothing "
@@ -184,7 +199,7 @@ async def card_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query:
             await safe_edit(query, closed_screen(card, str(e)))
         return
     if op == "x":
-        _context_note(card, "Card cancelled by the person; nothing was done:")
+        _context_note(card, "cancelled by the person; nothing was done")
         telemetry.note(outcome="cancelled")
         await query.answer("Cancelled.")
         await safe_edit(query, closed_screen(card, "Cancelled; nothing was done."))
@@ -195,15 +210,105 @@ async def card_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query:
     _note_results(results)
     if op == "undo":
         marks = ["not done, nothing to undo" if r is None else _mark(r) for r in results]
-        _context_note(card, "The person tapped Undo:", marks)
+        _context_note(card, "the person tapped Undo", marks)
         text = f"Undone (by {h(actor.name)}, {now}):\n" + "\n".join(_lines(card, marks))
         retry = InlineKeyboardMarkup([[_btn("Undo again", "undo", card)]]) if card.status == "done" else None
         await safe_edit(query, text, retry)
         return
-    _context_note(card, "The person tapped Do it:", [_mark(r) for r in card.results])
+    _context_note(card, "the person tapped " + (card.items[0].do_label if card.items else "Do it"),
+                  [_mark(r) for r in card.results])
     await safe_edit(query, *result_screen(card, actor.name, now))
 
 
 def _note_results(results: list[Done | None]) -> None:
     failed = [r.text for r in results if r is not None and not r.ok]
     telemetry.note(outcome="ok" if not failed else "failed", error=failed[0] if failed else None)
+
+
+# ---- /memory (4.6) -------------------------------------------------------------------------
+
+MEM = "mem"
+SHORT = 28
+LINE = 60                     # full memory on one page stays well under Telegram's 4096 characters
+# The last forgotten item per person, for [Undo] on the screen (in memory: lost on restart)
+_forgotten: dict[int, dict] = {}
+
+
+def _cut(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n - 3] + "..."
+
+
+def memory_screen(memory: Memory, actor: Actor, page: str = "me",
+                  note: str = "", undo_id: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    facts, recipes, house = memory.facts(actor.user_id), memory.recipes(actor.user_id), memory.house()
+    lines = [h(note), ""] if note else []
+    rows = []
+    if undo_id:
+        rows.append([InlineKeyboardButton("Undo", callback_data=encode(MEM, "u", undo_id, page))])
+    if page == "house":
+        lines.append(b("House notes") + " (everyone's assistant uses these)")
+        lines += [f'- "{h(_cut(f["text"], LINE))}" ({h(f.get("by_name", "?"))}, {h(str(f.get("at", ""))[:10])})'
+                  for f in house] or ["- none yet"]
+        rows += [[InlineKeyboardButton(f"Forget: {_cut(f['text'], SHORT)}",
+                                       callback_data=encode(MEM, "f", f["id"], page))] for f in house]
+        rows.append([InlineKeyboardButton(f"Yours ({len(facts) + len(recipes)})", callback_data=encode(MEM, "p", "me"))])
+    else:
+        lines.append(b("Your notes") + " (only your assistant uses these)")
+        lines += [f'- "{h(_cut(f["text"], LINE))}"' for f in facts] or ["- none yet"]
+        lines += ["", b("Your recipes")]
+        lines += [f'- "{h(r["name"])}": {h(_cut("; ".join(step_text(st) for st in r["steps"]), LINE))}'
+                  for r in recipes] or ["- none yet"]
+        rows += [[InlineKeyboardButton(f"Forget: {_cut(f['text'], SHORT)}",
+                                       callback_data=encode(MEM, "f", f["id"], page))] for f in facts]
+        rows += [[InlineKeyboardButton(f"Forget recipe: {_cut(r['name'], SHORT)}",
+                                       callback_data=encode(MEM, "f", r["id"], page))] for r in recipes]
+        rows.append([InlineKeyboardButton(f"House notes ({len(house)})", callback_data=encode(MEM, "p", "house"))])
+        if not (facts or recipes):
+            lines += ["", ("Tell the assistant something lasting (\"the big room is the bedroom\") or a recipe "
+                           "(\"save good night: bedroom 25 fan quiet, office off\") and it asks first.")]
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE, memory: Memory | None,
+                     actor: Actor) -> None:
+    if memory is None:
+        await reply(update, OFF)
+        return
+    text, markup = memory_screen(memory, actor)
+    await reply(update, text, markup)
+
+
+async def memory_button(query: CallbackQuery, memory: Memory | None, actor: Actor, action: str,
+                        args: list[str]) -> None:
+    if memory is None or action not in ("f", "u", "p") or not args:
+        await query.answer("This button is no longer active.")
+        return
+    page = args[-1] if args[-1] in ("me", "house") else "me"
+    if action == "p":
+        await query.answer()
+        await safe_edit(query, *memory_screen(memory, actor, page))
+        return
+    if action == "u":
+        item = _forgotten.get(actor.user_id)
+        if item is None or item["id"] != args[0]:
+            await query.answer("Too late to undo.", show_alert=True)
+            return
+        back = await memory.restore(actor.user_id, item)
+        _forgotten.pop(actor.user_id, None)
+        what = item.get("name") or item.get("text")
+        await query.answer("Restored." if back else "Could not restore (full, or already there).")
+        await safe_edit(query, *memory_screen(memory, actor, page, f'Restored "{_cut(what, LINE)}".' if back else ""))
+        return
+    if memory.find(actor.user_id, args[0]) is None:
+        await query.answer("Already forgotten.")
+        await safe_edit(query, *memory_screen(memory, actor, page))
+        return
+    gone = await memory.remove(actor.user_id, args[0])
+    telemetry.note(outcome="ok" if gone else "refused")
+    await query.answer("Forgotten.")
+    if gone is None:
+        await safe_edit(query, *memory_screen(memory, actor, page))
+        return
+    _forgotten[actor.user_id] = gone
+    what = gone.get("name") or gone.get("text")
+    await safe_edit(query, *memory_screen(memory, actor, page, f'Forgot "{_cut(what, LINE)}".', gone["id"]))

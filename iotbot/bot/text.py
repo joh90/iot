@@ -48,7 +48,10 @@ Commands:
 /d &lt;device&gt; &lt;action&gt; - e.g. /d bedroom_ac power on high
 /user - approved users (remove)
 /adduser &lt;user id&gt; &lt;name&gt; - approve a user
-/stats [days] - speed, failed sends, LLM health (default 7 days)"""
+/stats [days] - speed, failed sends, LLM health (default 7 days)
+/memory - what the chat assistant remembers (forget items)
+
+Or just type, e.g. "a bit cooler in the bedroom" or "off the office aircon at 7am weekdays"."""
 
 NOT_ALLOWED = "You are not approved to use this bot. Send /ping and give your user id to an approved user."
 

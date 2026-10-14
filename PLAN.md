@@ -254,6 +254,9 @@ Planned over 11 question rounds plus an independent plan audit. Replaces the L1-
 | Chat schedules | Create, list, edit, pause, delete (wave 1); several matches -> bot lists them and asks; edit card shows before -> after                                                      |
 | Undo detail    | AC: re-send the previous full state (real IR); schedule: delete created / restore deleted or edited; newest pending card wins, older -> 'Replaced'                           |
 | Wave 1 testing | Unit tests on a fake LLM + ~25 real phrases against Qwen with devices stubbed (no IR); user tests live after ship                                                            |
+| Fact saving    | Ask first: card 'Remember this?' [Remember] [No] (+ Undo after); on 'remember ...' or a lasting fact, never moods / one-offs                                                 |
+| Fact scope     | Assistant picks house or just-you; the card line says which; Undo if wrong                                                                                                   |
+| Recipe run     | Say its name in chat -> the usual confirm card with every step                                                                                                               |
 | Later          | 6.6 speed after Phase 4; habit nudges ('turn it on?') + daily brief in Phase 7; voice much later; no proactive outside alerts ever                                           |
 
 ### 4.0 spike results (2026-10-13)
