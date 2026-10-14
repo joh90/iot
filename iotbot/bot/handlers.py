@@ -21,8 +21,9 @@ from iotbot.bot import keyboards as kb
 from iotbot.bot import stats
 from iotbot.bot import wizard as wz
 from iotbot.bot.callbacks import decode, encode
+from iotbot.bot import chat
 from iotbot.bot.chat import on_chat
-from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup, reply, split_text
+from iotbot.bot.text import NOT_ALLOWED, START, b, dm, h, human_duration, popup, reply, safe_edit, split_text
 from iotbot.context import AppContext
 from iotbot.result import Actor, Result, Surface
 from iotbot.schedule import notify as sn
@@ -74,39 +75,13 @@ async def reply_result(update: Update, r: Result) -> None:
     await reply(update, text)
 
 
-async def safe_edit(query: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> bool:
-    """Edit the button message in place; tolerate double taps and old messages (B27, B28)."""
-    msg = query.message
-    if msg is None or isinstance(msg, InaccessibleMessage):
-        # Too old or inaccessible: send a fresh message instead
-        await _dm(query, text, markup)
-        return False
-    try:
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
-        return True
-    except BadRequest as e:
-        if "not modified" in str(e).lower():
-            return False
-        raise
-
-
-async def _dm(query: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
-    if not query.from_user:
-        return
-    try:
-        await query.get_bot().send_message(query.from_user.id, text, parse_mode=ParseMode.HTML,
-                                           reply_markup=markup, disable_web_page_preview=True)
-    except TelegramError as e:  # e.g. Forbidden: the user never opened a private chat
-        logger.info("Could not message user %s: %s", query.from_user.id, e)
-
-
 async def answer_or_message(query: CallbackQuery, text: str, alert: bool) -> None:
     """Answer the button; if the answer window expired (slow send/retry), message instead."""
     try:
         await query.answer(popup(text), show_alert=alert)
     except BadRequest as e:
         logger.info("Callback answer failed (%s); sending as a message", e)
-        await _dm(query, h(text))
+        await dm(query, h(text))
 
 
 # ---- commands ------------------------------------------------------------------------
@@ -329,11 +304,19 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _schedule_notice_button(update, context, query, action, args)
     elif ns == ap.NS and action.startswith(AC_CARD):
         await _ac_card_button(update, context, query, action[len(AC_CARD):], args)
+    elif ns == chat.NS:
+        await _card_button(update, context, query, action, args)
     elif ns in (wz.NS, ap.NS):
         await _wizard_button(update, context, query, ns, action, args)
     else:
         # Buttons from the old bot or a removed feature
         await query.answer("This button is no longer active.")
+
+
+async def _card_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                       action: str, args: list[str]) -> None:
+    ctx = app_ctx(context)
+    await chat.card_button(update, context, query, ctx.assistant, actor_of(update, ctx, "llm"), action, args)
 
 
 async def _remote_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
@@ -432,7 +415,7 @@ async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_
             pass
         r = await ctx.notifier.retry(actor, args[0])
         telemetry.note_result(r.ok, r.error)
-        await _dm(query, h(r.message))
+        await dm(query, h(r.message))
         return
     if action == "undo":
         r = await ctx.notifier.undo(actor, args[0])

@@ -17,6 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from iotbot.llm import loop as lp
+from iotbot.llm.cards import Cards
 from iotbot.llm.client import LlmClient
 from iotbot.llm.tools import Tool
 from iotbot.result import Actor
@@ -75,6 +76,7 @@ class Assistant:
         self.chats: dict[int, Chat] = {}
         self.in_flight: set[int] = set()
         self.recent: dict[int, deque[float]] = {}
+        self.cards = Cards(clock)
 
     def add_tools(self, provider: ToolProvider) -> None:
         self.providers.append(provider)
@@ -86,8 +88,11 @@ class Assistant:
         devices = "\n".join(f"- {d}" for d in self.devices()) or "- (none)"
         return f"{RULES}\n\nDevices:\n{devices}\n\nTime zone: {self.tz.key}."
 
+    def now(self) -> datetime:
+        return datetime.fromtimestamp(self._clock(), self.tz)
+
     def stamp(self, actor: Actor, text: str) -> str:
-        now = datetime.fromtimestamp(self._clock(), self.tz)
+        now = self.now()
         return f"[From {actor.name}, {now:%a %d %b %Y %H:%M}]\n{text}"
 
     def context(self, user_id: int) -> list[dict[str, Any]]:
@@ -96,14 +101,17 @@ class Assistant:
             return []
         return list(chat.messages)
 
-    def remember(self, user_id: int, user_text: str, reply: str) -> None:
-        """Keep one exchange as context. For a card, `reply` is what the card said."""
+    def remember(self, user_id: int, user_text: str, reply: str) -> dict[str, Any]:
+        """Keep one exchange as context. For a card, `reply` is what the card said; the
+        returned message can be updated when the person taps (it stays in the context)."""
         chat = self.chats.get(user_id)
         if chat is None or self._clock() - chat.last > CONTEXT_IDLE_S:
             chat = self.chats[user_id] = Chat()
         chat.messages.append({"role": "user", "content": user_text})
-        chat.messages.append({"role": "assistant", "content": reply})
+        msg = {"role": "assistant", "content": reply}
+        chat.messages.append(msg)
         chat.last = self._clock()
+        return msg
 
     def forget(self, user_id: int) -> None:
         self.chats.pop(user_id, None)

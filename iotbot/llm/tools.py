@@ -30,6 +30,9 @@ class Tool:
     write: bool = False
     # READ tools: (args) -> JSON-able result. WRITE tools have none (code runs them after the card).
     run: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
+    # WRITE tools: (args) -> one card line (llm.cards.Prepared), built from the current state.
+    # Raises ArgError when it cannot be done ("bed_ac is off"): that goes back to the model.
+    prepare: Callable[[dict[str, Any]], Awaitable[Any]] | None = None
 
     def spec(self) -> dict[str, Any]:
         return {"type": "function",
