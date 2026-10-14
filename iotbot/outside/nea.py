@@ -24,8 +24,10 @@ FRESH_S = 600
 STALE_MAX_S = 6 * 3600
 MAX_CALLS = 5
 WINDOW_S = 10.0
-TIMEOUT_S = 8.0
-MAX_WAIT_S = WINDOW_S + 1.0   # one full window: a slot always comes; then give up (or use stale data)
+TIMEOUT_S = 5.0              # the whole call (connect + read), so a chat turn stays under its 20 s cap
+MAX_WAIT_S = WINDOW_S + 1.0   # one full window: a slot always comes; then give up
+STALE_WAIT_S = 1.0           # with stale data in hand, wait at most this long for a slot
+BACKOFF_S = 60.0             # after a failure, use stale data (or fail) without calling NEA again
 
 
 class NeaError(Exception):
@@ -51,6 +53,7 @@ class NeaClient:
         self._cache: dict[str, Fetched] = {}
         self._calls: deque[float] = deque()
         self._locks: dict[str, asyncio.Lock] = {}
+        self._failed: dict[str, float] = {}                # key -> when NEA last failed for it
         self.calls = 0                                      # real calls made (for tests and /stats)
 
     async def aclose(self) -> None:
@@ -64,29 +67,37 @@ class NeaClient:
             now = self._clock()
             if hit is not None and hit.age_s(now) < fresh_s:
                 return Fetched(hit.data, hit.at)
+            usable = hit is not None and hit.age_s(now) <= STALE_MAX_S
             try:
-                if not await self._slot():
+                if now - self._failed.get(key, -BACKOFF_S) < BACKOFF_S:
+                    raise NeaError("failed just now")
+                if not await self._slot(STALE_WAIT_S if usable else MAX_WAIT_S):
                     raise NeaError("busy")
                 self.calls += 1
-                r = await self.http.get(self.base + feed, params=params)
+                async with asyncio.timeout(TIMEOUT_S):
+                    r = await self.http.get(self.base + feed, params=params)
                 if r.status_code != 200:
                     raise NeaError(f"HTTP {r.status_code}")
                 body = r.json()
                 if not isinstance(body, dict) or body.get("code") not in (0, None) or not isinstance(
                         body.get("data"), dict):
                     raise NeaError(f"bad reply: {str(body.get('errorMsg') if isinstance(body, dict) else '')[:80]}")
-            except (httpx.HTTPError, ValueError, NeaError) as e:
-                logger.info("NEA %s failed: %s", feed, e)
-                if hit is not None and hit.age_s(now) <= STALE_MAX_S:
+            except (httpx.HTTPError, ValueError, NeaError, TimeoutError) as e:
+                if str(e) != "failed just now":
+                    logger.info("NEA %s failed: %s", feed, e or e.__class__.__name__)
+                    if str(e) != "busy":
+                        self._failed[key] = now
+                if usable:
                     return Fetched(hit.data, hit.at, stale=True)
                 raise NeaError("cannot reach NEA right now") from None
             got = Fetched(body["data"], self._clock())
             self._cache[key] = got
+            self._failed.pop(key, None)
             return got
 
-    async def _slot(self) -> bool:
-        """Wait for a throttle slot (at most MAX_WAIT_S); False if none came."""
-        deadline = time.monotonic() + MAX_WAIT_S
+    async def _slot(self, max_wait: float = MAX_WAIT_S) -> bool:
+        """Wait for a throttle slot (at most `max_wait` s); False if none came."""
+        deadline = time.monotonic() + max_wait
         while True:
             now = time.monotonic()
             while self._calls and now - self._calls[0] >= WINDOW_S:

@@ -20,6 +20,7 @@ from tests.test_bot import ME, make_context, make_update, replied
 
 FIX = Path(__file__).parent / "fixtures" / "nea"
 SGT = ZoneInfo("Asia/Singapore")
+HOME = "Bedok"
 # Recorded 2026-10-15 around 02:00 SGT, during haze; lightning from 2026-10-14 23:10-23:58
 AT = datetime(2026, 10, 15, 2, 20, tzinfo=SGT).timestamp()
 
@@ -64,7 +65,7 @@ def outside(clock=None, nea=None):
     nea = nea or Nea()
     clock = clock or Clock()
     client = NeaClient(httpx.AsyncClient(transport=httpx.MockTransport(nea)), clock=clock)
-    return Outside(client, "Asia/Singapore"), nea, clock
+    return Outside(client, "Asia/Singapore", home=HOME, home_regions=("east", "central")), nea, clock
 
 
 # ---- AQI and bands ---------------------------------------------------------------------
@@ -103,7 +104,7 @@ def test_other_bands():
 async def test_home_summary_is_five_calls_and_shows_east_and_central():
     o, nea, _ = outside()
     text = await o.summary()
-    assert text.startswith("Outside, home (City):\nNext 2h (2.00 am to 4.00 am): Cloudy (as of 02:06)")
+    assert text.startswith("Outside, home (Bedok):\nNext 2h (2.00 am to 4.00 am): Cloudy (as of 02:06)")
     assert "Air, east (as of 02:00):\nAQI 168 unhealthy (aqicn-style, PM2.5 now)\nPSI 173 unhealthy (NEA 24h)\n" \
            "PM2.5 1h 89 (band II, elevated)" in text
     assert "Air, central (as of 02:00):\nAQI 166 unhealthy" in text and "PSI 186 unhealthy" in text
@@ -127,7 +128,8 @@ async def test_every_part_reads_the_recorded_replies():
     o, _, _ = outside()
     r = await o.report(None, ["forecast_24h", "outlook_4day", "rain", "uv", "heat", "wind", "humidity"])
     text = "\n".join(r["lines"])
-    assert "Today (as of Wed 23:40): Cloudy, 25-34C, humidity 60-95%, wind SSE 5-15 km/h" in text
+    assert "24h forecast, 0 AM 15 Oct to 0 AM 16 Oct (as of Wed 23:40): Cloudy, 25-34C, humidity 60-95%, " \
+           "wind SSE 5-15 km/h" in text
     assert "Midnight to 6 am 15 Oct: Cloudy (east)" in text
     assert "Thursday: Afternoon thundery showers, 25-34C" in text
     assert "UV index: 0 (low), island-wide, at Wed 19:00 (NEA gives UV in daylight hours only)" in text
@@ -216,15 +218,15 @@ def test_tool_schema_and_args():
 async def test_tool_defaults_to_the_home_summary():
     o, _, _ = outside()
     out = await OutsideTools(o).tools(Actor(ME, "Alice", "llm"))[0].run({})
-    assert out["area"] == "City (home)" and out["lines"][0].startswith("Next 2h")
+    assert out["area"] == "Bedok (home)" and out["lines"][0].startswith("Next 2h")
     assert "never add numbers" in out["note"]
 
 
 def test_match_area():
-    assert Outside.match_area("jurong  east") == "Jurong East"
-    assert Outside.match_area("toa") == "Toa Payoh"
-    assert Outside.match_area("jurong") is None                              # three areas: ambiguous
-    assert Outside.match_area("orchard") is None
+    assert Outside.match_area("jurong  east") == ["Jurong East"]
+    assert Outside.match_area("toa") == ["Toa Payoh"]
+    assert Outside.match_area("jurong") == ["Jurong East", "Jurong Island", "Jurong West"]
+    assert Outside.match_area("orchard") == []
 
 
 async def test_outside_command(tmp_path):
@@ -234,13 +236,19 @@ async def test_outside_command(tmp_path):
     ctx.outside.nea._clock = ctx.outside._clock = Clock()
     u = make_update(ME)
     await hd.cmd_outside(u, make_context(ctx))
-    assert "Outside, home (City):" in replied(u) and "AQI 168" in replied(u)
+    assert "Outside, home (City):" in replied(u) and "Air, central (as of 02:00):\nAQI 166" in replied(u)
     u = make_update(ME)
     await hd.cmd_outside(u, make_context(ctx, ["toa", "payoh"]))
     assert "Outside, Toa Payoh:" in replied(u)
     u = make_update(ME)
     await hd.cmd_outside(u, make_context(ctx, ["<b>mars"]))
     assert "I don't know the area '&lt;b&gt;mars'" in replied(u)
+    u = make_update(ME)
+    await hd.cmd_outside(u, make_context(ctx, ["jurong"]))
+    assert "'jurong' could be Jurong East, Jurong Island, Jurong West" in replied(u)
+    u = make_update(ME)
+    await hd.cmd_outside(u, make_context(ctx, ["West"]))
+    assert "air for the west:" in replied(u) and "Air, west (as of 02:00):" in replied(u)
 
 
 async def test_region_picks_the_air_readings():
@@ -249,3 +257,91 @@ async def test_region_picks_the_air_readings():
     assert r["region"] == "central" and r["lines"][0] == "Air, central (as of 02:00):" and len(r["lines"]) == 5
     r = await o.report(None, ["air"])                                     # the override does not stick
     assert "Air, east (as of 02:00):" in r["lines"]
+
+
+
+def mutate(fn):
+    """A Nea that changes one recorded reply before serving it."""
+    class Changed(Nea):
+        def __call__(self, request):
+            r = super().__call__(request)
+            if r.status_code != 200:
+                return r
+            body = json.loads(r.content)
+            fn(request.url.path.rsplit("/", 1)[-1], body)
+            return httpx.Response(200, json=body)
+    return Changed()
+
+
+async def test_odd_replies_cost_one_line_not_the_answer():
+    def change(feed, body):
+        if feed == "two-hr-forecast":
+            body["data"]["items"][0]["forecasts"] = [f for f in body["data"]["items"][0]["forecasts"]
+                                                     if f["area"] != HOME]
+        if feed == "air-temperature":
+            for x in body["data"]["readings"][0]["data"]:
+                if x["stationId"] == "S107":                              # East Coast Park, nearest to home
+                    x["value"] = None
+        if feed == "pm25":
+            body["data"]["items"][0]["readings"]["pm25_one_hourly"]["east"] = None
+    o, _, _ = outside(nea=mutate(change))
+    text = await o.summary()
+    assert "forecast 2h: NEA's reply was not understood" in text
+    assert text.count("Now: ") == 1 and "East Coast Park" not in text          # the next station instead
+    assert "Air, east: NEA has no reading for this region right now" in text and "Air, central (as of" in text
+
+
+async def test_failure_backoff_and_stale_psi_is_marked():
+    o, nea, clock = outside()
+    await o.report(None, ["air"])
+    nea.down = True
+    clock.t += FRESH_S + 60
+    calls = len(nea.calls)
+    r = await o.report(None, ["air"])
+    assert "PSI 173 unhealthy (NEA 24h, as of 02:00, NEA not answering now, 11 min old)" in r["lines"]
+    tried = len(nea.calls) - calls
+    await o.report(None, ["air"])                                              # within the backoff
+    assert tried == 2 and len(nea.calls) - calls == tried
+
+
+async def test_stale_lightning_never_says_none():
+    clock = Clock(datetime(2026, 10, 14, 23, 50, tzinfo=SGT).timestamp())
+    o, nea, _ = outside(clock)
+    await o.report("Jurong West", ["lightning"])
+    nea.down = True
+    clock.t += 360                                                             # 6 min later, NEA down
+    line = (await o.report("Jurong West", ["lightning"]))["lines"][0]
+    assert line == "Lightning: cannot tell, NEA not answering now (last data 6 min old)"
+
+
+async def test_a_hanging_nea_is_cut_at_the_timeout(monkeypatch):
+    import asyncio
+
+    from iotbot.outside import nea as mod
+    monkeypatch.setattr(mod, "TIMEOUT_S", 0.05)
+
+    async def hang(request):
+        await asyncio.sleep(5)
+
+    client = NeaClient(httpx.AsyncClient(transport=httpx.MockTransport(hang)), clock=Clock())
+    with pytest.raises(NeaError):
+        await client.get("psi")
+
+
+async def test_bad_reply_with_status_200():
+    client = NeaClient(httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"code": 17, "errorMsg": "nope", "data": None}))), clock=Clock())
+    with pytest.raises(NeaError):
+        await client.get("psi")
+
+
+def test_home_area_and_regions_come_from_settings(tmp_path):
+    from iotbot.config import ConfigError, load_settings
+    s = load_settings(environ={"BOT_TOKEN": "1:x", "OUTSIDE_AREA": "toa  payoh", "OUTSIDE_REGIONS": "East, central"},
+                      base_dir=tmp_path)
+    assert (s.outside_area, s.outside_regions) == ("Toa Payoh", ("east", "central"))
+    for env in ({"OUTSIDE_AREA": "Mars"}, {"OUTSIDE_REGIONS": "east,moon"}):
+        with pytest.raises(ConfigError):
+            load_settings(environ={"BOT_TOKEN": "1:x", **env}, base_dir=tmp_path)
+    ctx = make_ctx(tmp_path, {"OUTSIDE_AREA": "Bedok"})
+    assert ctx.outside.home == "Bedok" and ctx.outside.home_regions == ("central",)

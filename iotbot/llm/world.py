@@ -11,7 +11,7 @@ from typing import Any
 
 from iotbot.llm.tools import ArgError, Tool
 from iotbot.outside.holidays import Holidays
-from iotbot.outside.weather import AREAS, HOME, PARTS, REGIONS, SUMMARY, Outside
+from iotbot.outside.weather import AREAS, PARTS, REGIONS, SUMMARY, Outside
 from iotbot.result import Actor
 
 PART_HELP = ("now = temperature and rain now; forecast_2h; forecast_24h = today by period; outlook_4day; "
@@ -26,7 +26,7 @@ class OutsideTools:
     def tools(self, actor: Actor) -> list[Tool]:
         return [Tool(
             "outside", f"Weather and air quality in Singapore from NEA, worded for you to relay as given. "
-                       f"Home is {HOME}; give area only if the person names another place (pick the nearest "
+                       f"Home is {self.outside.home}; give area only if the person names another place (pick the nearest "
                        f"of these areas and say which one you used). Only for questions about outside.",
             {"type": "object", "properties": {
                 "area": {"type": "string", "enum": list(AREAS)},
@@ -66,17 +66,18 @@ class HolidayTools:
             start = date.fromisoformat(args["date"]) if "date" in args else today
         except ValueError:
             raise ArgError("date is not a real date") from None
-        what = args["what"]
+        what, year = args["what"], args.get("year")
         if what == "day":
             lines = [h.day(start)]
         elif what == "next":
-            lines = h.upcoming(start)
+            lines = h.upcoming(start if not year or "date" in args else date(year, 1, 1))
         elif what == "long_weekends":
-            year = args.get("year")
-            a, b = (date(year, 1, 1), date(year, 12, 31)) if year else (start, start + timedelta(days=365))
-            lines = h.long_weekends(max(a, start) if not year else a, b)
+            if year and "date" not in args:
+                lines = h.long_weekends(date(year, 1, 1), date(year, 12, 31))
+            else:
+                lines = h.long_weekends(start, start + timedelta(days=365))
         else:
-            lines = h.year(args.get("year") or start.year)
+            lines = h.year(year or start.year)
         known = h.known_until()
         return {"lines": lines, "today": f"{today:%a %d %b %Y}",
                 "known_until": f"{known:%d %b %Y}" if known else "nothing loaded"}

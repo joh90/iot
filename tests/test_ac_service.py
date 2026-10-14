@@ -47,15 +47,18 @@ def make_ctx(tmp_path, env=None, commands=None):
         ctx.sent.append((mac, packets, idempotent))
 
     ctx.hub.send_ir = send_ir
+    no_network(ctx)
+    return ctx
+
+
+def no_network(ctx):
+    """Never the real llama-server, NEA or data.gov.sg; tests that want them install fakes."""
     if ctx.assistant:
-        # Never the real llama-server on this machine; tests that want a model install a fake one
         ctx.assistant.llm = LlmClient("http://llm", 1, httpx.AsyncClient(transport=httpx.MockTransport(_no_llm)))
     if ctx.outside:
-        # Never the real NEA; tests that want data install the recorded replies (tests/test_outside.py)
         ctx.outside.nea.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
     if ctx.holidays:
         ctx.holidays.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
-    return ctx
 
 
 def _no_llm(request):

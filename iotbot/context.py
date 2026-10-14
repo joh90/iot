@@ -140,7 +140,8 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     scheduler.notify = notifier.on_fire
 
     # NEA: keyless, read-only, also used by /outside when the LLM is off
-    outside = Outside(NeaClient(), settings.timezone)
+    outside = Outside(NeaClient(), settings.timezone, home=settings.outside_area,
+                      home_regions=settings.outside_regions)
     holidays = Holidays(settings.state_dir / "holidays.json", settings.timezone)
     if (w := holidays.load()):
         warnings.append(w)

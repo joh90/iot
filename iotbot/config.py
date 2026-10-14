@@ -35,6 +35,9 @@ class Settings:
     llm_enabled: bool = True
     # llama-server slot the bot pins to (slot 0 is left for the owner); -1 = let the server pick
     llm_slot: int = 1
+    # Home for outside conditions: one of NEA's 47 forecast areas, and the air regions to show
+    outside_area: str = "City"
+    outside_regions: tuple[str, ...] = ("central",)
 
 
 def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
@@ -96,6 +99,16 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
     if not llm_url.startswith(("http://", "https://")):
         raise ConfigError(f"LLM_URL must start with http:// or https://, got '{llm_url}'")
 
+    from iotbot.outside.weather import AREAS, REGIONS
+    area_raw = " ".join((environ.get("OUTSIDE_AREA") or "City").split())
+    outside_area = next((a for a in AREAS if a.lower() == area_raw.lower()), None)
+    if outside_area is None:
+        raise ConfigError(f"OUTSIDE_AREA '{area_raw}' is not one of NEA's areas (e.g. Bedok, City, Toa Payoh)")
+    outside_regions = tuple(dict.fromkeys(r.strip().lower() for r in (environ.get("OUTSIDE_REGIONS") or "central")
+                                          .split(",") if r.strip()))
+    if not outside_regions or any(r not in REGIONS for r in outside_regions):
+        raise ConfigError(f"OUTSIDE_REGIONS must be a comma list of {', '.join(REGIONS)}")
+
     tz = environ.get("TZ_NAME") or "Asia/Singapore"
     try:
         ZoneInfo(tz)
@@ -117,4 +130,6 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         llm_url=llm_url,
         llm_enabled=llm_raw == "on",
         llm_slot=llm_slot,
+        outside_area=outside_area,
+        outside_regions=outside_regions,
     )

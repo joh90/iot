@@ -313,7 +313,8 @@ Outside (`/outside [area]`, or ask in chat: "how's the haze?", "will it rain in 
 
 - Live NEA data from data.gov.sg (no API key): 2-hour, 24-hour and 4-day forecasts, temperature,
   rain, humidity, wind, lightning within 10 km in the last 30 minutes, UV, heat stress, PSI and PM2.5.
-- Home is the configured area, with air readings for the east and central regions. Name any of NEA's 47 areas
+- Home is `OUTSIDE_AREA` in `.env` (one of NEA's 47 areas, default City), with air readings for the
+  regions in `OUTSIDE_REGIONS` (default central; e.g. `east,central`). Name any of NEA's 47 areas
   (or a region: "PSI in the west") for somewhere else.
 - AQI is worked out the way aqicn.org shows it: the US EPA AQI (pre-2024 table) on NEA's latest 1-hour
   PM2.5, or NEA's PM10 / ozone / SO2 / CO sub-index if higher. PSI is NEA's official 24-hour index.
