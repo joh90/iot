@@ -130,6 +130,19 @@ class Wizard:
         d.expires = self._clock() + DRAFT_TTL_S
         return d
 
+    def waiting_for(self, user_id: int, chat_id: int | None) -> bool:
+        """True if this person's draft waits for a typed time in this chat. A wait whose draft
+        expired or moved on is dropped, so the text goes to chat instead of being swallowed."""
+        did = self.awaiting.get(user_id)
+        if did is None:
+            return False
+        d = self.drafts.get(did)
+        if d is None or d.user_id != user_id or d.expires < self._clock() or d.step != "time":
+            self.awaiting.pop(user_id, None)
+            return False
+        # A message in another chat (e.g. a group) neither answers nor ends the wait
+        return d.chat_id is None or d.chat_id == chat_id
+
     def _drop(self, did: str) -> None:
         d = self.drafts.pop(did, None)
         if d and self.awaiting.get(d.user_id) == did:

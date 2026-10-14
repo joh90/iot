@@ -58,7 +58,7 @@ def make_update(user_id, text_args=None, data=None, message=True):
         )
     update = SimpleNamespace(
         update_id=7, effective_user=SimpleNamespace(id=user_id, full_name="Test User"),
-        effective_message=msg, callback_query=query,
+        effective_message=msg, callback_query=query, effective_chat=SimpleNamespace(id=user_id, type="private"),
     )
     return update
 
@@ -225,7 +225,7 @@ async def test_error_handler_answers_spinner_and_hides_update_b15(ctx, caplog):
 
 
 def test_split_text():
-    from iotbot.bot.handlers import split_text
+    from iotbot.bot.text import split_text
 
     text = "\n".join(f"<b>line {i}</b> " + "x" * 50 for i in range(300))
     parts = split_text(text, 1000)

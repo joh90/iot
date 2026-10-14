@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from iotbot.ac import mitsubishi as m
@@ -10,6 +11,7 @@ from iotbot.bot import handlers as hd
 from iotbot.config import ConfigError, load_settings
 from iotbot.context import build_context
 from iotbot.devices.hub import HubError
+from iotbot.llm.client import LlmClient
 from iotbot.result import Actor
 from tests.test_bot import ME, NoNetTransport, make_context, make_update, replied
 
@@ -45,7 +47,14 @@ def make_ctx(tmp_path, env=None, commands=None):
         ctx.sent.append((mac, packets, idempotent))
 
     ctx.hub.send_ir = send_ir
+    if ctx.assistant:
+        # Never the real llama-server on this machine; tests that want a model install a fake one
+        ctx.assistant.llm = LlmClient("http://llm", 1, httpx.AsyncClient(transport=httpx.MockTransport(_no_llm)))
     return ctx
+
+
+def _no_llm(request):
+    raise httpx.ConnectError("tests never reach a real LLM")
 
 
 def events(tmp_path):
