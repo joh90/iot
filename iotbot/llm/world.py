@@ -6,9 +6,11 @@ them. Asked about outside only: never added to aircon replies (PLAN "Outside").
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
-from iotbot.llm.tools import Tool
+from iotbot.llm.tools import ArgError, Tool
+from iotbot.outside.holidays import Holidays
 from iotbot.outside.weather import AREAS, HOME, PARTS, REGIONS, SUMMARY, Outside
 from iotbot.result import Actor
 
@@ -39,3 +41,42 @@ class OutsideTools:
         out = await self.outside.report(args.get("area"), parts, args.get("region"))
         out["note"] = "Relay these lines; never add numbers, bands or advice they do not give."
         return out
+
+
+class HolidayTools:
+    def __init__(self, holidays: Holidays):
+        self.holidays = holidays
+
+    def tools(self, actor: Actor) -> list[Tool]:
+        return [Tool(
+            "holidays", "Singapore public holidays (MOM's list, with observed days) and eves. what: day = is "
+                        "this date a holiday; next = the next few; long_weekends = 3+ days off with a holiday; "
+                        "year = all of a year. Relay as given.",
+            {"type": "object", "required": ["what"], "properties": {
+                "what": {"type": "string", "enum": ["day", "next", "long_weekends", "year"]},
+                "date": {"type": "string", "pattern": "20[0-9][0-9]-[01][0-9]-[0-3][0-9]",
+                         "description": "YYYY-MM-DD: the day to check, or where next/long_weekends start"},
+                "year": {"type": "integer", "minimum": 2020, "maximum": 2100}}},
+            run=self._run)]
+
+    async def _run(self, args: dict[str, Any]) -> dict[str, Any]:
+        h = self.holidays
+        today = h.today()
+        try:
+            start = date.fromisoformat(args["date"]) if "date" in args else today
+        except ValueError:
+            raise ArgError("date is not a real date") from None
+        what = args["what"]
+        if what == "day":
+            lines = [h.day(start)]
+        elif what == "next":
+            lines = h.upcoming(start)
+        elif what == "long_weekends":
+            year = args.get("year")
+            a, b = (date(year, 1, 1), date(year, 12, 31)) if year else (start, start + timedelta(days=365))
+            lines = h.long_weekends(max(a, start) if not year else a, b)
+        else:
+            lines = h.year(args.get("year") or start.year)
+        known = h.known_until()
+        return {"lines": lines, "today": f"{today:%a %d %b %Y}",
+                "known_until": f"{known:%d %b %Y}" if known else "nothing loaded"}

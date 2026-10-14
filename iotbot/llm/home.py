@@ -20,6 +20,7 @@ from iotbot.llm.tools import AlreadyError, ArgError, Tool
 from iotbot.result import Actor, Result
 from iotbot.schedule import text as tx
 from iotbot.schedule.model import DAYS, Schedule
+from iotbot.schedule.timing import next_runs
 
 if TYPE_CHECKING:
     from iotbot.context import AppContext
@@ -295,6 +296,18 @@ class HomeTools:
             raise ArgError("say what to change")
         return self._plan_item(actor, spec, cur, "edit")
 
+    def _holiday_note(self, s: Schedule, now: datetime) -> str:
+        """'Runs on a public holiday: Mon 9 Nov (Deepavali (Observed))' for the next two weeks of runs.
+        Information only: schedules still run on holidays (PLAN "Holidays")."""
+        hol = getattr(self.ctx, "holidays", None)
+        if hol is None or not s.enabled:
+            return ""
+        runs = [r.astimezone(self.tz) for r in next_runs(s, now, self.tz, 14) if r - now <= timedelta(days=14)]
+        hits = [(r, hol.days[r.date()]) for r in runs if r.date() in hol.days]
+        if not hits:
+            return ""
+        return "Runs on a public holiday: " + ", ".join(f"{r:%a} {r.day} {r:%b} ({n})" for r, n in hits[:2])
+
     def _schedule(self, sid: str) -> Schedule:
         s = self.ctx.schedules.get(sid)
         if s is None or s.device not in self.acs():
@@ -318,6 +331,8 @@ class HomeTools:
             line += f". Clashes with {'; '.join(clash)}; both are kept"
         if r.warnings:
             line += ". Note: " + " ".join(r.warnings)
+        if (ph := self._holiday_note(cand, now)):
+            line += f". {ph}"
         plan_id = r.data["plan_id"]
         shown = {c["with"] for c in r.conflicts}
 

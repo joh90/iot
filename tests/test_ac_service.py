@@ -53,6 +53,8 @@ def make_ctx(tmp_path, env=None, commands=None):
     if ctx.outside:
         # Never the real NEA; tests that want data install the recorded replies (tests/test_outside.py)
         ctx.outside.nea.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
+    if ctx.holidays:
+        ctx.holidays.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
     return ctx
 
 
