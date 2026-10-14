@@ -309,6 +309,19 @@ Memory (`/memory` lists it, with a Forget button per item):
 - Limits: 30 notes per person, 30 house notes, 10 recipes per person, 200 characters per note. Stored
   in `state/memory.json`; a damaged file is moved aside and memory starts empty.
 
+Outside (`/outside [area]`, or ask in chat: "how's the haze?", "will it rain in Jurong?"):
+
+- Live NEA data from data.gov.sg (no API key): 2-hour, 24-hour and 4-day forecasts, temperature,
+  rain, humidity, wind, lightning within 10 km in the last 30 minutes, UV, heat stress, PSI and PM2.5.
+- Home is the configured area, with air readings for the east and central regions. Name any of NEA's 47 areas
+  (or a region: "PSI in the west") for somewhere else.
+- AQI is worked out the way aqicn.org shows it: the US EPA AQI (pre-2024 table) on NEA's latest 1-hour
+  PM2.5, or NEA's PM10 / ozone / SO2 / CO sub-index if higher. PSI is NEA's official 24-hour index.
+  Bands and the advice line come from code (NEA's advice for healthy people), never from the model.
+- Every line says when NEA measured it. Replies are cached 10 minutes and at most 5 calls go to NEA per
+  10 seconds. If NEA is down, the last good data is shown with its age, up to 6 hours old.
+- `/outside` works without the PC (no LLM). Outside conditions only come up when you ask.
+
 Every chat turn that reached the model has its full requests and replies in
 `logs/llm/llm-YYYY-MM-DD.jsonl` (kept 90 days), to replay against a new model or prompt later. Group chats and strangers never reach the model.
 
@@ -322,8 +335,7 @@ phrasing to test the LLM assistant against later. The files stay on the Pi and a
 
 ## Coming next
 
-Outside weather and haze from NEA and public holiday lookups for the assistant; then weekly reports
-and reminders before schedules. See PLAN.md.
+Public holiday lookups for the assistant; then weekly usage patterns and reminders. See PLAN.md.
 
 ## Development
 

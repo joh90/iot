@@ -204,6 +204,22 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 @restricted
+async def cmd_outside(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Weather and air from NEA without the LLM (works when the PC is off)."""
+    ctx = app_ctx(context)
+    text = " ".join(context.args or [])
+    area = None
+    if text:
+        area = ctx.outside.match_area(text)
+        if area is None:
+            await reply(update, f"I don't know the area '{h(text[:40])}'. Use an NEA area such as Bedok, "
+                                "Jurong West or Toa Payoh, or just /outside for home.")
+            return
+    telemetry.note(intent="/outside")
+    await reply(update, h(await ctx.outside.summary(area)))
+
+
+@restricted
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = app_ctx(context)
     reg = ctx.registry
