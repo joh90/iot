@@ -50,6 +50,9 @@ class LastAction:
     prev_feature: str | None
 
 
+ANY_SEQ = object()          # send_ac_state: no "still the latest?" check
+
+
 class DeviceService:
     def __init__(self, registry: Registry, hub: BroadlinkHub, events: JsonlLog,
                  ac: AcService | None = None):
@@ -99,14 +102,23 @@ class DeviceService:
 
     @_tracked
     async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
-                            request_id: str | None = None, source: str | None = None) -> Result:
-        """Send a full AC state to a managed AC (built by the encoder, never a capture)."""
+                            request_id: str | None = None, source: str | None = None,
+                            expect_seq: int | None | object = ANY_SEQ) -> Result:
+        """Send a full AC state to a managed AC (built by the encoder, never a capture).
+        `expect_seq`: send only if the device's latest action is still that one (None: no
+        action yet), checked under the AC lock so a schedule firing just before is never
+        overwritten by a chat card or its Undo. Fails `changed_since`, nothing sent."""
         device = self.get(device_id)
         if device is None:
             return Result.fail("device_not_found", f"Device '{device_id}' not found.")
         if not (self.ac and self.ac.manages(device.id)):
             return Result.fail("not_supported", f"{device.id} cannot be set to an AC state.")
         async with self.ac.lock(device.id):
+            if expect_seq is not ANY_SEQ:
+                latest = self.last.get(device.id)
+                if (latest.seq if latest else None) != expect_seq:
+                    who = f" by {latest.actor}" if latest else ""
+                    return Result.fail("changed_since", f"{device.id} was changed since{who}.")
             prev = self.ac.last(device.id)
             r = await self._run(device, SET_STATE, actor, request_id, source, state)
             return _with_prev(r, prev)

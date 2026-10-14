@@ -168,6 +168,9 @@ async def _prepare(actions: list[Action]) -> dict[tuple[str, str], str]:
             a.prepared = await a.tool.prepare(a.args)
         except ArgError as e:
             refused[(a.tool.name, _key(a.args))] = str(e)
+        except Exception as e:  # noqa: BLE001 -- a prepare bug is a refused call, not a crashed turn
+            logger.exception("Preparing %s failed", a.tool.name)
+            refused[(a.tool.name, _key(a.args))] = f"could not prepare this ({e.__class__.__name__})"
     return refused
 
 
