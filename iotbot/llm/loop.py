@@ -29,6 +29,7 @@ MAX_RESULT_CHARS = 4000
 class Action:
     tool: Tool
     args: dict[str, Any]
+    prepared: Any = None                        # the card line (llm.cards.Prepared), if the tool prepares
 
 
 @dataclass(slots=True)
@@ -130,8 +131,16 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             if len(actions) > MAX_WRITES:
                 out.kind, out.error = "failed", "too_many"
                 return
-            out.kind, out.actions = "actions", actions
-            return
+            refused = await _prepare(actions)
+            if not refused:
+                out.kind, out.actions = "actions", actions
+                return
+            # Back to the model, e.g. "bed_ac is off"; the other writes are "not done" this round
+            for c in checked:
+                if c.tool and (c.tool.name, _key(c.args)) in refused:
+                    c.error = refused[(c.tool.name, _key(c.args))]
+            out.tool_calls = out.tool_calls[:-len(checked)] + [
+                (c.tool.name if c.tool else "?") + ("!" if c.error else "") for c in checked]
         if out.rounds > MAX_TOOL_ROUNDS:
             break                                # it wants yet another tool round
 
@@ -147,6 +156,23 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 result = await _run_read(c.tool, c.args)        # type: ignore[arg-type]
             messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
     out.kind, out.error = "failed", "rounds"
+
+
+async def _prepare(actions: list[Action]) -> dict[tuple[str, str], str]:
+    """Build every card line. Returns {(tool, args): reason} for the calls that cannot be done."""
+    refused = {}
+    for a in actions:
+        if a.tool.prepare is None:
+            continue
+        try:
+            a.prepared = await a.tool.prepare(a.args)
+        except ArgError as e:
+            refused[(a.tool.name, _key(a.args))] = str(e)
+    return refused
+
+
+def _key(args: dict[str, Any] | None) -> str:
+    return json.dumps(args, sort_keys=True)
 
 
 async def _run_read(tool: Tool, args: dict[str, Any]) -> str:

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import html
+import logging
 
-from telegram import InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InaccessibleMessage, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, TelegramError
+
+logger = logging.getLogger(__name__)
 
 
 def h(value: object) -> str:
@@ -82,3 +86,29 @@ async def reply(update: Update, text: str, markup: InlineKeyboardMarkup | None =
     for i, part in enumerate(parts):
         await msg.reply_text(part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
                              reply_markup=markup if i == len(parts) - 1 else None)
+
+
+async def safe_edit(query: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> bool:
+    """Edit the button message in place; tolerate double taps and old messages (B27, B28)."""
+    msg = query.message
+    if msg is None or isinstance(msg, InaccessibleMessage):
+        # Too old or inaccessible: send a fresh message instead
+        await dm(query, text, markup)
+        return False
+    try:
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return True
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return False
+        raise
+
+
+async def dm(query: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
+    if not query.from_user:
+        return
+    try:
+        await query.get_bot().send_message(query.from_user.id, text, parse_mode=ParseMode.HTML,
+                                           reply_markup=markup, disable_web_page_preview=True)
+    except TelegramError as e:  # e.g. Forbidden: the user never opened a private chat
+        logger.info("Could not message user %s: %s", query.from_user.id, e)

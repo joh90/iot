@@ -10,13 +10,16 @@ import asyncio
 import contextlib
 import logging
 
-from telegram import Update
-from telegram.constants import ChatAction
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction, ParseMode
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from iotbot import telemetry
-from iotbot.bot.text import h, reply
+from iotbot.bot.callbacks import encode
+from iotbot.bot.text import b, h, popup, reply, safe_edit
 from iotbot.llm.assistant import MAX_INPUT_CHARS, Assistant, Outcome
+from iotbot.llm.cards import CARD_TTL_S, Card, CardError, Done, Prepared
 from iotbot.result import Actor
 
 logger = logging.getLogger(__name__)
@@ -86,10 +89,118 @@ def _outcome(o: Outcome) -> str:
     return o.turn.error if o.kind == "failed" and o.turn and o.turn.error else o.kind
 
 
+# ---- confirm cards (4.3) -----------------------------------------------------------------
+
+NS = "lc"
+
+
+def _btn(label: str, op: str, card: Card) -> InlineKeyboardButton:
+    return InlineKeyboardButton(label, callback_data=encode(NS, op, card.id))
+
+
+def _lines(card: Card, marks: list[str] | None = None) -> list[str]:
+    return [f"- {b(p.name)}: {h(p.line)}" + (f"  {h(marks[i])}" if marks and marks[i] else "")
+            for i, p in enumerate(card.items)]
+
+
+def card_screen(card: Card) -> tuple[str, InlineKeyboardMarkup]:
+    text = "Do this?\n" + "\n".join(_lines(card)) + f"\nExpires in {CARD_TTL_S // 60} min."
+    return text, InlineKeyboardMarkup([[_btn("Do it", "do", card), _btn("Cancel", "x", card)]])
+
+
+def _mark(r: Done | None) -> str:
+    if r is None:
+        return ""
+    return "ok" if r.ok else f"FAILED ({r.text})"
+
+
+def result_screen(card: Card, who: str, at: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    ok = sum(1 for r in card.results if r and r.ok)
+    head = f"Done (by {h(who)}, {at}):" if ok == len(card.items) else f"Done ({ok} of {len(card.items)}):"
+    text = head + "\n" + "\n".join(_lines(card, [_mark(r) for r in card.results]))
+    row = []
+    if any(r and not r.ok for r in card.results):
+        row.append(_btn("Retry failed", "retry", card))
+    if any(r and r.ok and r.undo for r in card.results):
+        row.append(_btn("Undo", "undo", card))
+    return text, InlineKeyboardMarkup([row]) if row else None
+
+
+def closed_screen(card: Card, why: str) -> str:
+    return h(why) + "\n" + "\n".join(_lines(card))
+
+
+def _context_note(card: Card, note: str, marks: list[str] | None = None) -> None:
+    if card.context is not None:
+        card.context["content"] = note + "\n" + "\n".join(
+            f"- {p.name}: {p.line}" + (f" ({marks[i]})" if marks and marks[i] else "")
+            for i, p in enumerate(card.items))
+
+
 async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant: Assistant,
                        actor: Actor, text: str, o: Outcome) -> None:
-    """Placeholder until 4.3 draws confirm cards: lists the actions, runs nothing."""
-    lines = [f"- {a.tool.name} {a.args}" for a in o.turn.actions] if o.turn else []
-    said = "Proposed (not done):\n" + "\n".join(lines)
-    assistant.remember(actor.user_id, text, said)
-    await reply(update, h(said))
+    items = [a.prepared for a in o.turn.actions] if o.turn else []
+    if not items or any(not isinstance(p, Prepared) for p in items):
+        # A write tool without a card line is a coding mistake: never run it blind
+        logger.error("Chat action without a card line: %s", [a.tool.name for a in o.turn.actions])
+        telemetry.note(outcome="bug", error="no card line")
+        await reply(update, h(FAILED_OTHER))
+        return
+    card, replaced = assistant.cards.new(actor.user_id, items)
+    body, markup = card_screen(card)
+    sent = await update.effective_message.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
+    card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
+    card.context = assistant.remember(actor.user_id, text, "")
+    _context_note(card, "Card shown, waiting for the person to tap Do it:")
+    for old in replaced:
+        _context_note(old, "Card replaced by a newer request; nothing was done:")
+        if old.chat_id is not None and old.message_id is not None:
+            with contextlib.suppress(TelegramError):
+                await context.bot.edit_message_text(closed_screen(old, "Replaced by your newer request; nothing "
+                                                                       "was done."), chat_id=old.chat_id,
+                                                    message_id=old.message_id, parse_mode=ParseMode.HTML)
+
+
+async def card_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                      assistant: Assistant | None, actor: Actor, op: str, args: list[str]) -> None:
+    if assistant is None or not args:
+        await query.answer("This button is no longer active.")
+        return
+    cards = assistant.cards
+    try:
+        card = cards.get(args[0], actor.user_id)
+        if op == "x":
+            cards.cancel(card)
+        else:
+            cards.begin(card, op)               # every refusal happens here, before the one answer
+    except CardError as e:
+        telemetry.note(outcome="refused")
+        await query.answer(popup(str(e)), show_alert=True)
+        card = cards.cards.get(args[0])
+        if card is not None and card.user_id == actor.user_id and card.status in ("expired", "replaced"):
+            await safe_edit(query, closed_screen(card, str(e)))
+        return
+    if op == "x":
+        _context_note(card, "Card cancelled by the person; nothing was done:")
+        telemetry.note(outcome="cancelled")
+        await query.answer("Cancelled.")
+        await safe_edit(query, closed_screen(card, "Cancelled; nothing was done."))
+        return
+    await query.answer("Working on it...")
+    results = await cards.run(card, op, actor)
+    now = assistant.now().strftime("%H:%M")
+    _note_results(results)
+    if op == "undo":
+        marks = ["not done, nothing to undo" if r is None else _mark(r) for r in results]
+        _context_note(card, "The person tapped Undo:", marks)
+        text = f"Undone (by {h(actor.name)}, {now}):\n" + "\n".join(_lines(card, marks))
+        retry = InlineKeyboardMarkup([[_btn("Undo again", "undo", card)]]) if card.status == "done" else None
+        await safe_edit(query, text, retry)
+        return
+    _context_note(card, "The person tapped Do it:", [_mark(r) for r in card.results])
+    await safe_edit(query, *result_screen(card, actor.name, now))
+
+
+def _note_results(results: list[Done | None]) -> None:
+    failed = [r.text for r in results if r is not None and not r.ok]
+    telemetry.note(outcome="ok" if not failed else "failed", error=failed[0] if failed else None)

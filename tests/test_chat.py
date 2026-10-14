@@ -13,7 +13,6 @@ from iotbot.llm import assistant as asst
 from iotbot.llm.assistant import Assistant, Outcome
 from iotbot.llm.client import LlmClient
 from iotbot.llm.loop import TurnResult
-from iotbot.llm.tools import Tool
 from iotbot.result import Actor
 from tests.test_ac_service import make_ctx
 from tests.test_bot import ME, make_update, replied
@@ -177,16 +176,6 @@ async def test_strangers_and_groups_never_reach_the_llm(tmp_path):
         await hd.on_text(u, tg_context(ctx))
         assert not u.effective_message.reply_text.called
     assert srv.requests == []
-
-
-async def test_actions_are_listed_not_run_until_cards_exist(tmp_path):
-    ctx = make_ctx(tmp_path)
-    write = Tool("set_ac", "", {"type": "object", "properties": {"device": {"type": "string"}}}, write=True)
-    ctx.assistant.add_tools(lambda actor: [write])
-    ctx.assistant.llm = FakeServer([completion(calls=[call("set_ac", {"device": "bed_ac"})])]).client()
-    u = say("off the bedroom ac")
-    await hd.on_text(u, tg_context(ctx))
-    assert "Proposed (not done)" in replied(u) and ctx.sent == []
 
 
 async def test_llm_slot_minus_one_means_any_slot(tmp_path):
