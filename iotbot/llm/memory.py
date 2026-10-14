@@ -21,6 +21,7 @@ import secrets
 import time
 from collections.abc import Callable
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -92,8 +93,9 @@ def empty() -> dict[str, Any]:
     return {"people": {}, "house": []}
 
 
-STOP = frozenset("a an the i me my you your is are was be to of in on at it its this that and or for with "
-                 "please can could would will do does did".split())
+STOP = frozenset({"a", "an", "the", "i", "me", "my", "you", "your", "is", "are", "was", "be", "to", "of", "in",
+                  "on", "at", "it", "its", "this", "that", "and", "or", "for", "with", "please", "can", "could",
+                  "would", "will", "do", "does", "did"})
 
 
 def _h(x: str) -> str:
@@ -107,7 +109,7 @@ def _words(text: str) -> list[str]:
 def fingerprint(text: str) -> dict[str, list[str]]:
     """Hashed word pairs and content words: enough to recognise a note, not to read it back."""
     words = _words(text)
-    grams = [f"{a} {b}" for a, b in zip(words, words[1:]) if not (a in STOP and b in STOP)]
+    grams = [f"{a} {b}" for a, b in pairwise(words) if not (a in STOP and b in STOP)]
     return {"pairs": sorted({_h(g) for g in grams}),
             "words": sorted({_h(w) for w in words if w not in STOP})}
 
