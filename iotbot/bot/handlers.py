@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
 from telegram import Bot, CallbackQuery, InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatType, ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
@@ -21,7 +21,8 @@ from iotbot.bot import keyboards as kb
 from iotbot.bot import stats
 from iotbot.bot import wizard as wz
 from iotbot.bot.callbacks import decode, encode
-from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup
+from iotbot.bot.chat import on_chat
+from iotbot.bot.text import NOT_ALLOWED, START, b, h, human_duration, popup, reply, split_text
 from iotbot.context import AppContext
 from iotbot.result import Actor, Result, Surface
 from iotbot.schedule import notify as sn
@@ -63,41 +64,6 @@ def restricted(func: Handler) -> Handler:
         return None
 
     return wrapper
-
-
-MAX_TEXT = 4000  # Telegram limit is 4096; keep headroom
-
-
-def split_text(text: str, limit: int = MAX_TEXT) -> list[str]:
-    """Split on line boundaries. Every line we build has balanced tags, so no tag is cut."""
-    chunks: list[str] = []
-    cur = ""
-    for line in text.split("\n"):
-        while len(line) > limit:  # a single huge line: hard cut (plain text only in practice)
-            if cur:
-                chunks.append(cur)
-                cur = ""
-            chunks.append(line[:limit])
-            line = line[limit:]
-        candidate = f"{cur}\n{line}" if cur else line
-        if len(candidate) > limit:
-            chunks.append(cur)
-            cur = line
-        else:
-            cur = candidate
-    if cur or not chunks:
-        chunks.append(cur)
-    return chunks
-
-
-async def reply(update: Update, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
-    msg = update.effective_message
-    if msg is None:
-        return
-    parts = split_text(text)
-    for i, part in enumerate(parts):
-        await msg.reply_text(part, parse_mode=ParseMode.HTML, disable_web_page_preview=True,
-                             reply_markup=markup if i == len(parts) - 1 else None)
 
 
 async def reply_result(update: Update, r: Result) -> None:
@@ -691,17 +657,31 @@ async def schedule_line(update: Update, context: ContextTypes.DEFAULT_TYPE, w: w
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Plain text: only used as the answer to "Type a time". Never answers anyone else
-    (not restricted-with-reply: that would answer every stranger and group message)."""
-    w = wizard_of(context)
+    """Plain text from approved users. If the wizard waits for a time and this is one, the
+    wizard takes it; otherwise the wizard stops waiting and, in a private chat, the text goes
+    to the assistant. Strangers and groups get no reply (that would answer every message)."""
     msg = update.effective_message
     user = update.effective_user
-    if w is None or msg is None or user is None or not getattr(msg, "text", None):
+    if msg is None or user is None or not getattr(msg, "text", None):
         return
-    if not app_ctx(context).users.is_allowed(user.id):
+    ctx = app_ctx(context)
+    if not ctx.users.is_allowed(user.id):
         return
+    chat = update.effective_chat
+    w = wizard_of(context)
+    if w is not None and w.waiting_for(user.id, chat.id if chat else None):
+        if wz.parse_time(msg.text) is not None:
+            await _wizard_text(update, context, w, msg.text)
+            return
+        w.awaiting.pop(user.id, None)
+    if chat is None or chat.type != ChatType.PRIVATE:
+        return
+    await on_chat(update, context, ctx.assistant, actor_of(update, ctx, "llm"), msg.text)
+
+
+async def _wizard_text(update: Update, context: ContextTypes.DEFAULT_TYPE, w: wz.Wizard, text: str) -> None:
     actor = actor_of(update, app_ctx(context), "button")
-    d, screen, note = await w.typed(actor, msg.text)
+    d, screen, note = await w.typed(actor, text)
     if d is None and not note:
         return
     if note:

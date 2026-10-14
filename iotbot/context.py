@@ -12,6 +12,8 @@ from iotbot.ac.state import AcStateStore
 from iotbot.config import Settings
 from iotbot.devices.hub import BroadlinkHub, Expected, Transport
 from iotbot.devices.model import Registry, load_registry
+from iotbot.llm.assistant import Assistant
+from iotbot.llm.client import LlmClient
 from iotbot.schedule.notify import Notifier
 from iotbot.schedule.runner import Scheduler
 from iotbot.schedule.service import ScheduleService
@@ -36,6 +38,7 @@ class AppContext:
     scheduler: Scheduler | None = None
     notifier: Notifier | None = None
     tracker: Tracker | None = None
+    assistant: Assistant | None = None          # None: LLM_ENABLED=off
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -49,6 +52,11 @@ def expected_devices(reg: Registry) -> list[Expected]:
         if d.kind == "plug":
             out.setdefault(d.mac, Expected(d.mac, d.id, d.bl_type))
     return list(out.values())
+
+
+def assistant_devices(reg: Registry, ac: AcService | None) -> list[str]:
+    """The devices the assistant may use: managed aircons only (toggle IR stays button-only)."""
+    return [f"{d.id}: aircon in room '{d.room}'" for d in reg.devices.values() if ac and ac.manages(d.id)]
 
 
 def build_context(settings: Settings, transport: Transport | None = None) -> AppContext:
@@ -120,10 +128,17 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     notifier = Notifier(schedules, scheduler, recipients)
     scheduler.notify = notifier.on_fire
 
+    assistant = None
+    if settings.llm_enabled:
+        llm = LlmClient(settings.llm_url, None if settings.llm_slot == -1 else settings.llm_slot)
+        assistant = Assistant(llm, lambda: assistant_devices(registry, ac), settings.timezone)
+    else:
+        logger.info("LLM_ENABLED=off: the chat assistant is switched off")
+
     ctx = AppContext(
         settings=settings, registry=registry, hub=hub,
         devices=devices, users=users, ac=ac,
-        schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker,
+        schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant,
         warnings=warnings,
     )
     for w in warnings:

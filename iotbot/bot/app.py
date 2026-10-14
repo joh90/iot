@@ -129,6 +129,8 @@ def build_application(ctx: AppContext) -> Application:
         # Before the bot shuts down, so a last fire can still send its notice
         if ctx.scheduler:
             await ctx.scheduler.stop()
+        if ctx.assistant:
+            await ctx.assistant.llm.aclose()
 
     app = (
         Application.builder()
@@ -157,7 +159,7 @@ def register(app: Application) -> None:
                        ("adduser", hd.cmd_adduser), ("schedule", hd.cmd_schedule),
                        ("stats", hd.cmd_stats)):
         app.add_handler(CommandHandler(name, func, filters=new_only))
-    # Plain text is only read as the answer to the wizard's "Type a time"
+    # Plain text: the wizard's "Type a time", else the chat assistant (private chats only)
     app.add_handler(MessageHandler(new_only & filters.TEXT & ~filters.COMMAND, hd.on_text))
     app.add_handler(CallbackQueryHandler(hd.on_button))
     app.add_error_handler(hd.on_error)

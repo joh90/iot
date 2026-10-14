@@ -109,10 +109,10 @@ async def test_typed_time_and_once_off(bot):
     await bot.tap("Just once")
     note = await bot.tap("Type a time")
     assert "Send the time" in note
-    u = await bot.say("nonsense")
-    assert "not a time, so I stopped waiting" in replied(u)
-    u = await bot.say("1:30am")                       # no longer waiting
-    assert not u.effective_message.reply_text.called and not bot.context.bot.edit_message_text.called
+    u = await bot.say("nonsense")                     # not a time: the wizard stops waiting, chat gets it
+    assert "assistant is not reachable" in replied(u)
+    u = await bot.say("1:30am")                       # no longer waiting: chat again
+    assert "assistant is not reachable" in replied(u) and not bot.context.bot.edit_message_text.called
     await bot.tap("Type a time")
     await bot.say("1:30am")
     (text,), kw = bot.context.bot.edit_message_text.call_args
@@ -124,8 +124,13 @@ async def test_typed_time_and_once_off(bot):
     assert t.is_timer and t.action == sm.Off() and t.when.at == datetime(2026, 10, 11, 1, 30, tzinfo=SGT)
 
 
-async def test_text_without_a_waiting_draft_is_ignored(bot):
+async def test_text_without_a_waiting_draft_goes_to_chat_in_private_only(bot):
     u = await bot.say("hello")
+    assert "assistant is not reachable" in replied(u)
+    u = make_update(ME)
+    u.effective_message.text = "hello"
+    u.effective_chat.type = "group"
+    await hd.on_text(u, bot.context)
     assert not u.effective_message.reply_text.called
 
 
@@ -385,8 +390,8 @@ async def test_tap_ends_type_a_time(bot):
     await bot.tap("Repeat on days")
     await bot.tap("Type a time")
     await bot.tap("22:00")                             # changed their mind
-    u = await bot.say("7")
-    assert not u.effective_message.reply_text.called
+    u = await bot.say("7")                             # no longer waiting: chat, not the wizard
+    assert "assistant is not reachable" in replied(u)
     assert bot.context.application.bot_data["wizard"].drafts and "on which days" in bot.text
 
 
