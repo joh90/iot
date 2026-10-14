@@ -14,6 +14,7 @@ Stored in `<state dir>/memory.json`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -39,6 +40,7 @@ MAX_HOUSE = 30
 MAX_RECIPES = 10
 MAX_STEPS = 10
 MAX_TEXT = 200
+MAX_FORGOTTEN = 300
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 '-]{0,29}")   # stored lowercase
 ID_RE = re.compile(r"[fhr][0-9a-f]{6}")
 # Notes that try to steer the assistant instead of describing the home (refused on save)
@@ -66,6 +68,12 @@ def validate_memory(data: Any) -> None:
             raise ValueError(f"memory.json: bad {where}")
 
     items(data["house"], ("id", "text"), "house notes")
+    fg = data.get("forgotten", [])
+    if not isinstance(fg, list) or not all(
+            isinstance(f, dict) and isinstance(f.get("id"), str)
+            and all(isinstance(f.get(k, []), list) and all(isinstance(x, str) for x in f.get(k, []))
+                    for k in ("pairs", "words")) for f in fg):
+        raise ValueError("memory.json: bad forgotten list")
     ids = [x["id"] for x in data["house"]] + [x["id"] for p in data["people"].values() if isinstance(p, dict)
                                               for k in ("facts", "recipes") for x in p.get(k, []) if isinstance(x, dict)]
     if len(ids) != len(set(ids)):
@@ -82,6 +90,40 @@ def validate_memory(data: Any) -> None:
 
 def empty() -> dict[str, Any]:
     return {"people": {}, "house": []}
+
+
+STOP = frozenset("a an the i me my you your is are was be to of in on at it its this that and or for with "
+                 "please can could would will do does did".split())
+
+
+def _h(x: str) -> str:
+    return hashlib.sha256(x.encode()).hexdigest()[:10]
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def fingerprint(text: str) -> dict[str, list[str]]:
+    """Hashed word pairs and content words: enough to recognise a note, not to read it back."""
+    words = _words(text)
+    grams = [f"{a} {b}" for a, b in zip(words, words[1:]) if not (a in STOP and b in STOP)]
+    return {"pairs": sorted({_h(g) for g in grams}),
+            "words": sorted({_h(w) for w in words if w not in STOP})}
+
+
+def mentions_forgotten(text: str, forgotten: list[dict[str, set[str]]]) -> bool:
+    """Long notes: 3 shared pairs (or all, if fewer). Short notes (2 pairs or less): every
+    content word appears, so "the door code is 4821" still hides "door code 4821"."""
+    fp = fingerprint(text)
+    mine_pairs, mine_words = set(fp["pairs"]), set(fp["words"])
+    for f in forgotten:
+        p, w = f["pairs"], f["words"]
+        if p and len(mine_pairs & p) >= min(3, len(p)):
+            return True
+        if len(p) <= 2 and w and w <= mine_words:
+            return True
+    return False
 
 
 def check_text(text: str) -> str:
@@ -146,6 +188,10 @@ class Memory:
                     return kind, it
         return None
 
+    def forgotten(self) -> list[dict[str, set[str]]]:
+        return [{"pairs": set(f["pairs"]), "words": set(f.get("words", []))}
+                for f in self.store.data.get("forgotten", [])]
+
     def version(self, user_id: int) -> tuple[Any, ...]:
         """Changes when this person's memory or the house facts change (stale cards)."""
         return (len(self.facts(user_id)), len(self.recipes(user_id)), len(self.house()),
@@ -180,6 +226,9 @@ class Memory:
                 raise MemoryWriteError("memory is full; forget something first (/memory)")
             nid = self._new_id("h" if house else "f", data)
             item = {"id": nid, "text": text, "at": now}
+            fp = fingerprint(text)                   # saved again: no longer forgotten
+            data["forgotten"] = [f for f in data.get("forgotten", [])
+                                 if (f["pairs"], f.get("words")) != (fp["pairs"], fp["words"])]
             if house:
                 item |= {"by": actor.user_id, "by_name": actor.name}
             items.append(item)
@@ -204,14 +253,20 @@ class Memory:
         return await self.store.update(apply)
 
     async def remove(self, user_id: int, item_id: str) -> dict[str, Any] | None:
-        """Forget one item this person may change; returns it (for Undo) or None."""
+        """Forget one item this person may change; returns it (for Undo) or None. A forgotten
+        note leaves hashed word pairs (never its text), so the diary can hide old messages
+        that said it (best effort); an Undo takes them back."""
 
         def apply(data: dict[str, Any]) -> dict[str, Any] | None:
             me = data["people"].get(str(user_id), {})
             for items in (me.get("facts", []), me.get("recipes", []), data["house"]):
                 for i, it in enumerate(items):
                     if it["id"] == item_id:
-                        return items.pop(i)
+                        gone = items.pop(i)
+                        if "text" in gone:
+                            data.setdefault("forgotten", []).append({"id": gone["id"], **fingerprint(gone["text"])})
+                            data["forgotten"] = data["forgotten"][-MAX_FORGOTTEN:]
+                        return gone
             return None
 
         return await self.store.update(apply)
@@ -230,6 +285,7 @@ class Memory:
             if any(i["id"] == item["id"] or i.get(key) == item.get(key) for i in items) or len(items) >= cap:
                 return False
             items.append(item)
+            data["forgotten"] = [f for f in data.get("forgotten", []) if f["id"] != item["id"]]
             return True
 
         return await self.store.update(apply)

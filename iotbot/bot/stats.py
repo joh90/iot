@@ -12,14 +12,12 @@ import math
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from datetime import datetime
 from typing import Any
 
 import httpx
 
 from iotbot.bot.text import b, h
 from iotbot.devices.model import Registry
-from iotbot.store import JsonlLog
 
 DEFAULT_DAYS, MAX_DAYS = 7, 365
 FAST_MS = 300            # PLAN.md speed target: slash -> IR send under 300 ms
@@ -36,24 +34,6 @@ TURN_KEYS = ("surface", "total_ms", "outcome", "allowed", "user_id", "lag_s",
 CHAT_FAILS = {"down": "PC off or unreachable", "busy": "PC busy", "timeout": "too slow", "llm_off": "switched off"}
 EVENT_KEYS = ("device", "ms", "ok", "surface", "user_id", "error", "maybe_delivered")
 NOT_WORK = ("denied", "dropped_offline")   # never reached a handler: no speed to measure
-
-
-def read_since(log: JsonlLog, since: datetime, now: datetime,
-               keys: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
-    """Every record from `since` to `now`, reading only the monthly files in that range.
-    `keys`: keep only these fields of each record."""
-    out: list[dict[str, Any]] = []
-    y, m = since.astimezone(log.tz).year, since.astimezone(log.tz).month
-    end = (now.astimezone(log.tz).year, now.astimezone(log.tz).month)
-    while (y, m) <= end:
-        for rec in log.read_month(y, m):
-            try:
-                if datetime.fromisoformat(rec["ts"]) >= since:
-                    out.append({k: rec.get(k) for k in keys} if keys else rec)
-            except (KeyError, TypeError, ValueError, AttributeError):
-                continue                     # a line without a usable timestamp
-        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-    return out
 
 
 def pct(values: list[float], p: float) -> float:
