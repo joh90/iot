@@ -58,3 +58,17 @@ def test_missing_token_names_env_path(tmp_path, monkeypatch):
 def test_bad_timezone_rejected():
     with pytest.raises(ConfigError, match="timezone"):
         load_settings(environ={"BOT_TOKEN": "1:x", "TZ_NAME": "Mars/Base"})
+
+
+def test_llm_settings_default_and_parse(tmp_path):
+    s = load_settings(environ={"BOT_TOKEN": "1:x"}, base_dir=tmp_path)
+    assert s.llm_enabled is True and s.llm_slot == 1
+    s = load_settings(environ={"BOT_TOKEN": "1:x", "LLM_ENABLED": "OFF", "LLM_SLOT": "-1"}, base_dir=tmp_path)
+    assert s.llm_enabled is False and s.llm_slot == -1
+
+
+@pytest.mark.parametrize("env", [{"LLM_ENABLED": "yes"}, {"LLM_SLOT": "x"}, {"LLM_SLOT": "-2"},
+                                 {"LLM_URL": "127.0.0.1:8001"}])
+def test_bad_llm_settings_rejected(env):
+    with pytest.raises(ConfigError):
+        load_settings(environ={"BOT_TOKEN": "1:x", **env})

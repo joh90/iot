@@ -250,6 +250,10 @@ Planned over 11 question rounds plus an independent plan audit. Replaces the L1-
 | Holidays       | Read-only 'is X a public holiday' from the MOM list (cached); NO schedule skip logic                                                                                         |
 | Telemetry      | turns: llm_ms, tokens, model, tool calls, confirm outcome; llm-YYYY-MM-DD.jsonl full request/response, kept 90 days, for replay evals                                        |
 | Times          | LLM outputs plain fields (HH:MM, date/days, in_minutes); code resolves in TZ_NAME and reuses the wizard Draft/preview/plan/apply                                             |
+| AC off + temp  | 'make it 23' when the record says off: card shows 'turn ON, cool 23'; a full-state send is right whether the AC is really off or on                                          |
+| Chat schedules | Create, list, edit, pause, delete (wave 1); several matches -> bot lists them and asks; edit card shows before -> after                                                      |
+| Undo detail    | AC: re-send the previous full state (real IR); schedule: delete created / restore deleted or edited; newest pending card wins, older -> 'Replaced'                           |
+| Wave 1 testing | Unit tests on a fake LLM + ~25 real phrases against Qwen with devices stubbed (no IR); user tests live after ship                                                            |
 | Later          | 6.6 speed after Phase 4; habit nudges ('turn it on?') + daily brief in Phase 7; voice much later; no proactive outside alerts ever                                           |
 
 ### 4.0 spike results (2026-10-13)

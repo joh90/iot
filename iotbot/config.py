@@ -31,6 +31,10 @@ class Settings:
     ac_encoder: bool = True
     # The PC llama-server through the SSH tunnel (README "Tunnel to the LLM PC")
     llm_url: str = "http://127.0.0.1:8001"
+    # Phase 4 chat assistant. Off: free text gets a one-line reply (the wizard still works)
+    llm_enabled: bool = True
+    # llama-server slot the bot pins to (slot 0 is left for the owner); -1 = let the server pick
+    llm_slot: int = 1
 
 
 def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
@@ -78,6 +82,20 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
     if ac_raw not in ("on", "off"):
         raise ConfigError(f"AC_ENCODER must be 'on' or 'off', got '{ac_raw}'")
 
+    llm_raw = (environ.get("LLM_ENABLED") or "on").strip().lower()
+    if llm_raw not in ("on", "off"):
+        raise ConfigError(f"LLM_ENABLED must be 'on' or 'off', got '{llm_raw}'")
+    try:
+        llm_slot = int(environ.get("LLM_SLOT") or 1)
+    except ValueError:
+        raise ConfigError("LLM_SLOT must be a whole number (-1 = any slot)") from None
+    if llm_slot < -1:
+        raise ConfigError("LLM_SLOT must be -1 or more")
+
+    llm_url = (environ.get("LLM_URL") or "http://127.0.0.1:8001").strip().rstrip("/")
+    if not llm_url.startswith(("http://", "https://")):
+        raise ConfigError(f"LLM_URL must start with http:// or https://, got '{llm_url}'")
+
     tz = environ.get("TZ_NAME") or "Asia/Singapore"
     try:
         ZoneInfo(tz)
@@ -96,5 +114,7 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         discover_timeout=discover_timeout,
         log_level=(environ.get("LOG_LEVEL") or "INFO").upper(),
         ac_encoder=ac_raw == "on",
-        llm_url=(environ.get("LLM_URL") or "http://127.0.0.1:8001").rstrip("/"),
+        llm_url=llm_url,
+        llm_enabled=llm_raw == "on",
+        llm_slot=llm_slot,
     )
