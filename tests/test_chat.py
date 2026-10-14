@@ -294,3 +294,16 @@ async def test_typing_stops_after_the_reply(tmp_path, monkeypatch):
     assert n >= 2
     await asyncio.sleep(0.05)
     assert context.bot.send_chat_action.call_count == n
+
+
+def test_answers_lose_echoed_stamps_and_markdown():
+    assert asst.clean_answer("[From Alice, Wed 14 Oct 2026 20:00]\nWhich room?") == "Which room?"
+    assert asst.clean_answer("Two:\n* **Office**: off\n  - bed on") == "Two:\n- Office: off\n- bed on"
+    assert asst.clean_answer("Two:\n\n- a") == "Two:\n\n- a"                   # blank lines stay
+
+
+async def test_an_answer_that_is_only_a_stamp_is_a_failure():
+    a, _ = make_assistant([completion("[From Alice, Wed 14 Oct 2026 20:00]")])
+    o = await a.handle(ALICE, "hi")
+    assert (o.kind, o.turn.error) == ("failed", "empty") and a.context(ME) == []
+    assert len(a.recent[ME]) == 0                                            # not counted

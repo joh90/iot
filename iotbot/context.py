@@ -14,6 +14,7 @@ from iotbot.devices.hub import BroadlinkHub, Expected, Transport
 from iotbot.devices.model import Registry, load_registry
 from iotbot.llm.assistant import Assistant
 from iotbot.llm.client import LlmClient
+from iotbot.llm.home import HomeTools
 from iotbot.schedule.notify import Notifier
 from iotbot.schedule.runner import Scheduler
 from iotbot.schedule.service import ScheduleService
@@ -141,6 +142,8 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant,
         warnings=warnings,
     )
+    if assistant is not None:
+        assistant.add_tools(HomeTools(ctx).tools)
     for w in warnings:
         logger.warning("Config: %s", w)
     return ctx

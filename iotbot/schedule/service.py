@@ -277,6 +277,10 @@ class ScheduleService:
         if resolve not in (None, "keep_both", "replace"):
             return Result.fail("invalid", f"Unknown conflict choice '{resolve}'.")
         now = self.now()
+        if isinstance(plan.schedule.when, Once) and plan.schedule.when.at <= now:
+            # The preview sat too long: a timer saved in the past would never fire
+            return Result.fail("in_the_past", f"{tx.fmt_at(plan.schedule.when.at, now, self.tz)} has already "
+                                              "passed; start again.")
         conflicts, warnings = self.conflicts(plan.schedule)
         current = {c["with"]: c["rev"] for c in conflicts}
         if conflicts and (resolve is None or current != plan.seen):

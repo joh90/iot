@@ -336,13 +336,14 @@ async def test_write_without_card_line_never_runs(tmp_path):
     assert "could not work that out" in replied(u)
 
 
-async def test_unexpected_prepare_error_fails_the_turn():
+async def test_unexpected_prepare_error_goes_back_to_the_model():
     from iotbot.llm import loop as lp
 
     async def prep(args):
         raise RuntimeError("bug")
 
     t = Tool("set", "", {"type": "object", "properties": {}}, write=True, prepare=prep)
-    out = await lp.run_turn(FakeServer([completion(calls=[call("set", {})])]).client(),
-                            [{"role": "user", "content": "x"}], [t])
-    assert (out.kind, out.error, out.actions) == ("failed", "bug", [])
+    srv = FakeServer([completion(calls=[call("set", {})]), completion("Sorry, that did not work.")])
+    out = await lp.run_turn(srv.client(), [{"role": "user", "content": "x"}], [t])
+    assert (out.kind, out.actions, out.tool_calls) == ("answer", [], ["set!"])
+    assert "could not prepare this (RuntimeError)" in srv.requests[1]["messages"][-1]["content"]
