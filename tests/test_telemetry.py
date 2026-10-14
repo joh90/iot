@@ -49,7 +49,7 @@ async def test_turn_written_with_time_and_default_outcome(tmp_path):
         pass
     (t,) = turns(tmp_path)
     assert (t["surface"], t["raw"], t["outcome"], t["total_ms"]) == ("slash", "/ping", "ok", 250)
-    assert t["llm_ms"] is None and "ts" in t
+    assert "llm_ms" not in t and "ts" in t                     # empty fields are left out
 
 
 async def test_crash_is_logged_and_reraised(tmp_path):

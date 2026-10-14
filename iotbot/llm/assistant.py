@@ -8,6 +8,7 @@ All state is in memory: a restart only forgets the last few minutes of chat.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections import deque
@@ -17,9 +18,11 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from iotbot import telemetry
 from iotbot.llm import loop as lp
 from iotbot.llm.cards import Cards
 from iotbot.llm.client import LlmClient
+from iotbot.llm.replay import ReplayLog
 from iotbot.llm.tools import Tool
 from iotbot.result import Actor
 
@@ -83,8 +86,9 @@ ToolProvider = Callable[[Actor], list[Tool]]
 
 class Assistant:
     def __init__(self, llm: LlmClient, devices: Callable[[], list[str]], tz: str,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, replay: ReplayLog | None = None):
         self.llm = llm
+        self.replay = replay
         self.devices = devices                       # one prompt line per device the assistant may use
         self.tz = ZoneInfo(tz)
         self._clock = clock
@@ -93,6 +97,7 @@ class Assistant:
         self.in_flight: set[int] = set()
         self.recent: dict[int, deque[float]] = {}
         self.cards = Cards(clock)
+        self._writes: set[asyncio.Task] = set()
 
     def add_tools(self, provider: ToolProvider) -> None:
         self.providers.append(provider)
@@ -143,6 +148,21 @@ class Assistant:
         q.append(now)
         return 0
 
+    async def drain(self) -> None:
+        """Wait for background replay writes (shutdown, tests)."""
+        if self._writes:
+            await asyncio.gather(*self._writes, return_exceptions=True)
+
+    @staticmethod
+    def _replay_record(actor: Actor, text: str, turn: lp.TurnResult, request_id: str | None) -> dict[str, Any]:
+        return {"request_id": request_id, "user_id": actor.user_id, "name": actor.name,
+                "text": text, "result": turn.kind, "error": turn.error, "answer": turn.text or None,
+                "actions": [{"tool": a.tool.name, "args": a.args,
+                             "line": getattr(a.prepared, "line", None)} for a in turn.actions],
+                "model": turn.model, "rounds": turn.rounds, "llm_ms": turn.llm_ms,
+                "prompt_tokens": turn.prompt_tokens, "completion_tokens": turn.completion_tokens,
+                "tool_calls": turn.tool_calls}
+
     def _refund(self, user_id: int) -> None:
         q = self.recent.get(user_id)
         if q:
@@ -172,5 +192,12 @@ class Assistant:
                 self.remember(uid, text, turn.text)
         if turn.kind == "failed" and turn.error in NOT_COUNTED:
             self._refund(uid)
+        if self.replay is not None and turn.exchanges:
+            # In the background: the reply never waits for the SD card
+            rid = getattr(telemetry.current(), "request_id", None)
+            task = asyncio.create_task(self.replay.write(
+                lambda: self._replay_record(actor, text, turn, rid), turn.exchanges))
+            self._writes.add(task)
+            task.add_done_callback(self._writes.discard)
         # actions: the card code calls remember() with what the card said
         return Outcome(turn.kind, turn.text, turn)

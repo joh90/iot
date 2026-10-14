@@ -16,7 +16,10 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 - `/user` lists approved users with a Remove button; `/adduser <user id> <name>` approves someone
 - `/ping` works for anyone and shows their Telegram user id (needed to approve them)
 - `/stats [days]` shows how fast the bot answers (p50/p95 per surface, share under 300 ms), the slowest
-  remotes, failed sends and who or what sent them, strangers, and whether the LLM PC answers (default 7 days)
+  remotes, failed sends and who or what sent them, strangers, chat assistant use, and whether the LLM PC
+  answers (default 7 days)
+- Plain messages in a private chat go to the chat assistant (see below), e.g. "a bit cooler in the
+  bedroom", "off the office aircon at 7am weekdays", "is the bedroom aircon on?"
 
 A device only gets the actions whose IR codes were captured in `commands.json`, so every button works.
 Only approved Telegram user ids can use the bot; usernames are not checked.
@@ -103,10 +106,10 @@ deploy/docker.sh logs
   the clock is synced (the Pi has no RTC): Telegram TLS fails and is retried until NTP catches up, and
   the first few log timestamps can be wrong.
 
-### 4. Tunnel to the LLM PC (for the coming assistant)
+### 4. Tunnel to the LLM PC (for the chat assistant)
 
 The LLM runs on another machine (llama-server on its `127.0.0.1:8001`). The Pi reaches it with an SSH
-tunnel, so the server never listens on the network. Nothing uses it yet.
+tunnel, so the server never listens on the network. The chat assistant and `/stats` use it.
 
 ```bash
 # on the Pi
@@ -266,6 +269,33 @@ Rules worth knowing:
   aircon frames (full state) are safe to resend, while toggles like TV power are never resent after an
   unclear reply, so the TV is not switched on and off again.
 
+## Chat assistant
+
+Approved users can type to the bot in a private chat. A local model on the PC (whatever llama-server
+has loaded, thinking off) reads the message and picks tools; code does everything else.
+
+- It handles the managed aircons and their schedules: change settings ("a bit cooler" = 1C below what
+  the bot last sent), timers, repeating schedules, edit / pause / resume / delete, and questions such
+  as "is the bedroom aircon on?" or "what's scheduled tonight?". Anything else gets a polite no.
+- Nothing changes until you tap. Every action shows a card drawn by code, "Do this?" with each line as
+  before -> after, and [Do it] [Cancel] for 5 minutes. A newer request replaces your older card. If the
+  device or schedule changed since the card was drawn, Do it refuses and you ask again.
+- After Do it the card shows each line as ok or FAILED, with [Retry failed] and [Undo] for 10 minutes.
+  Undo re-sends the earlier aircon state (or restores the schedule), and refuses a line if something
+  newer happened to it.
+- What it says about an aircon is what the bot last sent; the physical remote is invisible to it.
+- It remembers your last 3 messages and its replies for 10 minutes, so "make it 23 and swing" works
+  as a follow-up.
+- Limits: one message at a time per person, 20 per 10 minutes. If the PC is off or busy you get a
+  one-line reply and can use `/keyboard` as usual.
+- While the wizard waits for "Type a time", a time you type goes to the wizard; anything else goes to
+  the assistant.
+- `LLM_ENABLED=off` in `.env` switches it off. `LLM_SLOT` (default 1) is the llama-server slot it
+  uses, so slot 0 stays free for the PC owner.
+
+Every chat turn that reached the model has its full requests and replies in
+`logs/llm/llm-YYYY-MM-DD.jsonl` (kept 90 days), to replay against a new model or prompt later. Group chats and strangers never reach the model.
+
 ## Usage log
 
 `turns-YYYY-MM.jsonl` has one line per message, button tap or schedule fire: who (strangers too, with
@@ -276,8 +306,8 @@ phrasing to test the LLM assistant against later. The files stay on the Pi and a
 
 ## Coming next
 
-Reminders before schedules and `/prefs`, usage stats, weekly recommendations. The LLM assistant (reached
-over an SSH tunnel to a PC) is still being planned. See PLAN.md.
+Assistant memory (facts, house names, saved recipes) and a diary search, outside weather and haze
+from NEA, public holiday lookups; then weekly reports and reminders before schedules. See PLAN.md.
 
 ## Development
 

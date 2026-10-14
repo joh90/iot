@@ -15,6 +15,7 @@ from iotbot.devices.model import Registry, load_registry
 from iotbot.llm.assistant import Assistant
 from iotbot.llm.client import LlmClient
 from iotbot.llm.home import HomeTools
+from iotbot.llm.replay import ReplayLog
 from iotbot.schedule.notify import Notifier
 from iotbot.schedule.runner import Scheduler
 from iotbot.schedule.service import ScheduleService
@@ -132,7 +133,8 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     assistant = None
     if settings.llm_enabled:
         llm = LlmClient(settings.llm_url, None if settings.llm_slot == -1 else settings.llm_slot)
-        assistant = Assistant(llm, lambda: assistant_devices(registry, ac), settings.timezone)
+        assistant = Assistant(llm, lambda: assistant_devices(registry, ac), settings.timezone,
+                              replay=ReplayLog(settings.log_dir / "llm", settings.timezone))
     else:
         logger.info("LLM_ENABLED=off: the chat assistant is switched off")
 
