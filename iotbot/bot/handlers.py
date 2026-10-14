@@ -197,6 +197,12 @@ def schedule_status(ctx: AppContext, now: datetime) -> list[str]:
 
 
 @restricted
+async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ctx = app_ctx(context)
+    await chat.cmd_memory(update, context, ctx.memory, actor_of(update, ctx, "slash"))
+
+
+@restricted
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = app_ctx(context)
     reg = ctx.registry
@@ -306,6 +312,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _ac_card_button(update, context, query, action[len(AC_CARD):], args)
     elif ns == chat.NS:
         await _card_button(update, context, query, action, args)
+    elif ns == chat.MEM:
+        ctx = app_ctx(context)
+        await chat.memory_button(query, ctx.memory, actor_of(update, ctx, "button"), action, args)
     elif ns in (wz.NS, ap.NS):
         await _wizard_button(update, context, query, ns, action, args)
     else:

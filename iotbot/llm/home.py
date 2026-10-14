@@ -36,6 +36,10 @@ SETTINGS = {
 STATE_NOTE = "This is what the bot last sent. Someone may have used the physical remote since."
 
 
+class AlreadyError(ArgError):
+    """Nothing to change: the device is already like that (a recipe skips such a step)."""
+
+
 def _setting(key: str, raw: Any) -> Any:
     """Tool strings -> AcState values ("3" -> 3 for fan/vane)."""
     return int(raw) if key in ("fan", "vane") and isinstance(raw, str) and raw.isdigit() else raw
@@ -80,20 +84,21 @@ class HomeTools:
                  {"type": "object", "required": ["device"], "properties": {
                      "device": device, "power": {"type": "boolean"},
                      "temp_change": {"type": "integer", "minimum": -5, "maximum": 5}, **SETTINGS}},
-                 write=True, prepare=lambda a: self._prep_ac(actor, a)),
-            Tool("add_schedule", "New timer or repeating schedule. Timer: in_minutes, or at (+ date). "
-                                 "Repeating: at + days. action set = change settings without on/off. "
-                                 "Give temp, fan, vane, powerful and label ONLY if the person said them: "
-                                 "left out, 'on' uses the room's usual settings.",
+                 write=True, prepare=lambda a: self.prepare_ac(actor, a)),
+            Tool("add_schedule", "New timer or repeating schedule. Timer (the default): in_minutes, or at "
+                                 "(+ date). Repeating: at + days, only when the person said a repeat (every "
+                                 "day, weekdays, Mondays). action set = change settings without on/off. Give "
+                                 "temp, fan, vane, powerful ONLY if the person said them: left out, 'on' uses "
+                                 "the room's usual settings.",
                  {"type": "object", "required": ["device", "action"], "properties": {
                      "device": device, "action": {"type": "string", "enum": ["on", "off", "set"]},
                      "at": TIME, "date": DATE,
                      "days": {"type": "array", "minItems": 1, "maxItems": 7,
                               "items": {"type": "string", "enum": list(DAYS)}},
-                     "in_minutes": {"type": "integer", "minimum": 1, "maximum": 1440},
-                     "label": {"type": "string", "maxLength": 40}, **SETTINGS}},
+                     "in_minutes": {"type": "integer", "minimum": 1, "maximum": 1440}, **SETTINGS}},
                  write=True, prepare=lambda a: self._prep_add(actor, a)),
-            Tool("edit_schedule", "Change an existing schedule or timer. Give only what changes.",
+            Tool("edit_schedule", "Change an existing schedule or timer. Give only what changes; label only "
+                                  "when the person asks to rename it.",
                  {"type": "object", "required": ["schedule_id"], "properties": {
                      "schedule_id": SID, "at": TIME, "date": DATE,
                      "days": {"type": "array", "minItems": 1, "maxItems": 7,
@@ -148,7 +153,7 @@ class HomeTools:
     def _version(self, device: str):
         return lambda: getattr(self.ctx.devices.last.get(device), "seq", None)
 
-    async def _prep_ac(self, actor: Actor, args: dict[str, Any]) -> Prepared:
+    async def prepare_ac(self, actor: Actor, args: dict[str, Any]) -> Prepared:
         d = args["device"]
         changes = {k: _setting(k, v) for k, v in args.items() if k in SETTINGS or k == "power"}
         delta = args.get("temp_change")
@@ -172,7 +177,7 @@ class HomeTools:
         except AcStateError as e:
             raise ArgError(str(e)) from None
         if before == after:
-            raise ArgError(f"{d} is already {after.describe()} (as last sent); nothing to change")
+            raise AlreadyError(f"{d} is already {after.describe()} (as last sent); nothing to change")
         line = f"{before.describe() if before else 'unknown'} -> {after.describe()}"
 
         async def run(who: Actor) -> Done:

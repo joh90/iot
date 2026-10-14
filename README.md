@@ -293,6 +293,17 @@ has loaded, thinking off) reads the message and picks tools; code does everythin
 - `LLM_ENABLED=off` in `.env` switches it off. `LLM_SLOT` (default 1) is the llama-server slot it
   uses, so slot 0 stays free for the PC owner.
 
+Memory (`/memory` lists it, with a Forget button per item):
+
+- Notes: tell it something lasting ("the big room is the bedroom", "I sleep at 23 with fan quiet")
+  and it asks "Remember this?" [Remember] [No]. It decides whether a note is about the house (everyone's
+  assistant uses it; anyone can forget it; `/memory` shows who added it) or just you (private). Notes
+  are data for the assistant, never rules: text that tries to tell it how to behave is refused.
+- Recipes: spell out the steps ("save good night: bedroom 25 fan quiet, office off") and tap Save.
+  Saying "good night" later draws the usual card with every step (steps already done are skipped).
+- Limits: 30 notes per person, 30 house notes, 10 recipes per person, 200 characters per note. Stored
+  in `state/memory.json`; a damaged file is moved aside and memory starts empty.
+
 Every chat turn that reached the model has its full requests and replies in
 `logs/llm/llm-YYYY-MM-DD.jsonl` (kept 90 days), to replay against a new model or prompt later. Group chats and strangers never reach the model.
 

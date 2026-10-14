@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 PROBE_TIMEOUT_S = 2.0
-TEMPERATURE = 0.2
+TEMPERATURE = 0.0
 MAX_TOKENS = 400
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 

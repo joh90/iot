@@ -82,7 +82,7 @@ async def test_chat_turn_fields_replay_and_card_tap_join(tmp_path):
     await ctx.assistant.drain()
     rec = next(x for x in lines(next((tmp_path / "logs" / "llm").glob("llm-*.jsonl"))) if x["kind"] == "turn")
     assert rec["request_id"] == "tg:1" and rec["result"] == "actions" and rec["text"] == "off the bedroom ac"
-    assert rec["actions"][0]["line"].endswith("-> OFF (cool 24C fan auto vane auto)")
+    assert rec["actions"][0]["lines"][0].endswith("-> OFF (cool 24C fan auto vane auto)")
 
 
 # ---- /stats --------------------------------------------------------------------------------

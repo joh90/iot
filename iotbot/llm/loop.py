@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,18 @@ MAX_TOOL_ROUNDS = 3
 TURN_TIMEOUT_S = 20.0
 MAX_WRITES = 10                 # bulk cap: the card lists every item
 MAX_RESULT_CHARS = 4000
+SHARED_NAMES = ("note", "forget", "recipe")
+# An answer that claims an action or a card: only a tool call does anything
+CLAIM_RE = re.compile(
+    r"\bcards? (is |are |has been |was )?(shown|sent|ready|below|above|drawn)\b|\[card\b|"
+    r"\btap (do it|remember|save)\b|\bdo this\?|"
+    r"\b(i will|i'll|i am going to|i'm going to|let me) (now )?(turn|set|switch|change|make|run|start|stop)\b|"
+    r"\bturning (it |the \w+ )?(on|off) (now|for you)\b|\b(has|have) been (turned|set|switched|changed)\b|"
+    r"\b(i've|i have|done|ok)[,.!]? .{0,40}\bis now (on|off|set)\b|"
+    r"\b(i've|i have|i will|i'll) (now )?(noted|note|saved|save|remembered|remember|stored|store)\b|"
+    r"\bnoted that\b", re.IGNORECASE)
+# Tool-call markup in plain text: the server's parser missed a (malformed) call
+TOOL_MARKUP_RE = re.compile(r"<tool_call>|</?function[=>]|<parameter=|</tool_call>")
 
 
 @dataclass(slots=True)
@@ -103,6 +116,7 @@ def _check_calls(reply: Reply, by_name: dict[str, Tool]) -> list[Checked]:
 async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool], out: TurnResult) -> None:
     by_name = {t.name: t for t in tools}
     specs = [t.spec() for t in tools]
+    nudged = False
     for _ in range(MAX_TOOL_ROUNDS + 1):
         reply = await llm.chat(messages, specs)
         out.note(reply)
@@ -114,8 +128,30 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             if not reply.content:
                 out.kind, out.error = "failed", "empty"
                 return
-            out.kind, out.text = "answer", reply.content
-            return
+            if CLAIM_RE.search(reply.content):
+                # Text that announces an action or a card, without the tool call: no card exists
+                out.tool_calls.append("claim!")
+                if out.rounds > MAX_TOOL_ROUNDS or nudged:
+                    out.kind, out.error = "failed", "fake_card"
+                    return
+                nudged = True
+                messages += [{"role": "assistant", "content": reply.content},
+                             {"role": "user", "content": "(System: nothing was done or saved and no card "
+                                                         "exists. To change or remember anything, call the "
+                                                         "tool now; otherwise just answer.)"}]
+                continue
+            if not TOOL_MARKUP_RE.search(reply.content):
+                out.kind, out.text = "answer", reply.content
+                return
+            # A tool call the server could not parse came back as text: never show it, retry
+            out.tool_calls.append("?!")
+            if out.rounds > MAX_TOOL_ROUNDS:
+                out.kind, out.error = "failed", "bad_tool_call"
+                return
+            messages += [{"role": "assistant", "content": "(unreadable tool call)"},
+                         {"role": "user", "content": "(System: your last tool call could not be read. "
+                                                     "Call the tool again with valid JSON arguments.)"}]
+            continue
 
         checked = _check_calls(reply, by_name)
         out.tool_calls += [(c.tool.name if c.tool else "?") + ("!" if c.error else "") for c in checked]
@@ -161,11 +197,19 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
 async def _prepare(actions: list[Action]) -> dict[tuple[str, str], str]:
     """Build every card line. Returns {(tool, args): reason} for the calls that cannot be done."""
     refused = {}
+    names: set[str] = set()
     for a in actions:
         if a.tool.prepare is None:
             continue
         try:
             a.prepared = await a.tool.prepare(a.args)
+            lines = a.prepared if isinstance(a.prepared, list) else [a.prepared]
+            # Two lines for one device: the second would always fail at send (stale), so ask to combine.
+            # Memory lines ("note", "forget", "recipe") may repeat.
+            mine = {p.name for p in lines if getattr(p, "name", "") not in SHARED_NAMES}
+            if mine & names:
+                raise ArgError("this card already changes that device; put all its changes in one call")
+            names |= mine
         except ArgError as e:
             refused[(a.tool.name, _key(a.args))] = str(e)
         except Exception as e:  # noqa: BLE001 -- a prepare bug is a refused call, not a crashed turn
