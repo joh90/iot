@@ -76,7 +76,8 @@ async def on_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant:
             await typing
     telemetry.note(intent=f"llm:{o.kind}", outcome=_outcome(o))
     if o.turn and o.turn.rounds:
-        telemetry.note(llm_ms=o.turn.llm_ms, tokens=o.turn.prompt_tokens + o.turn.completion_tokens)
+        telemetry.note(llm_ms=o.turn.llm_ms, tokens=o.turn.prompt_tokens + o.turn.completion_tokens,
+                       model=o.turn.model, tool_calls=o.turn.tool_calls, llm_rounds=o.turn.rounds)
     if o.kind == "actions":
         await show_actions(update, context, assistant, actor, text, o)
         return
@@ -147,6 +148,7 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
         await reply(update, h(FAILED_OTHER))
         return
     card, replaced = assistant.cards.new(actor.user_id, items)
+    telemetry.note(card="shown", card_id=card.id)
     body, markup = card_screen(card)
     sent = await update.effective_message.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
     card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
@@ -167,6 +169,7 @@ async def card_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query:
         await query.answer("This button is no longer active.")
         return
     cards = assistant.cards
+    telemetry.note(card=op, card_id=args[0][:16])
     try:
         card = cards.get(args[0], actor.user_id)
         if op == "x":

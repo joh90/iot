@@ -30,7 +30,10 @@ PROBE_TOTAL_S = 2.0
 # Plain words for the household
 SURFACES = {"button": "buttons", "slash": "commands", "text": "chat", "scheduler": "schedules"}
 # Only what summary() reads: a year of lines with raw text would not fit a Pi 3 comfortably
-TURN_KEYS = ("surface", "total_ms", "outcome", "allowed", "user_id", "lag_s")
+TURN_KEYS = ("surface", "total_ms", "outcome", "allowed", "user_id", "lag_s",
+             "intent", "llm_ms", "tokens", "error", "card", "card_id")
+# Why chat turns failed, in household words
+CHAT_FAILS = {"down": "PC off or unreachable", "busy": "PC busy", "timeout": "too slow", "llm_off": "switched off"}
 EVENT_KEYS = ("device", "ms", "ok", "surface", "user_id", "error", "maybe_delivered")
 NOT_WORK = ("denied", "dropped_offline")   # never reached a handler: no speed to measure
 
@@ -130,6 +133,8 @@ def summary(turns: Iterable[dict[str, Any]], events: Iterable[dict[str, Any]], r
     if not failed:
         lines.append("- none")
 
+    lines += ["", b("Chat assistant")] + chat_lines(turns)
+
     # Odds and ends
     strangers = [t for t in turns if t.get("allowed") is False and t.get("surface") != "scheduler"]
     dropped = sum(t.get("outcome") == "dropped_offline" for t in turns)
@@ -139,6 +144,44 @@ def summary(turns: Iterable[dict[str, Any]], events: Iterable[dict[str, Any]], r
               f"- dropped while the bot was offline: {dropped}",
               f"- bot errors: {errors}"]
     return lines
+
+
+def chat_lines(turns: list[dict[str, Any]]) -> list[str]:
+    chat = [t for t in turns if str(t.get("intent") or "").startswith("llm:")]
+    off = [t for t in turns if t.get("surface") == "text" and t.get("outcome") == "llm_off"]
+    if not chat and not off:
+        return ["- no chat messages yet"]
+    kinds = Counter(str(t["intent"])[4:] for t in chat)
+    failed = Counter(CHAT_FAILS.get(str(t.get("outcome")), "other") for t in chat if t["intent"] == "llm:failed")
+    failed.update(["switched off"] * len(off))
+    refused = kinds["busy_you"] + kinds["limited"] + kinds["too_long"]
+    parts = [f"{kinds['answer']} answers", f"{kinds['actions']} cards"]
+    if failed:
+        parts.append(f"{sum(failed.values())} failed: " + ", ".join(f"{n} {w}" for w, n in failed.most_common()))
+    if refused:
+        parts.append(f"{refused} turned away (busy, limit or too long)")
+    out = [f"- messages: {len(chat) + len(off)} ({', '.join(parts)})"]
+    worked = [t for t in chat if t["intent"] in ("llm:answer", "llm:actions")]
+    totals = [v for t in worked if (v := _ms(t, "total_ms")) is not None]
+    model = [v for t in worked if (v := _ms(t, "llm_ms")) is not None]
+    tokens = [v for t in worked if (v := _ms(t, "tokens")) is not None]
+    if totals:
+        out.append(f"- reply time: {_typical_slow(totals, 'ms')}")
+    if model:
+        out.append(f"- of which the PC: {_typical_slow(model, 'ms')}")
+    if tokens:
+        out.append(f"- tokens per message: {_typical_slow(tokens, 'tokens')}")
+    # Joined by card id, so a card shown before the window and tapped inside it is not counted
+    shown = {t.get("card_id") for t in chat if t.get("card") == "shown" and t.get("card_id")}
+    tapped: dict[str, set] = defaultdict(set)
+    for t in turns:
+        if str(t.get("intent") or "").startswith("lc:") and t.get("outcome") != "refused" and t.get("card_id") in shown:
+            tapped[str(t.get("card"))].add(t["card_id"])
+    if shown:
+        out.append(f"- cards: {len(shown)} shown, {len(tapped['do'])} done, {len(tapped['x'])} cancelled, "
+                   f"{len(shown - tapped['do'] - tapped['x'])} not tapped; {len(tapped['undo'])} undone, "
+                   f"{len(tapped['retry'])} retried")
+    return out
 
 
 async def llm_health(url: str, client: httpx.AsyncClient | None = None,

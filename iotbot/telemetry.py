@@ -4,7 +4,8 @@ A turn is one Telegram update (slash command, button tap, text) or one schedule 
 The current turn lives in a contextvar, so the device service can add its send time
 and outcome without every handler passing it along. Lines go to `turns-YYYY-MM.jsonl`
 next to the other logs and are never deleted (raw text is kept: it becomes the LLM
-eval set later). Fields `llm_ms` and `tokens` are filled by the LLM layer (Phase 4).
+eval set later). The chat fields (llm_ms, tokens, model, ...) are filled by the LLM layer;
+its full requests go to the replay log (llm/replay.py).
 """
 
 from __future__ import annotations
@@ -49,10 +50,18 @@ class Turn:
     devices: list[str] = field(default_factory=list)
     llm_ms: int | None = None
     tokens: int | None = None
+    # Chat turns (Phase 4): the model, its tool calls ("name!" = refused) and rounds;
+    # card = shown on the chat turn, or do | x | undo | retry on the tap that joins it by card_id
+    model: str | None = None
+    tool_calls: list[str] | None = None
+    llm_rounds: int | None = None
+    card: str | None = None
+    card_id: str | None = None
 
     def record(self) -> dict[str, Any]:
-        rec = asdict(self)
-        if rec["raw"] and len(rec["raw"]) > MAX_RAW:
+        # Empty fields are left out: these files are kept forever
+        rec = {k: v for k, v in asdict(self).items() if v is not None}
+        if rec.get("raw") and len(rec["raw"]) > MAX_RAW:
             rec["raw"] = rec["raw"][:MAX_RAW] + "..."
         return rec
 

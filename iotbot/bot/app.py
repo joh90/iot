@@ -130,6 +130,7 @@ def build_application(ctx: AppContext) -> Application:
         if ctx.scheduler:
             await ctx.scheduler.stop()
         if ctx.assistant:
+            await ctx.assistant.drain()
             await ctx.assistant.llm.aclose()
 
     app = (
