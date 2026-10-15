@@ -22,8 +22,12 @@ run() {
     data_dir
     # Host network: Broadlink discovery is a UDP broadcast on the LAN.
     # Read-only root, data on a bind mount, host clock zone for log timestamps.
+    # No capabilities or setuid gains (the bot needs none); memory and process caps so a runaway
+    # cannot starve the Pi (idle use 2026-10: 29 MiB, 2 pids).
     docker run --network host \
         --security-opt "seccomp=$SECCOMP" \
+        --cap-drop ALL --security-opt no-new-privileges \
+        --memory 256m --pids-limit 64 \
         --read-only --tmpfs /tmp \
         -v "$DATA:/data" \
         -v /etc/localtime:/etc/localtime:ro \
@@ -42,7 +46,7 @@ case "${1:-}" in
         HOST="${2:?usage: $0 ship user@host}"
         REV=$(git rev-parse --short HEAD 2>/dev/null || echo local)
         docker buildx build --platform linux/arm/v7 -t "$IMAGE" -t "iotbot:$REV" --load .
-        docker save "$IMAGE" "iotbot:$REV" | gzip -1 | ssh "$HOST" "gunzip | docker load"
+        docker save "$IMAGE" "iotbot:$REV" | gzip -1 | ssh -- "$HOST" "gunzip | docker load"
         ;;
     check)
         run --rm "$IMAGE" --check

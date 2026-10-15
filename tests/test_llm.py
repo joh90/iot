@@ -72,6 +72,7 @@ async def test_request_pins_slot_and_turns_thinking_off():
     body = srv.requests[0]
     assert body["id_slot"] == 1 and body["cache_prompt"] is True
     assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert body["temperature"] == 0.0 and body["max_tokens"] == 800     # once lost inside a comment
     assert body["tools"][0]["function"]["name"] == "get_home_state"
     assert (r.content, r.model, r.prompt_tokens, r.cached_tokens) == ("hi", "qwen-test", 900, 880)
     assert r.exchange["request"] == body and r.exchange["ms"] == r.ms

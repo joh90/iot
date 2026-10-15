@@ -20,11 +20,8 @@ Status: `[ ]` pending, `[~]` in progress, `[r]` built, in review, `[x]` done + r
 
 ## Phase D -- Deploy to the Pi in Docker (planned 2026-10-09; in-place upgrade on the real token)
 
-Pi facts (D2): `pi-host` 192.168.1.48, Pi 3 Model B, 1 GB RAM, Ubuntu 16.04 armhf (32-bit), glibc 2.23,
-kernel 4.4 (2018), Docker 20.10.7 (last apt build for xenial), libseccomp 2.5.1, user `pi` (uid 1001,
-docker group, sudo needs a password). v1: `johiot.service` as root, `~/iot` at master ad25a7f, data in
-`~/devices.json` + `~/users.json`, token in the unit's ExecStart (visible in `ps`). Disk: 15 GB free
-after removing the stopped Pi-hole container + junk (`~/etc-pihole`, `~/etc-dnsmasq.d` kept: root-owned).
+Pi facts (D2): Pi 3 Model B, 1 GB RAM, 32-bit OS (glibc 2.23), Docker 20.10.7, libseccomp 2.5.1.
+v1: `johiot.service` as root at master ad25a7f, token in the unit's ExecStart (visible in `ps`).
 
 Why Docker: glibc 2.23 is too old for cryptography's armv7 wheel (needs 2.31) and Rust builds on 1 GB are not viable.
 Docker 20.10.7 blocks clone3 with EPERM, so glibc 2.34+ images cannot start threads. Fix (proven on the Pi):
@@ -33,9 +30,9 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 
 | #   | Status | Task                                                                                                                                                                                                                                                                   |
 |-----|--------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| D1  | [x]    | Key login works as `user@pi-host`                                                                                                                                                                                                                                   |
+| D1  | [x]    | Key login works                                                                                                                                                                                                                                                        |
 | D2  | [x]    | Read-only inspection (facts above)                                                                                                                                                                                                                                     |
-| D2a | [x]    | Cleanup: Pi-hole container + image, `.part`, duplicate ASOT webm, ngrok, Youku cookies, pihole.sh (99 MB -> 15 GB free)                                                                                                                                                |
+| D2a | [x]    | Cleanup: old containers and files on the Pi (99 MB -> 15 GB free)                                                                                                                                                                                                      |
 | D3  | [x]    | Runtime: Docker on the existing OS, custom seccomp profile (threads, clock, DNS, to_thread verified)                                                                                                                                                                   |
 | D4  | [x]    | Docker packaging in repo: Dockerfile (python:3.13-slim, uv, gcc for cffi in a build stage, uid 1001), `deploy/seccomp-clone3.json`, run script, `--check` + hub-only discovery mode, log cap; reviewer                                                                 |
 | D5  | [x]    | Push `v2` branch to GitHub (branch only, no merge to master)                                                                                                                                                                                                           |
@@ -43,7 +40,7 @@ glibc falls back to clone). `errnoRet` is not honoured by this runc, hence TRACE
 | D7  | [x]    | Live 2026-10-12 14:04 on iotbot:8d23986 (johiot disabled by user, token copied from the v1 unit), then b4fed93 at 14:43 (2.11)                                                                                                                                         |
 | D8  | n/a    | DROPPED 2026-10-09: user keeps the current token (it stays visible in `ps` and the v1 unit until cutover)                                                                                                                                                              |
 | D8b | [x]    | 2026-10-12: user ran `sudo dpkg --configure -a` + reinstalled linux-firmware; all packages configured; boot files rebuilt (script/dtb same)                                                                                                                            |
-| D9  | [x]    | 2026-10-12: Pi key ~/.ssh/iotbot_tunnel; PC authorized_keys restrict,port-forwarding,permitopen 8001,from 192.168.1.*,command /bin/false; PC host key pinned; shell + port 22 refused; note: Pi id_rsa (user@pc) keeps full PC shell, user's choice 2026-10-12 |
+| D9  | [x]    | 2026-10-12: Pi key ~/.ssh/iotbot_tunnel; PC authorized_keys restrict,port-forwarding,permitopen 8001,LAN only,command /bin/false (+ permitlisten localhost:1 on 2026-10-15: no -R); PC host key pinned; shell + port 22 refused                                        |
 | D9b | [x]    | 2026-10-12: Pi ~/.ssh/config Host iotbot-tunnel; crontab @reboot + */5 watchdog, flock + autossh -M 0 -N; /health OK from Pi and container                                                                                                                             |
 | D10 | [ ]    | Reboot test (user, when home): Pi boots on the rebuilt initrd, iotbot container comes back by itself, `/status` OK, tunnel back (curl 127.0.0.1:8001/health)                                                                                                           |
 

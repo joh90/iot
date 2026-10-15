@@ -316,7 +316,11 @@ async def test_an_answer_that_is_only_a_stamp_is_a_failure():
 async def test_an_answer_claiming_an_action_is_nudged_then_refused():
     for fake in ("Card shown: Run recipe \"good night\"", "Do this?\n- bed: off",
                  "I will turn off the bedroom aircon now.\n\n[Card: Confirm action]", "Done, the office AC is now off.",
-                 "Turning the bedroom off for you", "I have noted that you sleep at 23:00.", "I'll remember that."):
+                 "Turning the bedroom off for you", "I have noted that you sleep at 23:00.", "I'll remember that.",
+                 "Bedroom set to 23°C.\n\nYou have two schedules.", "Done. Office turned off.",
+                 "Okay, bedroom set to 23.", "Bedroom now set to 23.", "Both rooms turned off.",
+                 "Living room turned off.", "**Bedroom** set to 23.", "Bedroom aircon: set to 23.",
+                 "Office turned off\nAnything else?"):
         a, srv = make_assistant([completion(fake), completion(fake)])
         o = await a.handle(ALICE, "off the bedroom ac")
         assert (o.kind, o.turn.error) == ("failed", "fake_card"), fake
@@ -327,7 +331,15 @@ async def test_an_answer_claiming_an_action_is_nudged_then_refused():
     assert (o.kind, o.text, o.turn.tool_calls) == ("answer", "Which aircon?", ["claim!"])
     for fine in ("The office AC is already off.", "The bedroom aircon was last set by the bot to ON cool 24C.",
                  "The office aircon is now off (last set by the bot).", "The card asked to turn off the office.",
-                 "No, a credit card cannot pay for that.", "I remember that you sleep at 23:00."):
+                 "No, a credit card cannot pay for that.", "I remember that you sleep at 23:00.",
+                 "The office aircon is set to 25°C.", "Bed time is set to 23:00 Sun-Thu.",
+                 "The timer is set to turn it off at 01:00.",
+                 # diary answers: what happened, with when and who
+                 "Office turned off at 23:00 by the schedule.", "Last night:\n- 23:00: Office turned off by the schedule.",
+                 "Alice changed it: bedroom set to 24C at 01:00.", "Bedroom set to 24C, fan 3 (Alice, 22:10).",
+                 "Yes. Office turned on at 07:00 by Bob.", "Timer set to 01:00 is paused.",
+                 "Your schedule: bedtime. Bedroom set to 22 at 23:00 every night.",
+                 "Lamp switched on at 19:00 by schedule."):
         a, _ = make_assistant([completion(fine)])
         assert (await a.handle(ALICE, "x")).kind == "answer", fine
 

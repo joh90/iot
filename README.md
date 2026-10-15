@@ -73,13 +73,13 @@ See [deploy/iotbot.service](deploy/iotbot.service). It waits for network and NTP
 
 ### 3b. Docker on the Pi (old OS)
 
-For a Pi whose OS is too old for the Python packages (this repo's Pi: Ubuntu 16.04 armhf, Docker 20.10.7).
+For a Pi whose OS is too old for the Python packages (e.g. Ubuntu 16.04 armhf with Docker 20.10.7).
 The image brings Debian 13 + Python 3.13; the host only needs Docker.
 
 ```bash
 git clone -b v2 https://github.com/joh90/iot iot-bot-v2 && cd iot-bot-v2
 mkdir data && cp .env.example data/.env && chmod 600 data/.env   # then put BOT_TOKEN in it
-cp ~/devices.json data/devices.json && cp ~/users.json data/users.json   # v1 files, same format
+cp /path/to/v1/devices.json /path/to/v1/users.json data/   # v1 files, same format
 # on the PC (see below why not on the Pi):  deploy/docker.sh ship user@pi-host
 deploy/docker.sh discover    # finds every RM / plug, prints online/offline, no Telegram, no IR
 deploy/docker.sh check       # validates files and the token format, no network (exit 3 = bad data)
@@ -88,7 +88,7 @@ deploy/docker.sh logs
 ```
 
 - `data/` holds `.env`, `devices.json`, `users.json`, `state/` and `logs/`. The container runs as
-  uid 1001, so the folder must be writable by that uid (on this Pi that is the `pi` user).
+  uid 1001, so the folder must be writable by that uid.
 - `commands.json` is baked into the image (`COMMANDS_PATH=/app/commands.json`); rebuild after changing it.
 - Build on the PC, not the Pi: Docker 20.10.7 cannot apply a seccomp profile to build steps
   ("does not support setting security options on build"), so `apt-get` and `uv` fail inside
@@ -100,6 +100,8 @@ deploy/docker.sh logs
   falls back to `clone`. (`errnoRet` is not honoured by that Docker's runc.) Not needed on Docker 20.10.10+.
 - Update: on the PC `deploy/docker.sh ship user@pi-host`, then on the Pi `git fetch origin && git checkout origin/v2 && deploy/docker.sh restart`,
   then `docker image prune` now and then (each build keeps an `iotbot:<rev>` tag on the SD card).
+- The container runs with no Linux capabilities, `no-new-privileges`, at most 256 MB of memory and
+  64 threads (it idles at about 30 MB); change these in `deploy/docker.sh` if needed.
 - `stop` / `restart` delete the container's docker logs; the bot's own JSONL logs stay in `data/logs/`.
 - Unlike the systemd unit, Docker has no `RestartPreventExitStatus` and no wait for NTP. `start` runs
   `check` first so a bad config never gets a restart loop. After a reboot the container may start before
@@ -118,10 +120,11 @@ ssh-keyscan -t ed25519 <pc-host> >> ~/.ssh/known_hosts    # check the fingerprin
 ```
 
 On the PC, add the key to `~/.ssh/authorized_keys` so it can only open that one tunnel (no shell, no
-other ports, LAN only):
+other ports, no remote listening, LAN only; set `from` to your LAN range). Port 1 in `permitlisten`
+cannot be opened by a normal user, so `ssh -R` is refused:
 
 ```
-restrict,port-forwarding,permitopen="127.0.0.1:8001",from="192.168.1.*",command="/bin/false" ssh-ed25519 AAAA... iotbot-tunnel@pi
+restrict,port-forwarding,permitopen="127.0.0.1:8001",permitlisten="localhost:1",from="192.168.1.*",command="/bin/false" ssh-ed25519 AAAA... iotbot-tunnel@pi
 ```
 
 On the Pi, `~/.ssh/config`:

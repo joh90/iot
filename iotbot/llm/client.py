@@ -23,7 +23,7 @@ import httpx
 
 PROBE_TIMEOUT_S = 2.0
 TEMPERATURE = 0.0
-MAX_TOKENS = 400
+MAX_TOKENS = 800                 # bot replies: p99 ~370 tokens (2026-10); a cap only for runaways
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
@@ -116,7 +116,8 @@ class LlmClient:
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> Reply:
         """One round. The caller bounds the whole turn with asyncio.timeout."""
         body: dict[str, Any] = {
-            "messages": list(messages),     # a snapshot: the loop keeps appending to its list "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS,
+            "messages": list(messages),     # a snapshot: the loop keeps appending to its list
+            "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS,
             "cache_prompt": True, "chat_template_kwargs": {"enable_thinking": False},
         }
         if tools:

@@ -36,6 +36,12 @@ CLAIM_RE = re.compile(
     r"\b(i've|i have|done|ok)[,.!]? .{0,40}\bis now (on|off|set)\b|"
     r"\b(i've|i have|i will|i'll) (now )?(noted|note|saved|save|remembered|remember|stored|store)\b|"
     r"\bnoted that\b", re.IGNORECASE)
+# A sentence that is only a result: "Bedroom set to 23." / "Okay, both rooms turned off." A diary
+# line goes on ("... at 23:00 by the schedule") and a state answer says "is set to": neither matches
+_WORD = r"(?!(is|was|are|were|be|been|being|still|already|stays|remains)\b)[\w-]+"   # not "is set to"
+SHORT_CLAIM_RE = re.compile(
+    rf"((ok|okay|done|sure)[,.!]?\s+)?(the |both )?({_WORD}\s+){{0,2}}?{_WORD}:?\s+(now\s+)?"
+    r"(set to \d+\s*(°\s*c|c)?( fan \w+)?|turned (on|off)|switched (on|off))\s*[.!]?", re.IGNORECASE)
 # A sentence above a card must not read as a result ("Done!", "I have added ...") or be about
 # the card itself ("ready for you to confirm"): such sentences are dropped from the note
 NOTE_DROP_RE = re.compile(
@@ -169,7 +175,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             if not reply.content:
                 out.kind, out.error = "failed", "empty"
                 return
-            if CLAIM_RE.search(reply.content):
+            if claims(reply.content):
                 # Text that announces an action or a card, without the tool call: no card exists
                 out.tool_calls.append("claim!")
                 if out.rounds > MAX_TOOL_ROUNDS or nudged:
@@ -295,6 +301,12 @@ def _subjects(actions: list[Action]) -> set[str]:
     return {w for n in names for w in re.findall(r"[a-z0-9]+", n.lower()) if w not in GENERIC and len(w) > 1}
 
 
+def claims(text: str) -> bool:
+    """True if the text says something was done or a card exists (only a tool call does that)."""
+    return bool(CLAIM_RE.search(text)) or any(
+        SHORT_CLAIM_RE.fullmatch(s.strip(" -*_`")) for s in SENTENCE_RE.split(text.replace("**", "")))
+
+
 def _note(text: str | None, subjects: set[str] = frozenset()) -> str:
     """The model's words next to a card, shown above it: only the sentences that do not claim
     a result or talk about the card (the card says that). A sentence stating the on/off/paused
@@ -307,7 +319,7 @@ def _note(text: str | None, subjects: set[str] = frozenset()) -> str:
         return bool(STATE_RE.search(s)) and bool(subjects & set(re.findall(r"[a-z0-9]+", s.lower())))
 
     keep = [s for s in SENTENCE_RE.split(text)
-            if not (CLAIM_RE.search(s) or NOTE_DROP_RE.search(s.strip()) or about_card(s))]
+            if not (claims(s) or NOTE_DROP_RE.search(s.strip()) or about_card(s))]
     text = " ".join(s.strip() for s in keep).strip()
     return text if len(text) <= MAX_NOTE_CHARS else text[:MAX_NOTE_CHARS].rsplit(" ", 1)[0] + "..."
 
