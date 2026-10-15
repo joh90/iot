@@ -13,3 +13,8 @@ devices.json
 users.json
 state/
 logs/
+*.bak
+*.tmp
+.env.*
+!.env.example
+/data/

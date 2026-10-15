@@ -16,10 +16,10 @@ bot on the Pi keeps running untouched until the branch is proven.
 | Storage       | NO SQLite. JSON state files (atomic tmp+rename, saved on every change) + JSONL logs (monthly)                                                        |
 | Roles         | None (B4 skipped). All approved users are equal                                                                                                      |
 | Python        | uv-managed Python 3.13 on the Pi (system Python is likely 3.6; PTB 22 needs >= 3.10)                                                                 |
-| Hardware      | Office + bedroom: RM mini 3 (RMMINI) + Mitsubishi Electric fn18ve (since 2023-06; Daikin only in the old `.bk`)                                  |
+| Hardware      | Two rooms (office, bedroom): RM mini 3 (RMMINI) + Mitsubishi Electric fn18ve                                                                         |
 | TTL prompts   | Run-time nudge + pre-schedule heads-up + (later, with LLM) confirm-every-LLM-action expiry                                                           |
 | Tracking      | Numbered native tasks, reviewer subagent after each task                                                                                             |
-| Users         | Me + household (2-4). Messages attribute actions ("X set bedroom to 24C")                                                                            |
+| Users         | A few household users. Messages attribute actions ("X set bedroom to 24C")                                                                           |
 | First run     | 2026-10-09 02:02 run builds Phase 1 ONLY, then stops for user test                                                                                   |
 | Service layer | All surfaces (slash, buttons, scheduler, later LLM) call one typed service API. Results carry structured warnings/conflicts; never silently resolved |
 
@@ -167,7 +167,7 @@ each returning `Result{ok, data, warnings[], conflicts[]}`; writes carry `rev`.
 
 | Topic          | Decision                                                                                                                                                   |
 |----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Target         | Mitsubishi Electric 144-bit, both rooms (live `devices.json`). Daikin codes kept, no encoder                                                           |
+| Target         | Mitsubishi Electric 144-bit, both rooms (live `devices.json`). Daikin codes kept, no encoder                                                               |
 | Controls       | Cool mode only; temp 16-31; fan auto/1-4/quiet (protocol has 4 speeds + quiet, corrected from 1-5); up/down vane auto/1-5/swing; powerful. No dry/fan-only |
 | "On"           | Fixed room preset = the captured frame's state (bedroom 22C fan 3 vane auto, office 23C fan 3 vane 1)                                                      |
 | UI             | None new. Existing On/Off/Powerful buttons go through the encoder. State picker arrives with Phase 2. `/status` shows the last state sent per AC           |
