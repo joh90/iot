@@ -1,424 +1,364 @@
-# Telegram IOT Bot
-* Python / Broadlink powered Telegram bot
-* Control your home/office devices with Telegram
+# iot-bot
 
+A Telegram bot that controls home devices through Broadlink IR remotes (RM mini 3, RM4,
+RM Pro) and Broadlink smart plugs (SP2, SP4). It runs 24/7 on a Raspberry Pi.
 
-# Table of contents
-- [Introduction](#introduction)
-- [Requirements](#requirements)
-- [Getting Started](#getting-started)
-	* [BotFather](#botfather)
-	* [Broadlink Devices](#broadlink-devices)
-	  * [RM3](#rm3)
-	  * [SP2](#sp2)
-	* [Rooms, Devices & Commands](#rooms-devices-commands)
-	  * [Rooms](#rooms)
-	  * [Devices](#devices)
-	    * [Type Enums](#type-enums)
-	  * [Device's Commands](#device-commands)
-	  * [Other Broadlink Devices](#other-broadlink-devices)
-	    * [Broadlink Types](#broadlink-types)
-	* [Users](#users)
-	* [Sample JSON](#sample-jsons)
-	* [Learning Commands](#learning-commands)
-	* [Usage](#usage)
-	  * [Controlling Devices](#controlling-devices)
-	  * [Add Users](#add-users)
-	  * [Remove Users](#remove-users)
-- [Running the application](#run)
-- [Screenshots](#screenshots)
-- [Videos](#videos)
-- [Future features / Improvements](#future)
-- [Project Limitation](#limitation)
-- [Contributing](#contributing)
-- [License](#license)
+v2 rewrite (branch `v2`): python-telegram-bot 22 (async), broadlink 0.19, Python 3.13 via uv.
+Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetry) are in
+[PLAN.md](PLAN.md); progress is in [TASKS.md](TASKS.md).
 
+## What it does
 
-# Introduction
-Control various devices such as (TV, Aircon, Set Top Box) with this Telegram Bot!
+- `/keyboard` opens a button remote: room > device > action
+- `/on <device>`, `/off <device>`, `/d <device> <action>` (e.g. `/d bedroom_ac power on high`)
+- `/status` shows uptime, the last action, the last state sent to each aircon, every Broadlink device (online or offline) and config warnings
+- `/list` shows rooms, devices and the actions each one has
+- `/user` lists approved users with a Remove button; `/adduser <user id> <name>` approves someone.
+  With `ADMIN_IDS` set in `.env`, only those users may approve or remove; empty, everyone may
+- `/ping` works for anyone and shows their Telegram user id (needed to approve them)
+- The bot works in private chats only: in a group it answers nothing, so nothing shows there
+- `/stats [days]` shows how fast the bot answers (p50/p95 per surface, share under 300 ms), the slowest
+  remotes, failed sends and who or what sent them, strangers, chat assistant use, and whether the LLM PC
+  answers (default 7 days)
+- Plain messages in a private chat go to the chat assistant (see below), e.g. "a bit cooler in the
+  bedroom", "off the office aircon at 7am weekdays", "is the bedroom aircon on?"
 
+A device only gets the actions whose IR codes were captured in `commands.json`, so every button works.
+Only approved Telegram user ids can use the bot; usernames are not checked.
 
-### Features
-* Supports various household appliances
-* Only approved users can use the bot
-* In-line keyboard menu to control your devices
-* Learn and add commands to JSON file for device's commands
-* Add / Delete users
-* Query server's last handled request / command
+## Files
 
+| File            | Tracked | What it holds                                                                                                                                                                                              |
+|-----------------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.env`          | no      | Bot token and paths (copy `.env.example`)                                                                                                                                                                  |
+| `devices.json`  | no      | Your rooms, RM remotes, devices and plugs (`devices.example.json`)                                                                                                                                         |
+| `users.json`    | no      | Approved users `{"<telegram id>": "<name>"}` (`users.example.json`)                                                                                                                                        |
+| `commands.json` | yes     | Captured IR codes by device type / brand / model                                                                                                                                                           |
+| `logs/*.jsonl`  | no      | `device_events-YYYY-MM.jsonl` (every send), `turns-YYYY-MM.jsonl` (every message, tap and schedule fire, with its text and timings), `audit-YYYY-MM.jsonl` (user changes), `schedule_events-YYYY-MM.jsonl` |
+| `state/`        | no      | `ac_state.json` (last state sent per aircon); later schedules                                                                                                                                              |
 
-# Requirements
-### Requirements
-* Python 3.6+
-* [Python Telegram Bot](https://python-telegram-bot.org/)
-* [Python-Broadlink](https://github.com/mjg59/python-broadlink)
-* Supported Broadlink Devices
-	* [RM2](http://www.ibroadlink.com/rmMini3/)
-	* [SP2](https://www.ibroadlink.com/products/smart-plug)
-	* [SP4](https://www.ibroadlink.com/products/smart-plug)
-	* [TC2](http://www.ibroadlink.com/tc2/)
-	* [RMPro+](http://www.ibroadlink.com/rmPro+/)
-	* etc.
+JSON files are written atomically (temp file, fsync, rename) with a `.bak` of the previous good
+version. If a file is damaged after a power cut, the bot loads the `.bak` and says so in `/status`.
+If `users.json` and its backup are both unreadable, the bot refuses to start rather than lock everyone out.
 
-### Optional
-* [Raspberry PI](https://www.raspberrypi.org/products/)
+## Setup
 
+### 1. Bot token
 
-# Getting Started
-### BotFather
-* Create new bot in Telegram
-1. Find @BotFather in Telegram
-1. Type `/help` for commands
-1. Key in `/newbot` and save your bot id and secret
+Create a bot with @BotFather (`/newbot`). While the old bot is still running, use a **separate
+test bot**: two programs polling one token fight over messages (409 Conflict).
 
-![Example snippet from Botfather](docs/screenshots/botfather_id_secret.jpg)
+### 2. Install (Raspberry Pi or any Linux box)
 
-* Populate shortcut commands to your Telegram bot
-![Shortcut command button](docs/screenshots/shortcut_command_button.jpg)
-1. Find @BotFather in Telegram
-1. Type `/setcommands` in Telegram
-1. Paste the following text snippet to Telegram
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh     # installs uv
+git clone https://github.com/joh90/iot iot-bot && cd iot-bot
+git checkout v2
+uv sync --no-dev                                    # downloads Python 3.13 + dependencies
+cp .env.example .env                                # then put BOT_TOKEN in it
+cp devices.example.json devices.json                # then edit
+cp users.example.json users.json                    # then put your own id in it
+uv run --no-dev iotbot --check                      # validates files, prints warnings, no network
+uv run --no-dev iotbot
 ```
-start - list of general commands
-ping - returns pong and your user info
-status - returns server information
-list - returns the list of rooms and devices commands
-keyboard - returns keyboard access to rooms commands
-user - returns list of approved users with delete option
-adduser - Add user conversation (provide both user id and username)
+
+On a 32-bit OS older than glibc 2.31 (e.g. Ubuntu 16.04 armhf), `cryptography` (needed by broadlink)
+has no prebuilt wheel and needs a Rust build. Use Docker instead (section 3b).
+
+Your user id: start the bot, send it `/ping`, put the id in `users.json`, restart.
+After that, add people from Telegram with `/adduser`.
+
+### 3. Run as a service
+
+See [deploy/iotbot.service](deploy/iotbot.service). It waits for network and NTP time sync
+(the Pi has no hardware clock) and does not restart-loop on a config error.
+
+### 3b. Docker on the Pi (old OS)
+
+For a Pi whose OS is too old for the Python packages (e.g. Ubuntu 16.04 armhf with Docker 20.10.7).
+The image brings Debian 13 + Python 3.13; the host only needs Docker.
+
+```bash
+git clone -b v2 https://github.com/joh90/iot iot-bot-v2 && cd iot-bot-v2
+mkdir data && cp .env.example data/.env && chmod 600 data/.env   # then put BOT_TOKEN in it
+cp /path/to/v1/devices.json /path/to/v1/users.json data/   # v1 files, same format
+# on the PC (see below why not on the Pi):  deploy/docker.sh ship user@pi-host
+deploy/docker.sh discover    # finds every RM / plug, prints online/offline, no Telegram, no IR
+deploy/docker.sh check       # validates files and the token format, no network (exit 3 = bad data)
+deploy/docker.sh start       # runs check first; restarts on crash and at boot; logs capped at 3 x 10 MB
+deploy/docker.sh logs
 ```
-4. Success!, Botfather will notify `Success! Command list updated. /help`
-![After populating commands](docs/screenshots/shortcut_commands.jpg)
 
-### Broadlink Devices
-#### RM3
-[Full Manual](http://download.appinthestore.com/201605/Broadlink%20IR%20Remote%20Controller%20Manual.pdf)
+- `data/` holds `.env`, `devices.json`, `users.json`, `state/` and `logs/`. The container runs as
+  uid 1001, so the folder must be writable by that uid.
+- `commands.json` is baked into the image (`COMMANDS_PATH=/app/commands.json`); rebuild after changing it.
+- Build on the PC, not the Pi: Docker 20.10.7 cannot apply a seccomp profile to build steps
+  ("does not support setting security options on build"), so `apt-get` and `uv` fail inside
+  `docker build` on the Pi. `ship` cross-builds for linux/arm/v7 (PC needs `sudo dnf install
+  qemu-user-static-arm`) and streams the image to the Pi with `docker save | ssh docker load`.
+- `deploy/seccomp-clone3.json`: Docker 20.10.7's default seccomp profile blocks `clone3` with EPERM,
+  so images with glibc 2.34+ fail with "can't start new thread". The profile is the stock v20.10.7
+  profile plus `clone3 -> SCMP_ACT_TRACE`, which returns ENOSYS when no tracer is attached, so glibc
+  falls back to `clone`. (`errnoRet` is not honoured by that Docker's runc.) Not needed on Docker 20.10.10+.
+- Update: on the PC `deploy/docker.sh ship user@pi-host`, then on the Pi `git fetch origin && git checkout origin/v2 && deploy/docker.sh restart`,
+  then `docker image prune` now and then (each build keeps an `iotbot:<rev>` tag on the SD card).
+- The container runs with no Linux capabilities, `no-new-privileges`, at most 256 MB of memory and
+  64 threads (it idles at about 30 MB); change these in `deploy/docker.sh` if needed.
+- `stop` / `restart` delete the container's docker logs; the bot's own JSONL logs stay in `data/logs/`.
+- Unlike the systemd unit, Docker has no `RestartPreventExitStatus` and no wait for NTP. `start` runs
+  `check` first so a bad config never gets a restart loop. After a reboot the container may start before
+  the clock is synced (the Pi has no RTC): Telegram TLS fails and is retried until NTP catches up, and
+  the first few log timestamps can be wrong.
 
-* Unbox Device
-<img src="docs/screenshots/rm3.jpg" width="600" height="320">
+### 4. Tunnel to the LLM PC (for the chat assistant)
 
-1. USB Cable, RM3 Device
-1. Connect RM3 device with power with USB cable
+The LLM runs on another machine (llama-server on its `127.0.0.1:8001`). The Pi reaches it with an SSH
+tunnel, so the server never listens on the network. The chat assistant and `/stats` use it.
 
-* Install Mobile App and configure RM3 device
-1. Install Broadlink's e-Control App [Link](http://www.ibroadlink.com/app/)
-2. Press on `+` and then `Add device`
-<img src="docs/screenshots/app_1.jpg" width="292" height="501">
-3. Key in your Wifi's ssid and password and press `Configure`
-<img src="docs/screenshots/app_2.jpg" width="292" height="501">
-4. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
-<img src="docs/screenshots/app_3.jpg" width="292" height="501">
-
-**You may refer to https://github.com/mjg59/python-broadlink#example-use if the above steps did not work**
-
-#### SP2
-[Full Manual](https://fccid.io/2AIWOSP2-US/User-Manual/User-Manual-3580152.pdf)
-
-* Unbox Device
-<img src="docs/screenshots/sp2.jpg" width="600" height="320">
-
-1. SP2 Smart Plug
-1. Plug SP2 into socket
-
-* Install Mobile App and configure SP2 device
-1. Install Broadlink's e-Control App [Link](http://www.ibroadlink.com/app/)
-2. Press on `+` and then `Add device`
-<img src="docs/screenshots/app_1.jpg" width="292" height="501">
-3. Key in your Wifi's ssid and password and press `Configure`
-<img src="docs/screenshots/app_2.jpg" width="292" height="501">
-4. When successful, your device will show up in device list with the MAC address(`+` -> Device list)
-<img src="docs/screenshots/app_4.jpg" width="400" height="200">
-
-**You may refer to https://github.com/mjg59/python-broadlink#example-use if the above steps did not work**
-
-### Rooms Devices Commands
-#### Rooms
-* To add a room, use the following JSON format and add it to `devices.json` file
-* Supports one RM device per room only
-* Add the RM device's MAC address that you are placing in the room (for RMMINI)
-(To get device's IP or MAC address, refer to [Learning Commands](#learning-commands))
-* MAC address value should be used from the device list from the app (without the colon `:`)
-* See [Other Broadlink Devices](#other-broadlink-devices) for more details with adding other Broadlink devices
-
-eg. Adding Office
+```bash
+# on the Pi
+ssh-keygen -t ed25519 -N "" -C iotbot-tunnel@pi -f ~/.ssh/iotbot_tunnel
+ssh-keyscan -t ed25519 <pc-host> >> ~/.ssh/known_hosts    # check the fingerprint against the PC first
 ```
+
+On the PC, add the key to `~/.ssh/authorized_keys` so it can only open that one tunnel (no shell, no
+other ports, no remote listening, LAN only; set `from` to your LAN range). Port 1 in `permitlisten`
+cannot be opened by a normal user, so `ssh -R` is refused:
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:8001",permitlisten="localhost:1",from="192.168.1.*",command="/bin/false" ssh-ed25519 AAAA... iotbot-tunnel@pi
+```
+
+On the Pi, `~/.ssh/config`:
+
+```
+Host iotbot-tunnel
+  HostName <pc-host>
+  User <pc-user>
+  IdentityFile ~/.ssh/iotbot_tunnel
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking yes
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+  ExitOnForwardFailure yes
+  LocalForward 127.0.0.1:8001 127.0.0.1:8001
+```
+
+and `crontab -e` (`sudo apt install autossh` first). `flock` keeps it to one tunnel; the 5-minute line
+restarts it if autossh dies:
+
+```
+@reboot AUTOSSH_GATETIME=0 flock -n $HOME/.iotbot-tunnel.lock autossh -M 0 -N iotbot-tunnel >/dev/null 2>&1
+*/5 * * * * AUTOSSH_GATETIME=0 flock -n $HOME/.iotbot-tunnel.lock autossh -M 0 -N iotbot-tunnel >/dev/null 2>&1
+```
+
+Check: `curl 127.0.0.1:8001/health` on the Pi. The container uses the host network, so it sees the same port.
+
+## devices.json
+
+```json
 {
-	"office": {
-		"mac_address": "780f771abcde",
-		"broadlink_type": "RMMINI",
-		"devices": [],
-		"broadlink_devices": []
-	}
+  "bedroom": {
+    "mac_address": "780f771abcde",
+    "broadlink_type": "RMMINI",
+    "ip_address": "192.168.1.50",
+    "devices": [
+      {"type": 1, "id": "bedroom_ac", "brand": "daikin", "model": "super-multi-nx"}
+    ],
+    "broadlink_devices": [
+      {"id": "bedroom_lamp", "mac_address": "780f77116def", "broadlink_type": "SP2"}
+    ]
+  }
 }
 ```
 
-#### Devices
-##### Type Enums
-| Types  | Devices       |
-| -------|:-------------:|
-| 1      | Air-con       |
-| 2      | TV            |
-| 3      | Set Top Box   |
-| 4      | Projector     |
-| 5      | Amplifier     |
+- Room names and device ids: letters, digits, `-` and `_`, up to 32 characters, unique across the file.
+  A duplicate id is skipped with a warning (the first one wins).
+- `mac_address`: with or without colons. Devices are found by MAC, so a new DHCP address is picked up
+  automatically. `ip_address` is optional; set it if your router has a DHCP reservation, and the bot
+  asks that address directly instead of broadcasting.
+- `broadlink_type` for the RM is informational; any Broadlink remote that can send IR works.
+- Device `type`: 1 aircon, 2 TV, 3 set-top box, 4 projector, 5 amplifier.
+- `brand` + `model` pick the codes in `commands.json` (`commands["<type>"]["<brand>"]["<model>"]`).
+- Plugs: `SP2` (power) or `SP4` (power + nightlight).
 
-* Model is not used at the moment
-* Add to room's `devices` list
-* To add device(s) into a room, use the following JSON format
+One bad entry only produces a warning; the rest of the room still loads.
 
-eg. Office's Aircon
-```
-{
-	"type": 1,
-	"id": "office-aircon",
-	"brand": "daikin",
-	"model": "super-multi-nx"
-}
-```
+## commands.json and learning codes
 
-#### Device Commands
-* Brand name and model are used
-* Key value of Command interface name -> Command String (from bytearray)
-* All device's commands should have at least `power_on` and `power_off` key / value
-* Contribute to the project by committing your device's commands (`commands.json`)
+Each key is an action name (lowercase, digits, `_`), each value is the Broadlink packet as hex.
+`power_on` and `power_off` are listed first; other actions follow file order.
+Words in `/d` join with `_`: `/d bedroom_ac power on high` runs `power_on_high`.
 
-eg. Daikin Aircon commands
-```
-{
-	"1": {
-		"daikin": {
-			"some-model": {
-				"power_on": "26005002100e0e0e0f0e0e0e0f0e0e00034473380f2a0f0e0f0e0e0e0e2a0f0e0f0e0e0e0f0e0e2a0f0e0e2a0f2a0f0e0f290f2a0f2a0f2a0f2a0f0e0e0f0e2a0f0e0e0e0f0e0e0e0f0e0e0e0e0f0e0e0e0e0f0e0e2a0f0e0f290f0f0e0e0e0e0f291029100e0e0e0e0f0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f290f2a0f2a0f0e0f29100e0e2a0f2a0f00047b73380f2a0f0e0e0e0f0e0e2a0f0e0f0e0e0e0e0f0e2a0f0e0e2a0f2a0f0e0e2a0f2a0f2a0f2a0f2a0f0e0e0e0f29100e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e2a0f0e0f0e0e0e0f0e0e2a0f0e0e2a0f0e0f29102910290f0f0e0e0e0e0f29100e0e2a0f0e0e0e0f0e0e0e0f0e0e0e0f2910290f0e0f2910291029100e0e00047b73380f2a0f0e0f0e0e0e0e2a0f0e0f0e0e0e0f0e0e2a0f0e0e2b0e2a0f0e0f290f2a0f2a0f2a0f2a0f0e0e0f0e29100e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f29100e0e0e0f290f2a0f2a0f0e0f0e0e0e0f0e0e2a0f29100e0e2a0f0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e2a0f2a0f2a0f2a0f2a0f0e0e2a0f0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e2a0f2b0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0d0f0e0e2a0f2a0f0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0d0f0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e2a0f2a0f0e0f290f0e0f0e0e0e0f0e0e0e0f0e0e0e0e2a0f0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0d0f0e0f0e0e0e0f000d050000000000000000",
-				"power_off": "26005002100d0f0d0f0d100d0f0d1000034473371029100d0f0d0f0d1029100d0f0d100d0f0d10290f0d10291029100d0f291029102910290f2a0f0d100d0f2a0f0d100d0f0d0f0d100d0f0d100d0f0d100d0f0d0f2a0f0d1029100d0f0d100d0f291029100d0f0d100d0f0d0f0e0f0d0f0d100d0f0d100d0f0d100d0f0d0f0d100d0f0d102910290f2a0f0d1029100d0f2a0f291000047b73371029100d0f0d100d0f29100d0f0d100d0f0d10290f0e0f291029100d0f2a0f291029102910290f0e0f0d0f2a0f0d100d0f0d100d0f0d0f0d100d0f0d100d0f0d100d0f29100d0f0d100d0f0d1029100d0f29100d10290f0d100d0f0d0f2a0f2a0f0d100d0f0d100d0f0d0f0d100d0f0d1029100d0f0d0f2a0f2a0f0d100d0f0d1000047a733810290f0d100d0f0d1029100d0f0d0f0d100d0f2a0f0d10290f2a0f0d1029102910290f2a0f2a0f0d100d0f29100d0f0d100d0f0d100d0f0d100d0f0d0f0d100d0f0d100d0f0d100d0f0d0f0e0f0d0f0d100d0f0d100d0f2910291029100d0f0d100d0f0d0f2a0f2a0f0d1029100d0f0d0f0d100d0f0d100d0f0d100d0f0d0f0d10291029102910290f2a0f0d1029100d0f0d0f0d100d0f0d100d0f0d100d0f0d0f0e0f0d0f0d100d0f0d100d0f0d100d0f0d0f2a0f2a0f0d100d0f0d100d0f0d0f0d100d0f0d100d0f0d10290f2a0f0d100d0f0d100d0f0d0f0e0f0d0f0d100d0f0d100d0f0d100d0f0d0f0d100d0f0d100d0f0d100d0f0d0f0d100d0f2a0f2a0f0d10290f0d100d0f0d100d0f0d100d0f0d0f2a0f0d100d0f0d100d0f0d100d0f291029102910290f2a0f2a0f2a0f2a0f000d050000000000000000",
-				"powerful": "260050020f0e0f0e0e0e0f0e0e0e0e000345723810290f0e0f0e0e0e0f29100e0e0e0f0e0e0e0e2a0f0e0f291029100e0e2a0f291029102910290f0e0f0e0e2a0f0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f29100d0f29100e0e0e0f0e0e2a0f2a0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e2a0f291029100e0e2a0f0e0e2a0f2b0e00047b73380f2a0f0e0f0e0e0e0f2a0f0e0e0e0e0e0f0e0e2a0f0e0f2910290f0e0f291029102910290f2a0f0e0f0e0e2a0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f29100e0e0e0f0e0e0e0f290f0e0f0e0e2a0f2a0f2a0f2a0f0e0e0e0f0e0e2a0f0e0f290f0e0f0e0e0e0f0e0e0e0f2910290f2a0f0e0f29102910290f0e0f00047b73380f2a0f0e0e0e0f0e0e2a0f0e0f0e0e0e0e0e0f29100e0e2a0f2a0f0e0e2a0f2a0f2a0f2a0f2a0f0e0e0e0f29100e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f290f0f0e0e0e2a0f2a0f2a0f0e0e0e0f0e0e0e0f291029100e0e2a0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e2a0f2a0f2a0f291029100e0e2a0f0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e2a0f29100e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e2a0f2a0f0e0e2a0f0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0f0e0e0e0e0e0f0e0e0e0f0e0e0e0f290f2a0f0e0f29100e0e0e0f0e0e0e0e0e0f0e0e0e0f29100e0e0e0f0e0e0e0e0e0f0e0e2a0f0e0f0e0e0e0f0e0e0e0e0e0f0e0e000d050000000000000000"
-			}
-		}
-	}
-}
+To capture a code, find the RM's type, IP and MAC with `uv run python discovery`, then:
+
+```bash
+uv run python broadlink_cli --type <type> --host <ip> --mac <mac> --learn
 ```
 
-#### Other Broadlink Devices
-##### Broadlink Types
-| Types  | Devices       |
-| -------|:-------------:|
-| SP2    | Smart Plug    |
-| SP4    | Smart Plug    |
+The RM's light turns white; press the button on the original remote and paste the printed hex into
+`commands.json`. Test with `--send <hex>`.
 
-* MP1 / MP2 / TC2 / TC3 / not supported yet
-* Supports multiple Broadlink devices in a room
-* Add to room's `broadlink_devices` list
-* To add Broadlink device(s) into a room, use the following JSON format
+Known issue: `broadlink_cli --learn` was written for an older broadlink library. On 0.19,
+`check_data()` raises instead of returning nothing while it waits, so `--learn` crashes after
+about 2 seconds. Learning over Telegram (`/learn`) is on the deferred list in PLAN.md.
 
-eg. Office's Light with SP2
+Aircon remotes send the whole state with every press (mode, temperature, fan, swing), so a captured
+"power on" always means one specific setting. See the IR decode table in PLAN.md.
+
+## Aircon state (Mitsubishi)
+
+Mitsubishi Electric aircons (144-bit protocol) are driven by the bot's own encoder instead of the raw
+captures. The captured `power_on` is decoded and becomes the room's preset:
+
+- **On** sends the preset (e.g. bedroom cool 22C fan 3 vane auto)
+- **Powerful** sends the preset with powerful on and fan auto, as the remote does
+- **Off** sends the last state the bot sent, with power off
+- **-1C / +1C / Swing / Fan** change one thing in the last state sent and send it in full. They never
+  switch an aircon on: if it is off (or the bot has sent nothing yet) they say "Press On first". Each
+  tap ends Powerful. Swing off goes back to the room's vane; Fan steps auto, 1-4, quiet.
+- **Settings** opens a card ([-] temp [+], fan, vane, Powerful) and **Send now** sends that state,
+  switching the aircon on if needed. The aircon's screen shows the last state sent.
+
+Supported: cool mode, 16-31C, fan auto/1-4/quiet, vane auto/1-5/swing, powerful. The last state sent
+is kept in `state/ac_state.json` and shown in `/status`; it is what the bot asked for, so it goes stale
+if someone uses the physical remote. Each send is logged with its `ac_state` in `device_events`.
+
+If an aircon ignores the bot's frames, set `AC_ENCODER=off` in `.env` and restart: every aircon goes
+back to sending its captured codes. Daikin aircons, and any capture the encoder cannot read, always
+use the captured codes.
+
+## Schedules and timers
+
+`/schedule` opens a menu: **+ New**, **My schedules**, **Tonight**. New walks through device, action,
+repeat on days or just once, time, days, then shows a preview with the next runs before anything is saved.
+
+- **Aircon on** uses a picker card: [-] temp [+], fan, vane, Powerful. It starts from the room preset.
+- **Change temp** only changes the temperature, and only if the bot last turned that aircon on; it never
+  switches on an aircon someone turned off.
+- **Timer** on an aircon's buttons: off in 30m / 1h / 2h / 3h, or at a time. Two taps, with Undo.
+- One line instead of buttons:
+
+  ```
+  /schedule add bedroom on 23:00 sun-thu cool 22 fan 3 name=Bedtime
+  /schedule add bedroom off in 2h
+  /schedule add office set 25 14:00 daily
+  /schedule tonight      /schedule list      /schedule help
+  ```
+
+When a schedule runs, its creator gets a silent message with **Undo** (10 minutes, only if nothing newer
+was sent), **Skip next** and **Pause**. Failures and missed runs make a sound; failures offer **Retry**.
+Two schedules for the same device within 5 minutes of each other count as a clash: you choose Keep both
+or Replace. Every change is logged in `logs/schedule_events-*.jsonl` and can be undone from its message.
+
+Rules worth knowing:
+
+- If the bot was not running at a scheduled time, that run is skipped and reported as missed. Nothing is
+  sent late.
+- A run in progress is marked before sending, so a restart never sends it twice.
+- After boot the Pi has no clock until NTP syncs, so schedules wait for NTP before running (shown in
+  `/status`).
+- Weekly schedules are capped at 50, timers at 10 per device. Removing a user hands their schedules to
+  whoever removed them.
+- Schedules live in `state/schedules.json`. A damaged entry is listed as broken and never runs; a
+  damaged file is moved aside (`schedules.json.broken-<time>`) and the bot starts with none.
+
+## Retries and safety
+
+- One device failing never stops the bot from starting; `/status` shows which ones are offline.
+- Taps and commands sent while the bot was offline are not run when it comes back (Telegram keeps
+  them for a day): the sender is told to send again. Messages older than 2 minutes count as offline.
+- The bot token is scrubbed from the logs.
+- A failed send rediscovers the device by MAC and retries once, but only when a repeat is harmless:
+  aircon frames (full state) are safe to resend, while toggles like TV power are never resent after an
+  unclear reply, so the TV is not switched on and off again.
+
+## Chat assistant
+
+Approved users can type to the bot in a private chat. A local model on the PC (whatever llama-server
+has loaded, thinking off) reads the message and picks tools; code does everything else.
+
+- It handles the managed aircons and their schedules: change settings ("a bit cooler" = 1C below what
+  the bot last sent), timers, repeating schedules, edit / pause / resume / delete, and questions such
+  as "is the bedroom aircon on?" or "what's scheduled tonight?". Anything else gets a polite no.
+- Nothing changes until you tap. Every action shows a card drawn by code, "Do this?" with each line as
+  before -> after, and [Do it] [Cancel] for 5 minutes. A newer request replaces your older card. If the
+  device or schedule changed since the card was drawn, Do it refuses and you ask again.
+- After Do it the card shows each line as ok or FAILED, with [Retry failed] and [Undo] for 10 minutes.
+  Undo re-sends the earlier aircon state (or restores the schedule), and refuses a line if something
+  newer happened to it.
+- What it says about an aircon is what the bot last sent; the physical remote is invisible to it.
+- It can look things up in the bot's own logs: "who turned on the bedroom aircon last night?", "when
+  did the office timer change?", "what did I ask you about the office?". It sees every aircon change
+  and schedule change (who, when, ok or failed) and only your own past messages, never anyone else's.
+  Messages that mention a note you told it to forget are hidden (best effort; the usage log on the
+  Pi still has the old messages, as it keeps everything).
+- It remembers your last 3 messages and its replies for 10 minutes, so "make it 23 and swing" works
+  as a follow-up.
+- Limits: one message at a time per person, 20 per 10 minutes. If the PC is off or busy you get a
+  one-line reply and can use `/keyboard` as usual.
+- While the wizard waits for "Type a time", a time you type goes to the wizard; anything else goes to
+  the assistant.
+- `LLM_ENABLED=off` in `.env` switches it off. `LLM_SLOT` (default 1) is the llama-server slot it
+  uses, so slot 0 stays free for the PC owner.
+
+Memory (`/memory` lists it, with a Forget button per item):
+
+- Notes: tell it something lasting ("the big room is the bedroom", "I sleep at 23 with fan quiet")
+  and it asks "Remember this?" [Remember] [No]. It decides whether a note is about the house (everyone's
+  assistant uses it; anyone can forget it; `/memory` shows who added it) or just you (private). Notes
+  are data for the assistant, never rules: text that tries to tell it how to behave is refused.
+- Recipes: spell out the steps ("save good night: bedroom 25 fan quiet, office off") and tap Save.
+  Saying "good night" later draws the usual card with every step (steps already done are skipped).
+- Limits: 30 notes per person, 30 house notes, 10 recipes per person, 200 characters per note. Stored
+  in `state/memory.json`; a damaged file is moved aside and memory starts empty.
+
+Outside (`/outside [area]`, or ask in chat: "how's the haze?", "will it rain in Jurong?"):
+
+- Live NEA data from data.gov.sg (no API key): 2-hour, 24-hour and 4-day forecasts, temperature,
+  rain, humidity, wind, lightning within 10 km in the last 30 minutes, UV, heat stress, PSI and PM2.5.
+- Home is `OUTSIDE_AREA` in `.env` (one of NEA's 47 areas, default City), with air readings for the
+  regions in `OUTSIDE_REGIONS` (default central; e.g. `east,central`). Name any of NEA's 47 areas
+  (or a region: "PSI in the west") for somewhere else.
+- AQI is worked out the way aqicn.org shows it: the US EPA AQI (pre-2024 table) on NEA's latest 1-hour
+  PM2.5, or NEA's PM10 / ozone / SO2 / CO sub-index if higher. PSI is NEA's official 24-hour index.
+  Bands and the advice line come from code (NEA's advice for healthy people), never from the model.
+- Every line says when NEA measured it. Replies are cached 10 minutes and at most 5 calls go to NEA per
+  10 seconds. If NEA is down, the last good data is shown with its age, up to 6 hours old.
+- `/outside` works without the PC (no LLM). Outside conditions only come up when you ask.
+
+Holidays ("is next Monday a PH?", "next long weekend?", "holidays next year"):
+
+- MOM's public holiday list (with "Observed" Mondays and days such as polling day) from data.gov.sg,
+  refreshed monthly in the background and saved in `state/holidays.json`; a built-in 2026-2027 list is the
+  fallback. Christmas Eve, New Year's Eve and CNY eve are known as eves, not holidays.
+- Long weekends (3+ days off with a holiday) are worked out in code.
+- Schedules still run on holidays. A schedule or timer card says when it will run on one, and the
+  assistant sees holidays marked on the dates of the coming week.
+
+Every chat turn that reached the model has its full requests and replies in
+`logs/llm/llm-YYYY-MM-DD.jsonl` (kept 90 days), to replay against a new model or prompt later. Group chats and strangers never reach the model.
+
+## Usage log
+
+`turns-YYYY-MM.jsonl` has one line per message, button tap or schedule fire: who (strangers too, with
+their Telegram name), the raw text or button data, the outcome, time inside the bot (`total_ms`), time
+spent sending IR (`ir_ms`) and, for messages, the delay from Telegram (`lag_s`, whole seconds). Lines
+link to `device_events` by `request_id`. Nothing is deleted: the raw text is kept on purpose, as real
+phrasing to test the LLM assistant against later. The files stay on the Pi and are never committed.
+
+## Coming next
+
+Weekly usage patterns and reminders ("turn on the bedroom aircon?" at your usual time). See PLAN.md.
+
+## Development
+
+```bash
+uv sync
+uv run pytest -q
 ```
-{
-	"id": "office-light",
-	"mac_address": "780f771888eg",
-	"broadlink_type": "SP2"
-}
-```
 
-* See [Sample JSONs](#sample-jsons) for more room and device examples
+## License
 
-
-### Users
-* Server will validate both Telegram user's ID and Name
-* User will not be able to delete him/her self
-* Key value of Telegram User ID -> User Name
-* We have to add at least one user and add other users through the first user
-
-eg. Add John's Telegram account with user ID 1234567 and username `John`
-```
-{
-	"1234567": "John"
-}
-```
-
-
-### Sample JSONs
-* [Rooms & Devices](docs/sample_devices.json)
-* [Commands](docs/sample_commands.json)
-* [Users](docs/sample_users.json)
-
-
-### Learning Commands
-#### Pre-requisites
-* Your various broadlink devices are configured and running in your network (Refer to [Broadlink Device](#broadlink-devices), for more details)
-* Completed Step 1-9 in [Run](#run)
-* Installed `python-broadlink` library as we will be using the `cli` commands [here](https://github.com/mjg59/python-broadlink/tree/master/cli)
-* Make sure you have your device(s) Type / IP / MAC Address
-* To retrieve device(s) IP / MAC address
-  1. Open `python` shell
-  1. Import python-broadlink library `import broadlink`
-  1. Discover all devices `devices = broadlink.discover(timeout=5)`
-  1. To get a list of discovered devices in the variable devices eg. `[<broadlink.rm at 0x45a62f0>]`
-  1. We need the device's type, host (IP), and MAC address information
-  1. Iterate all discovered devices print details
-  1. For use `for d in devices: print(d.type, d.host, "".join(format(x, '02x') for x in d.mac))`
-  1. Save this information which will be used with the `cli` app
-* Note: This step is currently done manually on shell, the ideal future will be a conversation
-command in the app to **add / remove / edit** device commands
-
-#### Steps to learn IR command
-1. Make sure you have your device(s) Type / IP / MAC Address (refer to Pre-requisites for more details)
-2. Refer to library's `type` definitions [here](https://github.com/mjg59/python-broadlink/blob/master/broadlink/__init__.py#L31)
-3. `python broadlink_cli --type <type> --host <host> --mac <mac address> --learn`
-4. `cli` app will output `Learning...`. Your RM device should light indicator will light up as **white**
-<img src="docs/screenshots/rm3_learning.jpg" width="240" height="320">
-
-5. When it's white, point your IR remote controller to the top of the device and press the selected feature to learn the command
-6. The `cli` app will print out the learned data, save this value in `commands.json` (See [Device's Commands](#device-commands) for more details on how to save learned command)
-7. To test learned data with `python broadlink_cli --type <type> --host <host> --mac <mac address> --send <learned data>`
-
-
-### Usage
-#### Controlling devices
-* Type `/keyboard` to begin
-* First menu is to select the room ![Select Room](docs/screenshots/keyboard_start.jpg)
-* After selecting the room, select the device in the room ![Select Device](docs/screenshots/keyboard_room_device.jpg)
-* The device's feature buttons will be shown ![Device feature buttons](docs/screenshots/keyboard_device_features.jpg)
-* On successful sent of the selected feature, the app will receive a feedback from the server
-* eg. App
-* <img src="docs/screenshots/keyboard_feature_query_alert_app.jpg" width="728" height="424">
-* eg. Mobile
-* <img src="docs/screenshots/keyboard_feature_query_alert_mobile.jpg" width="292" height="501">
-* Use `Back` or `Jump to Rooms` button to go back to previous menu or jump to select room menu
-* To close, press the `Close` button and the menu keyboard will be closed
-![Closed](docs/screenshots/keyboard_close.jpg)
-
-#### Add Users
-* Conversation Flow (Start conversation -> input user's user_id -> input user's username -> Successfully added user)
-* Type `/adduser` to begin
-* Input the user's user id (The user may use `/ping` to find out user id)
-* Input the user's user name
-* Success!
-* At any time if you wish to cancel adding user, you can type `/canceladduser` to cancel add user conversation
-* Type `/user` or `/status` to check which user(s) are approved
-![Add User Example conversation flow](docs/screenshots/add_user.jpg)
-
-#### Remove Users
-* Type `/user` to begin
-* Select `Delete User` next to the user you want to remove
-![Remove User](docs/screenshots/remove_user.jpg)
-* Select `Yes` to confirm removal of the selected user or `No` to go back to user menu keyboard ![Confirmation of removal user](docs/screenshots/remove_user_yes_no.jpg)
-* On successful removal of selected user, the app will receive a feedback from the server stating the user's id and name that was removed
-![Remove success query alert](docs/screenshots/remove_successful_query_alert.jpg)
-* To close, press the `Close` button and the user menu keyboard will be closed
-
-
-# Run
-1. Make sure you have Python 3.6++
-1. Clone or fork the repository (https://github.com/joh90/iot)
-1. `sudo apt-get install build-essential libssl-dev libffi-dev python3.6-dev` for Debian / Ubuntu
-1. Install virtualenv (`pip3 install virtualenv`) (https://docs.python-guide.org/dev/virtualenvs/)
-1. Create virtualenv for the repository (`python3 -m virtualenv <folder name>`)
-1. Activate your virtualenv (`source <folder name>/bin/activate`)
-1. Go to folder `cd iot`
-1. Install requirements `pip3 install -r requirements.txt` (this might take some time)
-1. Update `devices.json` with configuration
-1. Add your telegram user to `users.json` (Refer to [Users](#users))
-1. Run! ```python main.py --bot_id <BOT_ID> --bot_secret <BOT_SECRET> --name <Bot Name>```
-1. You can pass your own users and devices json file, `python main.py --help` for more details
-1. Find and add your bot to your Telegram
-1. Enjoy!
-
-
-# Screenshots
-### Commands
-#### Start (/start)
-* Desktop App
-![Start Command](docs/screenshots/command_start.jpg)
-* Mobile App
-<img src="docs/screenshots/command_start_mobile.jpg" width="292" height="501">
-
-#### Ping (/ping)
-* Desktop App
-![Ping Command](docs/screenshots/command_ping.jpg)
-
-* Mobile App
-<img src="docs/screenshots/command_ping_mobile.jpg" width="292" height="501">
-
-#### Status (/status)
-* Desktop App
-![Status Command](docs/screenshots/command_status.jpg)
-
-* Mobile App
-<img src="docs/screenshots/command_status_mobile.jpg" width="292" height="501">
-
-#### List (/list)
-* Desktop App
-![List Command](docs/screenshots/command_list.jpg)
-
-#### Keyboard (/keyboard)
-* Desktop App
-![Keyboard Command](docs/screenshots/keyboard_start.jpg)
-![Keyboard Room's device](docs/screenshots/keyboard_room_device.jpg)
-![Device's features](docs/screenshots/keyboard_device_features.jpg)
-
-* Mobile App
-<img src="docs/screenshots/keyboard_start_mobile.jpg" width="292" height="501">
-<img src="docs/screenshots/keyboard_room_device_mobile.jpg" width="292" height="501">
-<img src="docs/screenshots/keyboard_device_features_mobile.jpg" width="292" height="501">
-
-#### User (/user)
-* Desktop App
-![User Command](docs/screenshots/command_user.jpg)
-
-* Mobile App
-<img src="docs/screenshots/command_user_mobile.jpg" width="292" height="501">
-
-
-# Videos
-### Turning on/off Aircon
-**To be added**
-
-### Turning on/off TV
-**To be added**
-
-
-# Future
-### Minor Improvements
-- [ ] Improve Room / Device listing
-- [ ] Use 2 columns if Inline Keyboard menu buttons are more than 8
-- [ ] On / Off device in room keyboard menu level
-- [ ] Sort device's feature with power on and off first
-- [ ] Send / Backup JSONs
-
-### Major Features
-- [ ] Room / User last command (with time)
-- [ ] Custom Macros
-- [ ] Favorite Keyboard, custom make your own keyboard buttons
-- [ ] Room / Device CRUD (conversation style)
-- [ ] Learn device command (conversation style) (+ if device command cannot be found / convo command)
-- [ ] Set Top Box network provider channel bindings
-- [ ] Support TC2 light switches
-- [ ] Support Multimedia device's menu into up / down / left / right keyboard
-- [ ] Support Broadlink power strip
-- [ ] Restart server
-- [ ] Triggers with scheduler (on specific day / time of day / repeatable to do something)
-
-
-# Limitation
-* You have to learn your own device's command if it is not available from the project
-* With IR devices, the server will not be able to know the current state, only last send commands
-* If the home / office's internet goes down, you will not be able to send command to your devices
-* If your computer / Raspberry-PI hosting the server dies / restart, you will not be able to send command to your devices
-* 2 devices in the same room may result in both devices receiving the IR commands sent from the server
-
-
-# Contributing
-* Fork the project
-* Create branch in your fork project (from master)
-* Make and test your changes
-* Commit to the branch you created (with meaningful commit messages)
-* From your fork project, create a pull request (with meaningful comments with purpose of the change)
-* Fix comments from reviewers (if any)
-* Admins will merge your pull request, when it has enough approval
-* Thanks for contributing!
-
-# License
-* MIT License
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
+MIT, see [LICENSE](LICENSE).
