@@ -93,7 +93,20 @@ class NeaClient:
             got = Fetched(body["data"], self._clock())
             self._cache[key] = got
             self._failed.pop(key, None)
+            self._prune(got.at, key)
             return got
+
+    def _prune(self, now: float, keep: str) -> None:
+        """Drop what can no longer be used: replies older than STALE_MAX_S (yesterday's lightning
+        key would otherwise stay forever), old failures, and idle locks of dropped keys."""
+        for k in [k for k, f in self._cache.items() if k != keep and f.age_s(now) > STALE_MAX_S]:
+            del self._cache[k]
+        for k in [k for k, at in self._failed.items() if now - at > BACKOFF_S]:
+            del self._failed[k]
+        # A lock just released may still have a woken waiter: keep any lock someone holds or waits on
+        for k in [k for k, lock in self._locks.items()
+                  if k != keep and k not in self._cache and not lock.locked() and not getattr(lock, "_waiters", None)]:
+            del self._locks[k]
 
     async def _slot(self, max_wait: float = MAX_WAIT_S) -> bool:
         """Wait for a throttle slot (at most `max_wait` s); False if none came."""

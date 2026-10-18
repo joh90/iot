@@ -352,3 +352,58 @@ async def test_an_answer_claiming_an_action_is_nudged_then_refused():
 ])
 def test_schedule_ids_never_reach_the_person(text, out):
     assert asst.clean_answer(text) == out
+
+
+# ---- which aircon (live 2026-10-15: "off my aircon in 35 mins" got timers on both) ---------
+
+TWO = [("bedroom-aircon", "joh-bedroom"), ("office-aircon", "office")]
+
+
+@pytest.mark.parametrize("text", ["Ok set a one time timer to off my aircon in 35 mins", "turn on the aircon",
+                                  "can you off my ac?", "make the air con 23"])
+def test_a_change_that_names_no_aircon_is_asked_about(text):
+    assert asst.which_device(text, TWO) == "Which aircon: bedroom or office?"
+
+
+@pytest.mark.parametrize("text", ["off the bedroom aircon", "remove the bedrom aircon off at 10:41",   # typo
+                                  "office ac 24", "turn off all the aircons", "both aircons off",
+                                  "is my aircon on?", "what is the aircon set to", "off it", "make it 23",
+                                  # reads, statements, notes, schedules, plurals (review 2026-10-18)
+                                  "can you check if the ac is on", "aircon still on?", "show me the aircon schedules",
+                                  "thanks the aircon is great now", "forget that I like the aircon at 24",
+                                  "pause the aircon schedules", "turn off the aircons", "off the acs"])
+def test_a_named_room_all_or_a_question_needs_no_asking(text):
+    assert asst.which_device(text, TWO) is None
+
+
+def test_a_room_named_just_before_counts():
+    assert asst.which_device("make the aircon 23", TWO, before="turn on the office ac") is None
+    assert asst.which_device("make the aircon 23", TWO, before="hello") == "Which aircon: bedroom or office?"
+
+
+def test_one_aircon_is_never_ambiguous():
+    assert asst.which_device("off my aircon", TWO[:1]) is None
+
+
+async def test_the_question_is_asked_in_code_and_kept_for_the_reply():
+    srv = FakeServer([completion("ok")])
+    a = Assistant(srv.client(), list, "Asia/Singapore", Clock(), aircons=lambda: TWO)
+    o = await a.handle(ALICE, "off my aircon in 35 mins")
+    assert (o.kind, o.text) == ("asked", "Which aircon: bedroom or office?") and srv.requests == []
+    assert outcome_text(o) == "Which aircon: bedroom or office?"
+    assert [m["content"] for m in a.context(ME)] == ["off my aircon in 35 mins", "Which aircon: bedroom or office?"]
+
+
+async def test_a_plain_change_shows_no_note_but_a_mixed_one_does():
+    from tests.test_llm import SET_AC
+    for text, said, note in (("pause the 7am one", "Bed time is active.", ""),
+                             ("off the office, is bed time paused?", "Bed time is active.", "Bed time is active."),
+                             # a partial card keeps what is missing (review 2026-10-18)
+                             ("off the office and the 10:41 timer", "Office off. There is no timer at 10:41.",
+                              "There is no timer at 10:41."),
+                             ("pause the 7am one", "The 7am one has been paused.", "")):
+        a, _ = make_assistant([completion(said,
+                                          [call("set_ac", {"device": "office-aircon", "power": False})])])
+        a.add_tools(lambda actor: [SET_AC])
+        o = await a.handle(ALICE, text)
+        assert (o.kind, o.text) == ("actions", note), text

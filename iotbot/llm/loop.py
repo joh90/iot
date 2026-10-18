@@ -32,7 +32,8 @@ CLAIM_RE = re.compile(
     r"\bcards? (is |are |has been |was )?(shown|sent|ready|below|above|drawn)\b|\[card\b|"
     r"\btap (do it|remember|save)\b|\bdo this\?|"
     r"\b(i will|i'll|i am going to|i'm going to|let me) (now )?(turn|set|switch|change|make|run|start|stop)\b|"
-    r"\bturning (it |the \w+ )?(on|off) (now|for you)\b|\b(has|have) been (turned|set|switched|changed)\b|"
+    r"\bturning (it |the \w+ )?(on|off) (now|for you)\b|"
+    r"\b(has|have) been (turned|set|switched|changed|paused|resumed|deleted|removed|added|created|scheduled)\b|"
     r"\b(i've|i have|done|ok)[,.!]? .{0,40}\bis now (on|off|set)\b|"
     r"\b(i've|i have|i will|i'll) (now )?(noted|note|saved|save|remembered|remember|stored|store)\b|"
     r"\bnoted that\b", re.IGNORECASE)
@@ -55,6 +56,8 @@ NOTE_DROP_RE = re.compile(
     r"deleted|removed|changed|updated|turn(ed)? (on|off)|switch(ed)? (on|off))\b|"
     r"^\W*(ok|okay|sure|got it|here you go|here it is|-)?\W*$", re.IGNORECASE)
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+# A sentence about something that is not there or cannot be done
+MISSING_RE = re.compile(r"\b(no|not|none|isn't|aren't|doesn't|don't|cannot|can't|couldn't|nothing)\b", re.IGNORECASE)
 # Tool-call markup in plain text: the server's parser missed a (malformed) call
 TOOL_MARKUP_RE = re.compile(r"<tool_call>|</?function[=>]|<parameter=|</tool_call>")
 
@@ -91,17 +94,19 @@ class TurnResult:
 
 
 async def run_turn(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool],
-                   timeout_s: float = TURN_TIMEOUT_S, check_slot: bool = True, ask_rest: bool = False) -> TurnResult:
+                   timeout_s: float = TURN_TIMEOUT_S, check_slot: bool = True, ask_rest: bool = False,
+                   plain: bool = False) -> TurnResult:
     """`messages` = system + context + the new user message. Tool rounds go into a copy, so
     the caller's list never holds half a round (tool calls without results). `ask_rest`: the
     message looks like it also asks something, so a card made without any read gets one more
-    model call for that answer. Never raises."""
+    model call for that answer. `plain`: the message asks nothing besides the change, so a card
+    shows no note from the model. Never raises."""
     out = TurnResult("failed")
     try:
         async with asyncio.timeout(timeout_s):
             if check_slot:
                 await llm.check_slot()
-            await _loop(llm, list(messages), tools, out, ask_rest)
+            await _loop(llm, list(messages), tools, out, ask_rest, plain)
     except TimeoutError:
         _failed(out, "timeout")
     except LlmError as e:
@@ -146,7 +151,7 @@ def _check_calls(reply: Reply, by_name: dict[str, Tool]) -> list[Checked]:
 
 
 async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool], out: TurnResult,
-                ask_rest: bool = False) -> None:
+                ask_rest: bool = False, plain: bool = False) -> None:
     by_name = {t.name: t for t in tools}
     specs = [t.spec() for t in tools]
     nudged = False
@@ -156,7 +161,14 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
 
     def card(actions: list[Action], text: str | None) -> None:
         out.kind, out.actions, out.error = "actions", actions, None
-        out.text = _note(text, _subjects(actions)) or ("Left out: " + "; ".join(already) + "." if already else "")
+        # Words above a card only answer what else the message asked; a plain change gets none
+        # (live: "pause the 7am one" got "...has been paused. It will resume automatically ...")
+        note = _note(text, _subjects(actions))
+        if plain:
+            # Only what is missing or left out ("There is no bedroom timer at 10:41"), so a card that
+            # covers part of the message does not read as the whole of it
+            note = " ".join(s for s in SENTENCE_RE.split(note) if MISSING_RE.search(s))
+        out.text = note or ("Left out: " + "; ".join(already) + "." if already else "")
 
     for _ in range(MAX_TOOL_ROUNDS + 1):
         reply = await llm.chat(messages, specs)

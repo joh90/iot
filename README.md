@@ -13,8 +13,10 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 - `/on <device>`, `/off <device>`, `/d <device> <action>` (e.g. `/d bedroom_ac power on high`)
 - `/status` shows uptime, the last action, the last state sent to each aircon, every Broadlink device (online or offline) and config warnings
 - `/list` shows rooms, devices and the actions each one has
-- `/user` lists approved users with a Remove button; `/adduser <user id> <name>` approves someone
+- `/user` lists approved users with a Remove button; `/adduser <user id> <name>` approves someone.
+  With `ADMIN_IDS` set in `.env`, only those users may approve or remove; empty, everyone may
 - `/ping` works for anyone and shows their Telegram user id (needed to approve them)
+- The bot works in private chats only: in a group it answers nothing, so nothing shows there
 - `/stats [days]` shows how fast the bot answers (p50/p95 per surface, share under 300 ms), the slowest
   remotes, failed sends and who or what sent them, strangers, chat assistant use, and whether the LLM PC
   answers (default 7 days)

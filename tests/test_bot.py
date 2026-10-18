@@ -282,3 +282,21 @@ async def test_odd_digit_callback_does_not_crash(ctx):
     u = make_update(ME, data="us:ask:\u00b2")
     await hd.on_button(u, make_context(ctx))
     u.callback_query.answer.assert_awaited()
+
+
+async def test_groups_get_nothing_private_chats_pass(ctx):
+    from telegram.ext import ApplicationHandlerStop
+    u = make_update("/status")
+    await hd.private_only(u, make_context(ctx))                        # private: goes on
+    for kind in ("group", "supergroup", "channel"):
+        u.effective_chat = SimpleNamespace(id=-100, type=kind)
+        with pytest.raises(ApplicationHandlerStop):
+            await hd.private_only(u, make_context(ctx))
+
+
+def test_superscript_digits_are_not_numbers():
+    # "²".isdigit() is True but int("²") raises: such checks use isdecimal (review #15)
+    from iotbot.bot import acpicker
+    from iotbot.llm.home import _setting
+    assert _setting("fan", "²") == "²" and _setting("fan", "3") == 3
+    assert acpicker.decode_state("²²aa0") is None

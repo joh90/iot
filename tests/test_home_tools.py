@@ -29,6 +29,8 @@ def home(tmp_path):
 
 async def prep(home, name, args):
     t = home.tools[name]
+    if "schedule_id" in args:
+        await home.tools["list_schedules"].run({})        # as the model must, in the same turn
     return await t.prepare(parse_args(t, json.dumps(args)))
 
 
@@ -164,7 +166,7 @@ async def test_edit_shows_before_and_after_and_undo_restores(home):
     done = await p.run(ALICE)
     assert done.ok and home.ctx.schedules.get(sid).when.time == "07:30"
     assert (await done.undo(ALICE)).ok and home.ctx.schedules.get(sid).when.time == "07:00"
-    with pytest.raises(ArgError, match="no schedule nope"):
+    with pytest.raises(ArgError, match="call list_schedules first"):          # not in the list: refused
         await prep(home, "edit_schedule", {"schedule_id": "nope", "at": "07:30"})
     with pytest.raises(ArgError, match="no date"):
         await prep(home, "edit_schedule", {"schedule_id": sid, "date": "2030-01-01"})
@@ -229,6 +231,7 @@ async def test_card_names_hide_ids_and_two_new_schedules_fit_one_card(home):
     assert await lp._prepare(calls) == {}
     await calls[0].prepared.run(ALICE)
     sid = home.ctx.schedules.list()[0].id
+    await home.tools["list_schedules"].run({})
     twice = [lp.Action(home.tools["pause_schedule"], {"schedule_id": sid}),
              lp.Action(home.tools["delete_schedule"], {"schedule_id": sid})]
     refused = await lp._prepare(twice)
@@ -320,7 +323,7 @@ async def test_schedules_of_other_devices_are_out_of_reach(home):
     assert (await svc.apply(A(ME, "Alice", "button"), r.data["plan_id"])).ok
     sid = svc.list()[0].id
     assert (await home.tools["list_schedules"].run({}))["schedules"] == "none"
-    with pytest.raises(ArgError, match="no schedule"):
+    with pytest.raises(ArgError, match="call list_schedules first"):
         await prep(home, "delete_schedule", {"schedule_id": sid})
 
 
@@ -385,3 +388,92 @@ async def test_schedule_card_notes_a_public_holiday_run(home):
     p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "08:00",
                                           "date": (day + timedelta(days=1)).isoformat()})
     assert "public holiday" not in p.line
+
+
+async def test_schedule_changes_take_only_ids_listed_in_this_turn(home):
+    # Live 2026-10-15: "remove the 10:41 timer" made a card deleting the daily 12:00 schedule,
+    # an id the model had seen in an earlier message; the new timer's id it never saw
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "12:00", "days": ["mon"]})
+    await p.run(ALICE)
+    sid = home.ctx.schedules.list()[0].id
+    turn = {t.name: t for t in HomeTools(home.ctx).tools(ALICE)}          # a new turn: nothing listed yet
+    for name in ("delete_schedule", "pause_schedule", "edit_schedule"):
+        args = {"schedule_id": sid} | ({"at": "13:00"} if name == "edit_schedule" else {})
+        with pytest.raises(ArgError, match="call list_schedules first"):
+            await turn[name].prepare(parse_args(turn[name], json.dumps(args)))
+    with pytest.raises(ArgError, match="call list_schedules first"):          # a guess, not just a stale id
+        await turn["resume_schedule"].prepare({"schedule_id": "s0000"})
+    await turn["list_schedules"].run({})
+    assert "delete" in (await turn["delete_schedule"].prepare({"schedule_id": sid})).line
+    later = {t.name: t for t in HomeTools(home.ctx).tools(ALICE)}         # the next turn starts empty again
+    with pytest.raises(ArgError, match="call list_schedules first"):
+        await later["delete_schedule"].prepare({"schedule_id": sid})
+
+
+def test_said_times_reads_clock_times_only():
+    from iotbot.llm.home import said_times
+    assert said_times("remove the bedroom timer for 10:41 thanks") == {641}
+    assert said_times("pause the 7am one and the 7.30pm one") == {420, 1170}
+    assert said_times("off at noon, on at midnight, 12am, 12:15 pm") == {720, 0, 735}
+    assert said_times("timer to off my aircon in 35 mins") == set() == said_times("set it to 23")
+
+
+async def test_a_change_must_match_the_time_the_person_said(home):
+    from iotbot.llm.tools import message_text
+    await (await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "12:00", "days": ["mon"]})).run(ALICE)
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "on", "at": "23:00", "days": ["mon"]})
+    await p.run(ALICE)
+    svc = home.ctx.schedules
+    bed0 = next(s for s in svc.list() if s.when.time == "23:00")
+    r = svc.plan(ALICE, {"label": "Bed time"}, bed0.id, bed0.rev)
+    assert r.ok and (await svc.apply(ALICE, r.data["plan_id"])).ok, r.message
+    noon, bed = sorted(home.ctx.schedules.list(), key=lambda s: s.when.time)
+    await home.tools["list_schedules"].run({})
+    reset = message_text.set("oops remove the bedroom timer for 10:41 thanks")       # live 2026-10-15
+    with pytest.raises(ArgError, match="said 10:41, but this one runs at 12:00"):
+        await home.tools["delete_schedule"].prepare({"schedule_id": noon.id})
+    message_text.set("delete the 12:01 one")                                    # within 2 min is the same
+    assert (await home.tools["delete_schedule"].prepare({"schedule_id": noon.id})).line
+    message_text.set("move bed time to 22:30")                                  # named, and the new time
+    assert (await home.tools["edit_schedule"].prepare({"schedule_id": bed.id, "at": "22:30"})).line
+    message_text.set("pause bed time I'm back at 6pm")                          # named: the label wins
+    assert (await home.tools["pause_schedule"].prepare({"schedule_id": bed.id})).line
+    message_text.set("delete the noon one and the 11pm one")                    # several targets: no guard
+    assert (await home.tools["delete_schedule"].prepare({"schedule_id": noon.id})).line
+    message_text.set("move the 11pm one to 22:30")
+    assert (await home.tools["edit_schedule"].prepare({"schedule_id": bed.id, "at": "22:30"})).line
+    message_text.set("pause the 7am one")
+    with pytest.raises(ArgError, match="runs at 23:00"):
+        await home.tools["pause_schedule"].prepare({"schedule_id": bed.id})
+    message_text.reset(reset)
+
+
+
+async def test_a_label_matches_as_a_whole_word_only(home):
+    from iotbot.llm.tools import message_text
+    await (await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "12:00", "days": ["mon"]})).run(ALICE)
+    s = home.ctx.schedules.list()[0]
+    svc = home.ctx.schedules
+    r = svc.plan(ALICE, {"label": "Bed"}, s.id, s.rev)
+    assert r.ok and (await svc.apply(ALICE, r.data["plan_id"])).ok
+    await home.tools["list_schedules"].run({})
+    token = message_text.set("remove the bedroom timer for 10:41")             # "Bed" is not "bedroom"
+    try:
+        with pytest.raises(ArgError, match="said 10:41"):
+            await home.tools["delete_schedule"].prepare({"schedule_id": s.id})
+    finally:
+        message_text.reset(token)
+
+
+async def test_loop_lists_in_one_round_and_writes_in_the_next(home):
+    # Same round: the write is prepared before the list runs, so it is refused; next round it works
+    from iotbot.llm import loop as lp
+    from tests.test_llm import FakeServer, call, completion
+    await (await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "12:00", "days": ["mon"]})).run(ALICE)
+    sid = home.ctx.schedules.list()[0].id
+    turn = HomeTools(home.ctx).tools(ALICE)
+    srv = FakeServer([completion("", [call("list_schedules", {}, "a"), call("delete_schedule", {"schedule_id": sid}, "b")]),
+                      completion("", [call("delete_schedule", {"schedule_id": sid}, "c")])])
+    out = await lp.run_turn(srv.client(), [{"role": "user", "content": "delete the noon one"}], turn)
+    assert out.kind == "actions" and out.tool_calls == ["list_schedules", "delete_schedule!", "delete_schedule"]
+    assert "call list_schedules first" in srv.requests[1]["messages"][-1]["content"]

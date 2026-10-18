@@ -109,12 +109,12 @@ def parse_settings(words: list[str], base: AcState) -> AcState:
             elif re.fullmatch(r"\d{2}c?", w):
                 st = st.with_changes(temp=int(w.rstrip("c")))
             elif w == "fan" and nxt:
-                st = st.with_changes(fan=int(nxt) if nxt.isdigit() else nxt)
+                st = st.with_changes(fan=int(nxt) if nxt.isdecimal() else nxt)
                 i += 1
             elif w == "quiet":
                 st = st.with_changes(fan="quiet")
             elif w == "vane" and nxt:
-                st = st.with_changes(vane=int(nxt) if nxt.isdigit() else nxt)
+                st = st.with_changes(vane=int(nxt) if nxt.isdecimal() else nxt)
                 i += 1
             elif w == "swing":
                 st = st.with_changes(vane="swing")

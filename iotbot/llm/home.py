@@ -10,13 +10,14 @@ Only managed aircons (full-state encoder) are offered: toggle IR stays button-on
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from iotbot.ac.state import FANS, TEMP_MAX, TEMP_MIN, VANES, AcStateError
 from iotbot.llm.cards import Done, Prepared
-from iotbot.llm.tools import AlreadyError, ArgError, Tool
+from iotbot.llm.tools import AlreadyError, ArgError, Tool, message_text
 from iotbot.result import Actor, Result
 from iotbot.schedule import text as tx
 from iotbot.schedule.model import DAYS, Schedule
@@ -39,7 +40,7 @@ STATE_NOTE = "This is what the bot last sent. Someone may have used the physical
 
 def _setting(key: str, raw: Any) -> Any:
     """Tool strings -> AcState values ("3" -> 3 for fan/vane)."""
-    return int(raw) if key in ("fan", "vane") and isinstance(raw, str) and raw.isdigit() else raw
+    return int(raw) if key in ("fan", "vane") and isinstance(raw, str) and raw.isdecimal() else raw
 
 
 def _ago(seconds: float) -> str:
@@ -70,11 +71,15 @@ class HomeTools:
         if not acs:
             return []
         device = {"type": "string", "enum": acs}
+        # Ids list_schedules returned in THIS turn: changes take only those, so the model cannot reuse
+        # an id from an earlier message or guess one (live 2026-10-15: "remove the 10:41 timer" got
+        # a card deleting the daily 12:00 schedule, the only id it had seen)
+        listed: set[str] = set()
         return [
             Tool("get_home_state", "What the bot last sent to each aircon, when, and by whom.",
                  {"type": "object", "properties": {}}, run=self._state),
             Tool("list_schedules", "All schedules and timers with their ids, what they do, when, and the next run.",
-                 {"type": "object", "properties": {"device": device}}, run=self._list),
+                 {"type": "object", "properties": {"device": device}}, run=lambda a: self._list(a, listed)),
             Tool("set_ac", "Change one aircon now. Give only what the person asked for; the rest keeps "
                            "the bot's last settings. temp_change is relative (-1 = a bit cooler). Setting temp, fan or "
                            "swing on an aircon that is off turns it on; power true alone resumes its last settings.",
@@ -102,16 +107,16 @@ class HomeTools:
                               "items": {"type": "string", "enum": list(DAYS)}},
                      "action": {"type": "string", "enum": ["on", "off", "set"]},
                      "label": {"type": "string", "maxLength": 40}, **SETTINGS}},
-                 write=True, prepare=lambda a: self._prep_edit(actor, a)),
+                 write=True, prepare=lambda a: self._prep_edit(actor, a, listed)),
             Tool("delete_schedule", "Delete a schedule or timer.",
                  {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID}},
-                 write=True, prepare=lambda a: self._prep_simple(actor, a, "delete")),
+                 write=True, prepare=lambda a: self._prep_simple(actor, a, "delete", listed)),
             Tool("pause_schedule", "Pause a repeating schedule (until a date, or until resumed).",
                  {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID, "until": {**DATE, "description": "YYYY-MM-DD, only if the person gave a date"}}},
-                 write=True, prepare=lambda a: self._prep_simple(actor, a, "pause")),
+                 write=True, prepare=lambda a: self._prep_simple(actor, a, "pause", listed)),
             Tool("resume_schedule", "Resume a paused schedule.",
                  {"type": "object", "required": ["schedule_id"], "properties": {"schedule_id": SID}},
-                 write=True, prepare=lambda a: self._prep_simple(actor, a, "resume")),
+                 write=True, prepare=lambda a: self._prep_simple(actor, a, "resume", listed)),
         ]
 
     # ---- reads -------------------------------------------------------------------------
@@ -131,7 +136,7 @@ class HomeTools:
             out.append(row)
         return {"aircons": out, "note": STATE_NOTE}
 
-    async def _list(self, args: dict[str, Any]) -> dict[str, Any]:
+    async def _list(self, args: dict[str, Any], listed: set[str] | None = None) -> dict[str, Any]:
         svc = self.ctx.schedules
         now = svc.now()
         rows = []
@@ -143,6 +148,8 @@ class HomeTools:
             status = "paused" if not s.enabled else (
                 f"paused until {tx.fmt_at(s.paused_until, now, self.tz)}" if paused else "active")
             rows.append({"id": s.id, "status": status, "text": tx.describe(s, now, self.tz)})
+            if listed is not None:
+                listed.add(s.id)
         return {"schedules": rows or "none"}
 
     # ---- aircon ------------------------------------------------------------------------
@@ -270,8 +277,8 @@ class HomeTools:
             spec["label"] = args["label"]
         return self._plan_item(actor, spec, None, "new")
 
-    async def _prep_edit(self, actor: Actor, args: dict[str, Any]) -> Prepared:
-        cur = self._schedule(args["schedule_id"])
+    async def _prep_edit(self, actor: Actor, args: dict[str, Any], listed: set[str] | None = None) -> Prepared:
+        cur = self._schedule(args["schedule_id"], listed, args)
         spec: dict[str, Any] = {}
         if {"at", "date", "days"} & set(args):
             if cur.is_timer and "days" in args:
@@ -308,11 +315,37 @@ class HomeTools:
             return ""
         return "Runs on a public holiday: " + ", ".join(f"{r:%a} {r.day} {r:%b} ({n})" for r, n in hits[:2])
 
-    def _schedule(self, sid: str) -> Schedule:
+    def _schedule(self, sid: str, listed: set[str] | None = None, args: dict[str, Any] | None = None) -> Schedule:
+        if listed is not None and sid not in listed:
+            raise ArgError("call list_schedules first and take the id from that list; ids from earlier "
+                           "messages or guesses are not accepted")
         s = self.ctx.schedules.get(sid)
         if s is None or s.device not in self.acs():
             raise ArgError(f"no schedule {sid}; call list_schedules for the ids")
+        if listed is not None and (wrong := self._other_time(s, message_text.get(), args or {})):
+            raise ArgError(wrong)
         return s
+
+    def _other_time(self, s: Schedule, text: str, args: dict[str, Any]) -> str | None:
+        """The person named a time and this schedule does not run at it (live 2026-10-15: "remove
+        the bedroom timer for 10:41" offered the daily 12:00). None when no time was said, when
+        they named the schedule, or when a said time matches (within 2 min)."""
+        said = {m for m in said_times(text) if f"{m // 60:02d}:{m % 60:02d}" != args.get("at")}
+        named = s.label and re.search(rf"\b{re.escape(s.label)}\b", text, re.IGNORECASE)   # "Bed" is not "bedroom"
+        # Several targets ("the bedroom timer and the 7am one"): a time may belong to another one
+        if not said or named or MANY_RE.search(text):
+            return None
+        if s.is_timer:
+            at = s.when.at.astimezone(self.tz)
+            runs = at.hour * 60 + at.minute
+        else:
+            hh, mm = s.when.time.split(":")
+            runs = int(hh) * 60 + int(mm)
+        if any(min(abs(m - runs), 1440 - abs(m - runs)) <= 2 for m in said):
+            return None
+        times = ", ".join(f"{m // 60:02d}:{m % 60:02d}" for m in sorted(said))
+        return (f"the person said {times}, but this one runs at {runs // 60:02d}:{runs % 60:02d}: use the "
+                f"schedule at that time; if there is none, change nothing and tell them what is there")
 
     def _plan_item(self, actor: Actor, spec: dict[str, Any], cur: Schedule | None, kind: str) -> Prepared:
         svc = self.ctx.schedules
@@ -350,9 +383,10 @@ class HomeTools:
         return Prepared(name, line, run, self._sched_version(cur.id if cur else None),
                         key=f"schedule {cur.id}" if cur else None)
 
-    async def _prep_simple(self, actor: Actor, args: dict[str, Any], op: str) -> Prepared:
+    async def _prep_simple(self, actor: Actor, args: dict[str, Any], op: str,
+                           listed: set[str] | None = None) -> Prepared:
         svc = self.ctx.schedules
-        s = self._schedule(args["schedule_id"])
+        s = self._schedule(args["schedule_id"], listed, args)
         now = svc.now()
         until = None
         if op == "pause" and "until" in args:
@@ -406,6 +440,37 @@ class HomeTools:
             return Done(True, "ok") if r2.ok else Done(False, _why(r2))
 
         return Done(True, "ok", undo)
+
+
+TIME_24_RE = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
+TIME_12_RE = re.compile(r"\b(1[0-2]|0?[1-9])(?:[:.]([0-5]\d))?\s*(am|pm)\b", re.IGNORECASE)
+RANGE_12_RE = re.compile(r"\b(1[0-2]|0?[1-9])(?:[:.]([0-5]\d))?\s*(?:-|to)\s*(?=(?:1[0-2]|0?[1-9])(?:[:.][0-5]\d)?\s*(am|pm)\b)",
+                         re.IGNORECASE)
+# Not clock times: durations ("in 2.30 hours") and dates ("until 20.10", "on 15.10")
+NOT_A_TIME_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\s*(h|hr|hrs|hours?|mins?|minutes?)\b|"
+                           r"\b(until|till|on|from)\s+\d{1,2}[./]\d{1,2}\b", re.IGNORECASE)
+# More than one thing named: "... and ...", "both", "all"
+MANY_RE = re.compile(r"\b(and|both|all|also)\b|,", re.IGNORECASE)
+
+
+def said_times(text: str) -> set[int]:
+    """Clock times in a message, as minutes after midnight: 10:41, 7am, 7.30pm, 7-9am (both),
+    noon, midnight. Not: 2330, "in 35 mins", "in 2.30 hours", "until 20.10" (a date)."""
+    text = NOT_A_TIME_RE.sub(" ", text)
+    out = set()
+    for m in RANGE_12_RE.finditer(text):                # "7-9am": the 7 takes the am of the 9
+        h = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "pm" else 0)
+        out.add(h * 60 + int(m.group(2) or 0))
+    for m in TIME_12_RE.finditer(text):
+        h = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "pm" else 0)
+        out.add(h * 60 + int(m.group(2) or 0))
+    rest = TIME_12_RE.sub(" ", RANGE_12_RE.sub(" ", text))
+    out |= {int(h) * 60 + int(mm) for h, mm in TIME_24_RE.findall(rest)}
+    if re.search(r"\bnoon\b", text, re.IGNORECASE):
+        out.add(12 * 60)
+    if re.search(r"\bmidnight\b", text, re.IGNORECASE):
+        out.add(0)
+    return out
 
 
 def _sched_name(s: Schedule) -> str:

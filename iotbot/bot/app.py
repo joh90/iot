@@ -164,7 +164,8 @@ def build_application(ctx: AppContext) -> Application:
 
 
 def register(app: Application) -> None:
-    # Before everything else: drop taps and commands queued while the bot was offline
+    # Before everything else: private chats only, then drop taps and commands queued while offline
+    app.add_handler(TypeHandler(Update, hd.private_only), group=-2)
     app.add_handler(TypeHandler(Update, gate), group=-1)
     # New messages only: editing an old "/off ac" must not fire IR again
     new_only = filters.UpdateType.MESSAGE

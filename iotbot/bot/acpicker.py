@@ -27,7 +27,7 @@ def encode_state(st: AcState) -> str:
 
 def decode_state(code: str) -> AcState | None:
     """The picker state in `code` (always power on, cool), or None if it is not one."""
-    if len(code) != 5 or not code[:2].isdigit() or code[4] not in "01":
+    if len(code) != 5 or not code[:2].isdecimal() or code[4] not in "01":
         return None
     fan, vane = _FAN_R.get(code[2]), _VANE_R.get(code[3])
     if fan is None or vane is None:
