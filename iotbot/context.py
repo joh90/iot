@@ -115,7 +115,9 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         logger.info("AC_ENCODER=off: aircons send their captured codes")
 
     devices = DeviceService(registry, hub, events, ac)
-    users = UserService(users_store, audit)
+    users = UserService(users_store, audit, settings.admin_ids)
+    if settings.admin_ids and not any(users.is_allowed(a) for a in settings.admin_ids):
+        warnings.append("ADMIN_IDS lists no approved user: nobody can approve or remove users")
 
     # Schedules: a damaged file never stops the bot (moved aside, starts empty)
     sched_store = ScheduleStore(settings.state_dir / "schedules.json")
@@ -136,7 +138,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
             return [creator]
         return [uid for uid, _ in users.list()]
 
-    notifier = Notifier(schedules, scheduler, recipients)
+    notifier = Notifier(schedules, scheduler, recipients, allowed=users.is_allowed)
     scheduler.notify = notifier.on_fire
 
     # NEA: keyless, read-only, also used by /outside when the LLM is off
@@ -154,7 +156,9 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         llm = LlmClient(settings.llm_url, None if settings.llm_slot == -1 else settings.llm_slot)
         assistant = Assistant(llm, lambda: assistant_devices(registry, ac), settings.timezone,
                               replay=ReplayLog(settings.log_dir / "llm", settings.timezone), memory=memory,
-                              day_label=holidays.label)
+                              day_label=holidays.label,
+                              aircons=lambda: [(d.id, d.room) for d in registry.devices.values()
+                                               if ac and ac.manages(d.id)])
     else:
         logger.info("LLM_ENABLED=off: the chat assistant is switched off")
 

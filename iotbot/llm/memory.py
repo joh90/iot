@@ -80,7 +80,7 @@ def validate_memory(data: Any) -> None:
     if len(ids) != len(set(ids)):
         raise ValueError("memory.json: an id is used twice")
     for uid, p in data["people"].items():
-        if not (isinstance(uid, str) and uid.isdigit() and isinstance(p, dict)):
+        if not (isinstance(uid, str) and uid.isdecimal() and isinstance(p, dict)):
             raise ValueError(f"memory.json: bad person {uid!r}")
         items(p.get("facts", []), ("id", "text"), f"notes of {uid}")
         items(p.get("recipes", []), ("id", "name"), f"recipes of {uid}")

@@ -43,9 +43,13 @@ def clean_name(raw: Any) -> str:
 
 
 class UserService:
-    def __init__(self, store: JsonStore, audit: JsonlLog):
+    def __init__(self, store: JsonStore, audit: JsonlLog, admins: frozenset[int] = frozenset()):
         self.store = store
         self.audit = audit
+        self.admins = admins                         # empty: every approved user is one
+
+    def is_admin(self, user_id: int | None) -> bool:
+        return self.is_allowed(user_id) and (not self.admins or user_id in self.admins)
 
     def is_allowed(self, user_id: int | None) -> bool:
         return user_id is not None and str(user_id) in self.store.data
@@ -59,6 +63,8 @@ class UserService:
     def _gate(self, actor: Actor) -> Result | None:
         if actor.surface not in USER_ADMIN_SURFACES:
             return Result.fail("forbidden", "Users can only be changed by a person, not automatically.")
+        if not self.is_admin(actor.user_id):
+            return Result.fail("not_admin", "Only an admin can approve or remove users.")
         return None
 
     async def _save(self, apply: Any) -> tuple[Any, Result | None]:

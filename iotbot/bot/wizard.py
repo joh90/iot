@@ -391,7 +391,7 @@ class Wizard:
         if op == "cap" and args and d.device:
             d.action = {"kind": "capture", "key": args[0]}
             return self.go(d, self.after_action(d)), ""
-        if op == "adj" and args and args[0].isdigit():
+        if op == "adj" and args and args[0].isdecimal():
             d.action = {"kind": "adjust", "changes": {"temp": int(args[0])}}
             return self.go(d, self.after_action(d)), ""
         if op == "kind" and args:
@@ -497,7 +497,7 @@ class Wizard:
     async def menu_tap(self, actor: Actor, op: str, args: list[str]) -> tuple[Screen | None, str]:
         svc = self.svc
         arg = args[0] if args else ""
-        rev = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+        rev = int(args[1]) if len(args) > 1 and args[1].isdecimal() else None
         if op == "menu":
             return self.menu(), ""
         if op == "close":

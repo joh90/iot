@@ -345,3 +345,16 @@ def test_home_area_and_regions_come_from_settings(tmp_path):
             load_settings(environ={"BOT_TOKEN": "1:x", **env}, base_dir=tmp_path)
     ctx = make_ctx(tmp_path, {"OUTSIDE_AREA": "Bedok"})
     assert ctx.outside.home == "Bedok" and ctx.outside.home_regions == ("central",)
+
+
+async def test_cache_drops_replies_too_old_to_use():
+    # One lightning key per day (date=...): without pruning they pile up forever (review #16)
+    from iotbot.outside.nea import STALE_MAX_S
+    o, _, clock = outside()
+    nea = o.nea
+    await nea.get("weather", {"api": "lightning", "date": "2026-10-14"})
+    await nea.get("psi")
+    clock.t += STALE_MAX_S + 60
+    await nea.get("weather", {"api": "lightning", "date": "2026-10-15"})
+    assert list(nea._cache) == ["weather?api=lightning&date=2026-10-15"]
+    assert set(nea._locks) == {"weather?api=lightning&date=2026-10-15"}

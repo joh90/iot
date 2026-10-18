@@ -42,7 +42,7 @@ FAILED_OTHER = f"Sorry, I could not work that out. Try saying it another way, or
 
 def outcome_text(o: Outcome) -> str:
     """The reply for everything except a card (plain text, HTML-escaped)."""
-    if o.kind == "answer":
+    if o.kind in ("answer", "asked"):
         return h(o.text)
     if o.kind == "busy_you":
         return "Still working on your last message."
@@ -88,7 +88,7 @@ async def on_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant:
 
 
 def _outcome(o: Outcome) -> str:
-    if o.kind in ("answer", "actions"):
+    if o.kind in ("answer", "asked", "actions"):
         return "ok"
     return o.turn.error if o.kind == "failed" and o.turn and o.turn.error else o.kind
 

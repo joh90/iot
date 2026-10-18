@@ -251,3 +251,25 @@ async def test_cancelled_send_is_logged(tmp_path):
     await asyncio.sleep(0.05)
     ev = events(tmp_path)
     assert ev and ev[0]["error"] == "cancelled" and ev[0]["maybe_delivered"] is True
+
+
+async def test_only_admins_change_users_when_admins_are_set(tmp_path):
+    u = users(tmp_path, {"1": "Alice", "2": "Bob"})
+    bob = Actor(2, "Bob", "slash")
+    assert u.is_admin(2) and (await u.add(bob, "42", "Cara")).ok        # no ADMIN_IDS: all equal
+    u.admins = frozenset({1})
+    assert not u.is_admin(2) and u.is_admin(1) and not u.is_admin(99)  # 99: an admin id not approved
+    r = await u.add(bob, "43", "Dan")
+    assert (r.ok, r.error) == (False, "not_admin") and not u.is_allowed(43)
+    assert (await u.delete(bob, "42")).error == "not_admin" and u.is_allowed(42)
+    assert (await u.delete(ALICE, "42")).ok
+
+
+def test_admin_ids_setting():
+    from iotbot.config import ConfigError, load_settings
+    env = {"BOT_TOKEN": "1:x"}
+    assert load_settings(env_file=None, environ=env).admin_ids == frozenset()
+    assert load_settings(env_file=None, environ=env | {"ADMIN_IDS": " 12, 34 "}).admin_ids == {12, 34}
+    for bad in ("abc", "12,x", "²", "012"):
+        with pytest.raises(ConfigError, match="ADMIN_IDS"):
+            load_settings(env_file=None, environ=env | {"ADMIN_IDS": bad})

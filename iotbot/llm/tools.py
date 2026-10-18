@@ -11,11 +11,16 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
 DEFAULT_MAX_STRING = 200
 SUPPORTED = ("object", "array", "string", "integer", "boolean")
+
+
+# The person's message this turn, for checks a tool makes against what they actually said
+message_text: ContextVar[str] = ContextVar("message_text", default="")
 
 
 class ArgError(ValueError):

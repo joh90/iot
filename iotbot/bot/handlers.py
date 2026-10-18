@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from telegram import Bot, CallbackQuery, InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
 from telegram.error import BadRequest, TelegramError
-from telegram.ext import ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from iotbot import telemetry
 from iotbot.bot import acpicker as ap
@@ -47,6 +47,16 @@ def actor_of(update: Update, ctx: AppContext, surface: Surface) -> Actor:
 
 def request_id(update: Update) -> str:
     return f"tg:{update.update_id}"
+
+
+async def private_only(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Runs first (group -2): the bot works in private chats only. In a group nothing answers,
+    so /status, /list or /memory never show there (security review 2026-10-15, #13)."""
+    chat = getattr(update, "effective_chat", None)
+    if chat is not None and chat.type != ChatType.PRIVATE:
+        telemetry.note(outcome="not_private")
+        logger.info("Ignored an update from a %s chat", chat.type)
+        raise ApplicationHandlerStop
 
 
 def restricted(func: Handler) -> Handler:
@@ -407,6 +417,9 @@ async def _users_button(update: Update, context: ContextTypes.DEFAULT_TYPE, quer
         if uid == me:
             await query.answer("You cannot remove yourself.", show_alert=True)
             return
+        if not ctx.users.is_admin(me):
+            await query.answer("Only an admin can approve or remove users.", show_alert=True)
+            return
         await query.answer()
         text = f"Remove {b(ctx.users.name_of(uid))} ({uid})?"
         if ctx.schedules is not None and (owned := ctx.schedules.owned_by(uid)):
@@ -438,7 +451,7 @@ async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("This button is no longer active.")
         return
     actor = actor_of(update, ctx, "button")
-    rev = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+    rev = int(args[1]) if len(args) > 1 and args[1].isdecimal() else None
     if action == "retry":
         # Can outlast Telegram's ~15s answer window (rediscovery, timeouts): answer now, report by message
         try:

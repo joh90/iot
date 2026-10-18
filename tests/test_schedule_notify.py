@@ -30,6 +30,9 @@ def nt(env):  # noqa: F811
     return n
 
 
+CREATOR = Actor(1, "Alice", "button")     # sched() makes schedules created_by 1: their notices go to 1
+
+
 def buttons(notice):
     return [decode(cb)[1] for row in notice.buttons for _, cb in row]
 
@@ -51,9 +54,9 @@ async def test_undo_restores_previous_state(nt):
     await e.tick(FIRE + timedelta(seconds=1))
     tok = decode(nt.sent[0].buttons[0][0][1])[2]
     assert decode(nt.sent[0].buttons[0][1][1]) == ["sc", "skip", "s7f3a", "1"]
-    r = await nt.undo(ALICE, tok)
+    r = await nt.undo(CREATOR, tok)
     assert r.ok and "resent ON cool 22C" in r.message and e.ctx.ac.last("bed_ac").state == BEDROOM
-    assert (await nt.undo(ALICE, tok)).error == "expired"               # single use
+    assert (await nt.undo(CREATOR, tok)).error == "expired"               # single use
 
 
 async def test_undo_refused_when_superseded_or_late(nt):
@@ -63,10 +66,10 @@ async def test_undo_refused_when_superseded_or_late(nt):
     await e.tick(FIRE + timedelta(seconds=1))
     tok = decode(nt.sent[0].buttons[0][0][1])[2]
     await e.ctx.devices.run("bed_ac", "power_off", ALICE)
-    r = await nt.undo(ALICE, tok)
+    r = await nt.undo(CREATOR, tok)
     assert r.error == "superseded" and "Alice" in r.message
     e.clock.t += 11 * 60
-    assert (await nt.undo(ALICE, tok)).error == "expired"
+    assert (await nt.undo(CREATOR, tok)).error == "expired"
 
 
 async def test_no_undo_without_known_previous_state(nt):
@@ -92,7 +95,7 @@ async def test_failed_is_loud_with_retry(nt):
     assert not n.silent and n.text.startswith("FAILED s7f3a: bed_ac on") and "RM offline" in n.text
     assert buttons(n) == ["retry", "pause"]
     e.ctx.fail = None
-    r = await nt.retry(ALICE, decode(n.buttons[0][0][1])[2])
+    r = await nt.retry(CREATOR, decode(n.buttons[0][0][1])[2])
     assert r.ok and e.ctx.ac.last("bed_ac").state == COOL24 and e.ctx.ac.last("bed_ac").actor == "Alice"
 
 
@@ -101,7 +104,7 @@ async def test_retry_failure_does_not_wait(nt):
     e.ctx.fail = HubError("RM offline")
     s = sched("t0001", when=sm.Once(FIRE))
     tok = nt._token("retry", s, 60)
-    r = await nt.retry(ALICE, tok)
+    r = await nt.retry(CREATOR, tok)
     assert r.error == "send_failed" and e.sleeps == []
 
 
@@ -172,7 +175,7 @@ async def test_retry_is_single_use_and_checks_newer_actions(nt):
     tok = _failed(nt)
     e.ctx.fail = None
     await e.ctx.devices.run("bed_ac", "power_off", ALICE)
-    r = await nt.retry(ALICE, tok)
+    r = await nt.retry(CREATOR, tok)
     assert r.error == "superseded" and "Alice" in r.message
 
 
@@ -185,7 +188,7 @@ async def test_retry_double_tap_sends_once(nt):
     tok = _failed(nt)
     e.ctx.fail = None
     n0 = len(e.ctx.sent)
-    a, b = await asyncio.gather(nt.retry(ALICE, tok), nt.retry(ALICE, tok))
+    a, b = await asyncio.gather(nt.retry(CREATOR, tok), nt.retry(CREATOR, tok))
     assert sorted([a.ok, b.ok]) == [False, True] and len(e.ctx.sent) == n0 + 1
 
 
@@ -198,9 +201,9 @@ async def test_retry_refuses_changed_or_deleted_schedule(nt):
     tok = _failed(nt)
     e.ctx.fail = None
     await e.store.mutate(lambda d: d.update({"s7f3a": replace(d["s7f3a"], rev=2)}))
-    assert (await nt.retry(ALICE, tok)).error == "stale"
+    assert (await nt.retry(CREATOR, tok)).error == "stale"
     await e.store.mutate(lambda d: d.pop("s7f3a"))
-    assert (await nt.retry(ALICE, tok)).error == "not_found"
+    assert (await nt.retry(CREATOR, tok)).error == "not_found"
 
 
 async def test_no_retry_for_a_toggle_that_may_have_run(nt):
@@ -220,7 +223,7 @@ async def test_undo_to_an_off_state(nt):
     await e.ctx.devices.run("bed_ac", "power_off", ALICE)
     await e.add(sched())
     await e.tick(FIRE + timedelta(seconds=1))
-    r = await nt.undo(ALICE, decode(nt.sent[0].buttons[0][0][1])[2])
+    r = await nt.undo(CREATOR, decode(nt.sent[0].buttons[0][0][1])[2])
     assert r.ok and e.ctx.ac.last("bed_ac").state.power is False
 
 
@@ -231,7 +234,7 @@ async def test_failed_undo_can_be_retried(nt):
     await e.tick(FIRE + timedelta(seconds=1))
     tok = decode(nt.sent[0].buttons[0][0][1])[2]
     e.ctx.fail = HubError("RM offline")
-    assert not (await nt.undo(ALICE, tok)).ok
+    assert not (await nt.undo(CREATOR, tok)).ok
     assert tok in nt.tokens
 
 
@@ -247,3 +250,19 @@ async def test_report_problems_never_raises_and_lists_broken(nt, monkeypatch):
     assert {n.user_id for n in nt.sent} == {1, 2} and "s0bad" in nt.sent[0].text
     monkeypatch.setattr(nt.service, "problem", boom)
     await nt.report_problems()          # logged, not raised
+
+
+
+async def test_buttons_work_only_for_who_got_them_and_removed_users_get_nothing(nt):
+    e = nt.env
+    await e.ctx.devices.run("bed_ac", "power_on", ALICE)
+    await e.add(sched(label="Bedtime"))
+    await e.tick(FIRE)
+    tok = decode(nt.sent[-1].buttons[0][0][1])[2]
+    r = await nt.undo(Actor(2, "Bob", "button"), tok)                  # approved, but not sent to Bob
+    assert (r.ok, r.error) == (False, "not_yours")
+    assert (await nt.undo(CREATOR, tok)).ok
+    nt.allowed = lambda uid: uid != 1                                  # Alice removed
+    before = len(nt.sent)
+    await nt.changed(Actor(2, "Bob", "button"), Result.success("x", data={"notify": [1]}))
+    assert len(nt.sent) == before

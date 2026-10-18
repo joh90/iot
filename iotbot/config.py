@@ -38,6 +38,8 @@ class Settings:
     # Home for outside conditions: one of NEA's 47 forecast areas, and the air regions to show
     outside_area: str = "City"
     outside_regions: tuple[str, ...] = ("central",)
+    # Who may approve and remove users; empty = every approved user may (all equal)
+    admin_ids: frozenset[int] = frozenset()
 
 
 def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
@@ -109,6 +111,11 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
     if not outside_regions or any(r not in REGIONS for r in outside_regions):
         raise ConfigError(f"OUTSIDE_REGIONS must be a comma list of {', '.join(REGIONS)}")
 
+    admin_raw = [a.strip() for a in (environ.get("ADMIN_IDS") or "").split(",") if a.strip()]
+    if any(not (a.isascii() and a.isdigit() and a[0] != "0") for a in admin_raw):
+        raise ConfigError("ADMIN_IDS must be a comma list of Telegram user ids (numbers), or empty")
+    admin_ids = frozenset(int(a) for a in admin_raw)
+
     tz = environ.get("TZ_NAME") or "Asia/Singapore"
     try:
         ZoneInfo(tz)
@@ -132,4 +139,5 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         llm_slot=llm_slot,
         outside_area=outside_area,
         outside_regions=outside_regions,
+        admin_ids=admin_ids,
     )

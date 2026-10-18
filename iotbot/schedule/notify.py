@@ -51,6 +51,7 @@ class Token:
     seq: int | None = None        # device action seq of the fire (Undo) or the failed send (Retry)
     prev_state: AcState | None = None
     rev: int | None = None        # schedule rev when the Retry button was made
+    for_users: frozenset[int] = frozenset()   # who got the button; only they may tap it
 
 
 Send = Callable[[Notice], Awaitable[None]]
@@ -63,10 +64,11 @@ def h(text: object) -> str:
 class Notifier:
     def __init__(self, service: ScheduleService, scheduler: Scheduler,
                  recipients: Callable[[int], list[int]], send: Send | None = None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, allowed: Callable[[int], bool] | None = None):
         self.service = service
         self.scheduler = scheduler
         self.recipients = recipients      # creator id -> who to tell (fallback: everyone)
+        self.allowed = allowed            # still approved? a removed user is never told anything
         self.send = send
         self._clock = clock
         self.tokens: dict[str, Token] = {}
@@ -147,7 +149,7 @@ class Notifier:
         while len(self.tokens) >= MAX_TOKENS:
             del self.tokens[next(iter(self.tokens))]
         tok = secrets.token_hex(4)
-        self.tokens[tok] = Token(kind, s, now + ttl, seq, prev, rev)
+        self.tokens[tok] = Token(kind, s, now + ttl, seq, prev, rev, frozenset(self.recipients(s.created_by)))
         return tok
 
     def _take(self, tok: str, kind: str) -> Token | None:
@@ -156,6 +158,12 @@ class Notifier:
             return None
         return t
 
+    @staticmethod
+    def _not_yours(t: Token, actor: Actor) -> Result | None:
+        if t.for_users and actor.user_id not in t.for_users:
+            return Result.fail("not_yours", "This button was sent to someone else.")
+        return None
+
     # ---- buttons ---------------------------------------------------------------------------
 
     async def undo(self, actor: Actor, tok: str) -> Result:
@@ -163,6 +171,8 @@ class Notifier:
         t = self._take(tok, "undo")
         if t is None:
             return Result.fail("expired", "Undo is only possible for 10 minutes after a run.")
+        if (no := self._not_yours(t, actor)):
+            return no
         devices = self.service.devices
         latest = devices.last.get(t.schedule.device)
         if latest is None or latest.seq != t.seq:
@@ -181,6 +191,8 @@ class Notifier:
         t = self._take(tok, "retry")
         if t is None:
             return Result.fail("expired", "This retry button has expired or was already used.")
+        if (no := self._not_yours(t, actor)):
+            return no
         s = t.schedule
         if not s.is_timer:
             cur = self.service.get(s.id)
@@ -245,6 +257,9 @@ class Notifier:
             logger.exception("Could not report schedule problems")
 
     async def _send(self, n: Notice) -> None:
+        if self.allowed is not None and not self.allowed(n.user_id):
+            logger.info("Notice not sent: user %s is no longer approved", n.user_id)
+            return
         if self.send is None:
             logger.info("Notice (no sender yet) for %s: %s", n.user_id, n.text)
             return
