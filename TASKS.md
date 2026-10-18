@@ -92,7 +92,7 @@ Design: PLAN.md "Phase 6 decisions". No push alerts, no /help notice.
 | 6.2 | [x]    | Application subclass wraps `process_update`: one line per update (crash + offline drop included), lag_s + total_ms                                                                                 |
 | 6.3 | [x]    | Fill turns: intent from command/button, device service adds ir_ms + outcome; strangers `denied` (id, name, text); scheduler fires as surface `scheduler`; reviewed                                 |
 | 6.4 | [x]    | `/stats [days]` (any approved user, default 7, max 365, in a thread): p50/p95 by surface, lag, % under 300 ms, failures by who, slowest 3 RM/plugs, strangers, offline drops, LLM health; reviewed |
-| 6.5 | [~]    | Tests, README, reviewer per task; ship to the Pi on user OK (carries 6872a03) -- tests (626) + README done; ship pending                                                                           |
+| 6.5 | [~]    | Tests, README, reviewer per task; shipped 3347df5 -- user checks /stats (7 days, 1, 0, abc) on the live bot                                                                                        |
 | 6.6 | [ ]    | Speed (after Phase 4): time-until-feedback metric, why one IR send takes ~570 ms, fewer Telegram round trips                                                                                       |
 
 ## Phase 4 -- LLM assistant (planned 2026-10-13)
@@ -111,8 +111,10 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4.7  | [x]    | Diary search (events + own messages, forgotten filter); WAVE 2 ship                                                           |
 | 4.8  | [x]    | Outside tool + /outside (NEA, AQI as aqicn, bands, cache, throttle, stale data)                                               |
 | 4.9  | [x]    | Holidays tool (MOM list, eves, long weekends), PH marks on dates and schedule cards; WAVE 3 ship                              |
-| 4.10 | [ ]    | Tests throughout (fake LLM server, broken replies, no IR), README, reviewer per task                                          |
+| 4.10 | [x]    | Tests throughout (fake LLM server, broken replies, no IR), README, reviewer per task; 914 pass at 202b35e                     |
 | 4.11 | [x]    | Live-test fixes: answer + card for mixed asks, already-paused refused, no ids, fresh state, 2 new schedules per card          |
+| 4.12 | [~]    | Live-test fixes (202b35e): list before change, said-time guard, 'which aircon?' asked in code, plain cards; user re-test      |
+| 4.13 | [x]    | Security leftovers (202b35e): ADMIN_IDS (empty = all equal), private chats only, notices/Undo per recipient, NEA prune        |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
