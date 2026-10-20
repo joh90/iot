@@ -138,3 +138,65 @@ async def test_handover_picks_up_orphans_and_survives_a_fired_timer(tmp_path):
     new = ctx.schedules.get(s.id)
     assert r.ok and r.data["ids"] == [s.id] and new.created_by == ME and new.rev == s.rev
     assert (await ctx.schedules.reassign(ALICE, ctx.users.is_allowed, ME)).data["ids"] == []
+
+
+def _notice_tap(data, text, markup):
+    u = make_update(ME, data=data)
+    u.callback_query.message = SimpleNamespace(text=text, text_html=text, reply_markup=markup)
+    return u
+
+
+def _redrawn(u):
+    call = u.callback_query.edit_message_text.call_args
+    markup = call.kwargs["reply_markup"]
+    rows = markup.inline_keyboard if markup else ()
+    return call.args[0], [(b.text, b.callback_data) for row in rows for b in row]
+
+
+async def test_notice_buttons_flip_after_a_tap(tmp_path):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    ctx = make_ctx(tmp_path)
+    s = await add(ctx)
+    text = "s1: bed_ac on, cool 22C fan 3 vane auto"
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("Skip next", callback_data=encode(NS, "skip", s.id, s.rev)),
+                                    InlineKeyboardButton("Pause", callback_data=encode(NS, "pause", s.id, s.rev))]])
+    u = _notice_tap(encode(NS, "pause", s.id, s.rev), text, markup)
+    await hd.on_button(u, make_context(ctx))
+    new_text, btns = _redrawn(u)
+    assert new_text == text + "\n\nNow: Paused until you resume it."
+    assert [b for b, _ in btns] == ["Resume"]
+    # Resume from the redrawn notice: back to Skip next + Pause, and the Now line goes
+    u = _notice_tap(btns[0][1], new_text, None)
+    await hd.on_button(u, make_context(ctx))
+    assert ctx.schedules.get(s.id).enabled
+    again, btns = _redrawn(u)
+    assert again == text and [b for b, _ in btns] == ["Skip next", "Pause"]
+    # Skip, then Don't skip
+    u = _notice_tap(btns[0][1], again, None)
+    await hd.on_button(u, make_context(ctx))
+    skipped, btns = _redrawn(u)
+    assert "\n\nNow: Skipping " in skipped and [b for b, _ in btns] == ["Don't skip", "Pause"]
+    u = _notice_tap(btns[0][1], skipped, None)
+    await hd.on_button(u, make_context(ctx))
+    assert ctx.schedules.get(s.id).skip_dates == ()
+    assert _redrawn(u)[0] == text
+
+
+async def test_stale_notice_button_redraws_to_the_current_state(tmp_path):
+    ctx = make_ctx(tmp_path)
+    s = await add(ctx)
+    await ctx.schedules.pause(ALICE, [s.id])                     # paused in /schedule meanwhile
+    u = _notice_tap(encode(NS, "pause", s.id, s.rev), "s1", None)
+    await hd.on_button(u, make_context(ctx))
+    (note,), _ = u.callback_query.answer.call_args
+    assert "current state" in note
+    assert [b for b, _ in _redrawn(u)[1]] == ["Resume"]
+
+
+async def test_forged_unskip_day_is_refused(tmp_path):
+    ctx = make_ctx(tmp_path)
+    s = await add(ctx)
+    u = _notice_tap(encode(NS, "unskip", s.id, s.rev, "2026xx01"), "s1", None)
+    await hd.on_button(u, make_context(ctx))
+    (note,), _ = u.callback_query.answer.call_args
+    assert "no longer active" in note

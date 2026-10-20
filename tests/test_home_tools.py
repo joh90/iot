@@ -477,3 +477,19 @@ async def test_loop_lists_in_one_round_and_writes_in_the_next(home):
     out = await lp.run_turn(srv.client(), [{"role": "user", "content": "delete the noon one"}], turn)
     assert out.kind == "actions" and out.tool_calls == ["list_schedules", "delete_schedule!", "delete_schedule"]
     assert "call list_schedules first" in srv.requests[1]["messages"][-1]["content"]
+
+
+async def test_a_chat_timer_card_offers_plus_30(home):
+    from iotbot.bot.chat import result_screen
+    from iotbot.llm.cards import Card
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "in_minutes": 30})
+    done = await p.run(ALICE)
+    (t,) = home.ctx.schedules.list()
+    assert done.timer == (t.id, t.rev)
+    card = Card("c1", ME, [p], 0.0, status="done", results=[done])
+    _, markup = result_screen(card, "Alice", "12:00")
+    assert [(b.text, b.callback_data) for b in markup.inline_keyboard[0]] == [
+        ("Undo", "lc:undo:c1"), ("+30m", f"sw:-:tplus:{t.id}:{t.rev}")]
+    # a weekly schedule gets no +30m
+    p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "23:00", "days": ["mon"]})
+    assert (await p.run(ALICE)).timer is None

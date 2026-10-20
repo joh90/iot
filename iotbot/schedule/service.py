@@ -391,6 +391,10 @@ class ScheduleService:
         return await self._edit(actor, [sid], rev, change, "skipped", f"Skipping {shown}:")
 
     async def unskip(self, actor: Actor, sid: str, day: date, rev: int | None = None) -> Result:
+        s = self.get(sid)
+        if s is not None and day not in s.skip_dates:
+            return Result.fail("not_skipped", f"{tx.name(s)} is not skipping {day:%a %d %b}.")
+
         def change(cur: Schedule) -> Schedule:
             return replace(cur, skip_dates=tuple(d for d in cur.skip_dates if d != day))
 

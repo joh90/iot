@@ -2,7 +2,8 @@
 
 Telegram-free: builds `Notice`s (HTML text + button rows) and hands them to a
 `send` coroutine the bot layer provides. Rules from PLAN.md:
-- a successful run is ALWAYS silent, with [Undo] [Skip next] [Pause];
+- a successful run is ALWAYS silent, with [Undo] [Skip next] [Pause] (the last two follow the
+  schedule's state: [Don't skip], [Resume]; a tap redraws them);
 - failures, missed runs, and conflicts are audible; failures get [Retry];
 - skips the user asked for say nothing; a skip because the AC is off is a silent note;
 - edits by someone else notify the creator; a kept clash notifies the other owner (#15).
@@ -33,6 +34,7 @@ NS = "sc"            # callback namespace
 UNDO_S = 10 * 60
 RETRY_S = 6 * 3600
 MAX_TOKENS = 200
+FAILED = "FAILED"    # first word of a failure notice (its redraw keeps the failure buttons)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +93,7 @@ class Notifier:
             if o.prev_state is not None and seq is not None:
                 first.append(("Undo", encode(NS, "undo", self._token("undo", s, UNDO_S, seq, o.prev_state))))
             if not s.is_timer:
-                rev = self._rev(s)
-                first += [("Skip next", encode(NS, "skip", s.id, rev)), ("Pause", encode(NS, "pause", s.id, rev))]
+                first += self._toggles(s)
             rows = [first] if first else []
             return self._to(s, what, rows, silent=True)
         if o.result == "skipped":
@@ -108,14 +109,14 @@ class Notifier:
             return self._to(s, text, [], silent=False)
         # failed
         row = []
-        text = f"FAILED {what}\n{h(o.reason)}"
+        text = f"{FAILED} {what}\n{h(o.reason)}"
         if self._safe_to_retry(o):
             seq = o.result_obj.data.get("seq") if o.result_obj and isinstance(o.result_obj.data, dict) else None
             row.append(("Retry", encode(NS, "retry", self._token("retry", s, RETRY_S, seq, rev=self._rev(s)))))
         else:
             text += "\nIt may have run anyway; check the device before trying again (a toggle sent twice undoes itself)."
         if not s.is_timer:
-            row.append(("Pause", encode(NS, "pause", s.id, self._rev(s))))
+            row += [t for t in self._toggles(s) if t[0] in ("Pause", "Resume")]
         return self._to(s, text, [row] if row else [], silent=False)
 
     def _safe_to_retry(self, o: FireOutcome) -> bool:
@@ -131,6 +132,42 @@ class Notifier:
         r = o.result_obj
         maybe = r is None or not isinstance(r.data, dict) or r.data.get("maybe_delivered", True)
         return not maybe
+
+    def _toggles(self, s: Schedule) -> list[tuple[str, str]]:
+        """[Skip next|Don't skip] [Pause|Resume] for the schedule as it is now."""
+        cur = self.service.get(s.id) or s
+        return [(label, encode(NS, op, cur.id, cur.rev, *extra))
+                for label, op, extra in tx.toggles(cur, self.service.now(), self.service.tz)]
+
+    def controls(self, sid: str, buttons: list[tuple[str, str]],
+                 failed: bool = False) -> tuple[str, list[list[tuple[str, str]]]]:
+        """Redraw a notice after a tap: (state line, rows). Keeps the notice's Undo/Retry
+        while their tokens live, and swaps the schedule buttons for ones that match its
+        state now (a Pause tapped here or in /schedule turns into Resume)."""
+        kept = [(label, data) for label, data in buttons if self._live(data)]
+        s = self.service.get(sid)
+        if s is None:
+            return "Deleted.", [kept] if kept else []
+        line = tx.state_line(s, self.service.now(), self.service.tz)
+        toggles = [] if s.is_timer else self._toggles(s)
+        if failed:                              # a failure notice has no Skip, as when it was sent
+            toggles = [t for t in toggles if t[0] in ("Pause", "Resume")]
+        row = kept + toggles
+        return line, [row] if row else []
+
+    def _live(self, data: str) -> bool:
+        """An Undo/Retry button that can still work: token alive, and a Retry's schedule
+        not changed since (retry() refuses a new rev, so keeping the button would mislead)."""
+        parts = data.split(":")
+        if len(parts) != 3 or parts[0] != NS or parts[1] not in ("undo", "retry"):
+            return False
+        t = self._take(parts[2], parts[1])
+        if t is None:
+            return False
+        if t.kind == "retry" and not t.schedule.is_timer:
+            cur = self.service.get(t.schedule.id)
+            return cur is not None and cur.rev == t.rev and cur.enabled
+        return True
 
     def _rev(self, s: Schedule) -> int:
         """Current rev (the snapshot in the outcome predates the scheduler's own write,

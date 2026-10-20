@@ -8,6 +8,7 @@ import pytest
 from iotbot.ac.state import AcState
 from iotbot.bot import handlers as hd
 from iotbot.bot.wizard import parse_time
+from iotbot.result import Actor
 from iotbot.schedule import model as sm
 from tests.test_ac_service import make_ctx
 from tests.test_bot import ME, make_update, replied
@@ -282,8 +283,10 @@ async def test_quick_timer_two_taps(bot):
     assert bot.text.startswith("bed_ac off at today 13:00 (in 1h)")
     (t,) = bot.ctx.schedules.store.all().values()
     assert t.is_timer and t.when.at == datetime(2026, 10, 10, 13, 0, tzinfo=SGT)
-    await bot.tap("Undo")
+    await bot.tap("Cancel timer")
     assert bot.ctx.schedules.store.all() == {}
+    await bot.tap("Undo")                              # the cancel can be undone
+    assert len(bot.ctx.schedules.store.all()) == 1
 
 
 async def test_timer_at_a_time_saves_after_the_time(bot):
@@ -496,3 +499,86 @@ async def test_button_verb_in_a_room(bot):
     # office_ac has a captured power_on too, so the room is ambiguous for that button
     assert "name one: office_ac, old_ac" in await bot.cmd("add", "office", "power_on", "20:00")
     assert "Nothing in room 'office' can do 'dance'" in await bot.cmd("add", "office", "dance", "20:00")
+
+
+async def test_card_buttons_follow_state(bot):
+    await test_new_weekly_on_with_picker(bot)
+    await bot.tap("Open")
+    await bot.tap("Skip next")
+    await bot.tap("Don't skip")                       # Skip next became Don't skip
+    assert "No longer skipping" in bot.text and "Skipping:" not in bot.text
+    (s,) = bot.ctx.schedules.store.all().values()
+    assert s.skip_dates == ()
+    await bot.tap("Pause")
+    labels = [b.text for row in bot.screen[1].inline_keyboard for b in row]
+    assert "Resume" in labels and "Pause" not in labels and "Skip next" not in labels
+    await bot.tap("Resume")
+    labels = [b.text for row in bot.screen[1].inline_keyboard for b in row]
+    assert "Pause" in labels and "Skip next" in labels
+
+
+async def test_timer_plus_30_pushes_it_back_once_per_tap(bot):
+    bot.screen = ("", None)
+    await bot.tap(data="sw:-:tm:bed_ac")
+    await bot.tap("1h")
+    plus = bot.button("+30m")
+    await bot.tap(data=plus)
+    assert bot.text.startswith("bed_ac off at today 13:30 (in 1h30)")
+    note = await bot.tap(data=plus)                    # double tap: stale rev, no second 30 min
+    assert "double tap" in note
+    (t,) = bot.ctx.schedules.store.all().values()
+    assert t.when.at == datetime(2026, 10, 10, 13, 30, tzinfo=SGT) and t.rev == 2
+    await bot.tap("+30m")                              # the redrawn button works
+    (t,) = bot.ctx.schedules.store.all().values()
+    assert t.when.at == datetime(2026, 10, 10, 14, 0, tzinfo=SGT)
+
+
+async def test_timer_plus_30_on_a_clash_shows_the_preview(bot):
+    bot.screen = ("", None)
+    await bot.tap(data="sw:-:tm:bed_ac")
+    await bot.tap("30m")
+    first = bot.button("+30m")
+    await bot.tap(data="sw:-:tm:bed_ac")
+    await bot.tap("1h")                                # a second timer at 13:00
+    await bot.tap(data=first)                          # 12:30 -> 13:00 lands on the other timer
+    assert "Preview" in bot.text
+    assert len(bot.ctx.schedules.store.all()) == 2
+
+
+async def test_timer_plus_30_after_it_ran(bot):
+    bot.screen = ("", None)
+    await bot.tap(data="sw:-:tm:bed_ac")
+    await bot.tap("30m")
+    plus = bot.button("+30m")
+    await bot.ctx.schedules.store.mutate(lambda d: d.clear())    # fired (a fired timer is deleted)
+    await bot.tap(data=plus)
+    assert "already ran or was cancelled" in bot.text
+
+
+async def test_timer_card_has_plus_30(bot):
+    bot.screen = ("", None)
+    await bot.tap(data="sw:-:tm:bed_ac")
+    await bot.tap("30m")
+    (t,) = bot.ctx.schedules.store.all().values()
+    await bot.tap(data=f"sw:-:s:{t.id}")
+    await bot.tap("+30m")
+    (t,) = bot.ctx.schedules.store.all().values()
+    assert t.when.at == datetime(2026, 10, 10, 13, 0, tzinfo=SGT)
+
+
+async def test_timer_plus_30_across_midnight_and_while_paused(bot):
+    w = bot.context.application.bot_data.get("wizard")
+    if w is None:                                      # made on first use
+        await bot.cmd()
+        w = bot.context.application.bot_data["wizard"]
+    me = Actor(ME, "Test User", "button")
+    screen, _ = await w.quick_timer(me, "bed_ac", datetime(2026, 10, 10, 23, 45, tzinfo=SGT))
+    bot.screen = (screen.text, screen.markup)
+    await bot.tap("+30m")
+    (t,) = bot.ctx.schedules.store.all().values()
+    assert t.when.at == datetime(2026, 10, 11, 0, 15, tzinfo=SGT) and "tomorrow 00:15" in bot.text
+    assert (await bot.ctx.schedules.pause(me, [t.id])).ok
+    await bot.tap(data=f"sw:-:tplus:{t.id}:{t.rev + 1}")
+    (t,) = bot.ctx.schedules.store.all().values()
+    assert not t.enabled and t.when.at == datetime(2026, 10, 11, 0, 45, tzinfo=SGT)
+    assert "Paused until you resume it." in bot.text

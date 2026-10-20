@@ -430,8 +430,10 @@ class HomeTools:
         if notifier is not None:
             await notifier.changed(who, r)
         change_id = r.data.get("event_id") if isinstance(r.data, dict) else None
+        made = r.data.get("schedule") if isinstance(r.data, dict) else None
+        timer = (made.id, made.rev) if made is not None and made.is_timer and made.enabled else None
         if not change_id:
-            return Done(True, "ok")
+            return Done(True, "ok", timer=timer)
 
         async def undo(who2: Actor) -> Done:
             r2 = await self.ctx.schedules.revert(who2, change_id)
@@ -439,7 +441,7 @@ class HomeTools:
                 await notifier.changed(who2, r2)
             return Done(True, "ok") if r2.ok else Done(False, _why(r2))
 
-        return Done(True, "ok", undo)
+        return Done(True, "ok", undo, timer)
 
 
 TIME_24_RE = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")

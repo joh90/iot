@@ -34,6 +34,7 @@ DRAFT_TTL_S = 15 * 60
 MAX_DRAFTS = 50
 QUICK_TIMES = ("21:30", "22:00", "22:30", "23:00", "23:30", "00:00", "07:00", "07:30")
 TIMER_MINUTES = (30, 60, 120, 180)
+TIMER_PLUS = 30                              # [+30m] on a running timer
 ADJ_TEMPS = range(18, 31)
 MENU_TEXT = "Schedules"
 MAX_LIST = 30            # Telegram: ~100 buttons and 4096 characters per message
@@ -227,12 +228,10 @@ class Wizard:
         lines.append(f"id {h(s.id)}, made by {h(self.ctx.users.name_of(s.created_by))}")
         r = s.rev
         rows = []
-        if not s.is_timer:
-            rows.append([_btn("Skip next", "-", "skip", s.id, r),
-                         _btn("Resume" if (not s.enabled or s.paused_until) else "Pause", "-",
-                              "resume" if (not s.enabled or s.paused_until) else "pause", s.id, r)])
-        elif not s.enabled:
-            rows.append([_btn("Resume", "-", "resume", s.id, r)])
+        if (toggles := tx.toggles(s, now, tz)):
+            rows.append([_btn(label, "-", op, s.id, r, *extra) for label, op, extra in toggles])
+        if s.is_timer:
+            rows.append([_btn(f"+{TIMER_PLUS}m", "-", "tplus", s.id, r)])
         rows.append([_btn("Edit time", "-", "edit", s.id, "time")]
                     + ([_btn("Edit settings", "-", "edit", s.id, "set")] if isinstance(s.action, On) else []))
         rows.append([_btn("Delete", "-", "del", s.id, r), _btn("<- List", "-", "list")])
@@ -514,9 +513,11 @@ class Wizard:
             return self.tonight(), ""
         if op == "s":
             return self.card(arg), ""
-        if op in ("skip", "pause", "resume"):
+        day = tx.parse_day(args[2]) if op == "unskip" and len(args) > 2 else None
+        if op in ("skip", "pause", "resume") or day:
             fn = {"skip": lambda: svc.skip(actor, arg, rev=rev), "pause": lambda: svc.pause(actor, [arg], rev=rev),
-                  "resume": lambda: svc.resume(actor, [arg], rev=rev)}[op]
+                  "resume": lambda: svc.resume(actor, [arg], rev=rev),
+                  "unskip": lambda: svc.unskip(actor, arg, day, rev=rev)}[op]
             r = await fn()
             await self.ctx.notifier.changed(actor, r)
             return self.card(arg, h(r.message) if r.ok else ""), "" if r.ok else _why(r)
@@ -568,6 +569,8 @@ class Wizard:
         if op == "tmin" and self.can_timer(arg) and rev in TIMER_MINUTES:
             at = self.now() + timedelta(minutes=rev)
             return await self.quick_timer(actor, arg, at)
+        if op == "tplus":
+            return await self.timer_plus(actor, arg, rev)
         if op == "tmat" and self.can_timer(arg):
             d = self.new_draft(actor.user_id, device=arg, action={"kind": "off"}, kind="once", step="time",
                                quick_timer=True)
@@ -597,10 +600,41 @@ class Wizard:
             return self.preview(d), ""
         if not r.ok:
             return None, r.message
+        return self.timer_screen(r.data["schedule"]), ""
+
+    def timer_screen(self, s: Schedule, note: str = "") -> Screen:
+        """'bed_ac off at today 13:00 (in 1h)' [+30 min] [Cancel]: a running timer, one tap to
+        push it back or drop it (Cancel deletes at once; the next screen has Undo)."""
         now = self.now()
-        mins = round((at - now).total_seconds() / 60)
-        text = f"{h(device)} off at {h(tx.fmt_at(at, now, self.svc.tz))} (in {h(_mins(mins))})"
-        return Screen(text, InlineKeyboardMarkup([[_btn("Undo", "-", "undo", r.data["event_id"])]])), ""
+        mins = max(0, round((s.when.at - now).total_seconds() / 60))
+        text = (f"{h(s.device)} {h(tx.describe_action(s))} at {h(tx.fmt_at(s.when.at, now, self.svc.tz))} "
+                f"(in {h(_mins(mins))})")
+        if not s.enabled:
+            text += "\nPaused until you resume it."
+        return Screen(f"{note}\n{text}".strip(), InlineKeyboardMarkup([[
+            _btn(f"+{TIMER_PLUS}m", "-", "tplus", s.id, s.rev), _btn("Cancel timer", "-", "dely", s.id, s.rev)]]))
+
+    async def timer_plus(self, actor: Actor, sid: str, rev: int | None) -> tuple[Screen | None, str]:
+        """[+30m]: push a timer back from its own time (or from now, if it is due). The rev
+        check makes a double tap add 30 minutes once, not twice."""
+        s = self.svc.get(sid)
+        if s is None or not s.is_timer:
+            return Screen("That timer already ran or was cancelled. /schedule to see what is set."), ""
+        at = max(s.when.at, self.now()) + timedelta(minutes=TIMER_PLUS)
+        p = self.svc.plan(actor, {"when": {"kind": "once", "at": at.isoformat()}}, sid=s.id, rev=rev)
+        if not p.ok:
+            return (self.timer_screen(s), _why(p)) if p.error == "stale" else (None, p.message)
+        r = await self.svc.apply(actor, p.data["plan_id"]) if not p.conflicts else None
+        if r is None or r.error == "conflict":
+            self.svc.plans.pop(p.data["plan_id"], None)      # the preview makes its own plan
+            local = at.astimezone(self.svc.tz)
+            d = self.new_draft(actor.user_id, device=s.device, action=s.action.to_dict(), kind="once",
+                               sid=s.id, rev=s.rev, time=f"{local:%H:%M}", date=local.date(), step="prev")
+            return self.preview(d), ""
+        if not r.ok:
+            return None, r.message
+        await self.ctx.notifier.changed(actor, r)
+        return self.timer_screen(r.data["schedule"]), ""
 
 
 def _mins(m: int) -> str:
