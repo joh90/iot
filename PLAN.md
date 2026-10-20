@@ -290,6 +290,22 @@ Design changes from the spike:
   prompt forbids stating data a tool did not return.
 - Thinking stays off (same answers, 3-4x slower).
 
+## Phase 8 decisions: presence (2026-10-20, UX agreed; not built)
+
+| Topic         | Decision                                                                                                                     |
+|---------------|------------------------------------------------------------------------------------------------------------------------------|
+| Detection     | Bot probes each paired phone on the home Wi-Fi every 1-2 min (TCP connect, host network, no extra caps); only home/away kept |
+| Away          | Gone 15 min = away (locked phones drop off Wi-Fi)                                                                            |
+| Pairing       | `/phone`: toggle the phone's Wi-Fi off/on, the bot finds the device that reconnected, [Yes] / [No, try again]; [Unpair]      |
+| Arrival       | To the person who arrived: one button per aircon that is off + [Both] + [No thanks]; redraws to what was done + [Undo]       |
+| Arrival rules | Only after 30+ min away; only if an aircon is off; not if someone else is already home. No night cut-off (user's choice)     |
+| Arrival state | The last state the bot sent to that aircon, powered on (room preset if it never sent one)                                    |
+| Departure     | Once everyone paired is away: "Still on: Office (since 07:30)", [Turn off all] / per-aircon off / [Leave on]                 |
+| Departure to  | Everyone paired; first tap wins, the others' copies redraw ("Turned off all (by X)") with [Undo]                             |
+| Never         | No IR without a tap; no locations or MACs beyond the paired phones; nothing leaves the LAN                                   |
+| Needs         | On-since per aircon (was 5.1; Phase 5 dropped, so built here; Phase 7 hours-run reuses it)                                   |
+| Open          | Silent or audible messages; per-person on/off for arrival and departure offers (likely in `/phone`)                          |
+
 ## Pending before build
 
 - Pi facts (user to paste): `uname -m; cat /etc/os-release; python3 --version; ldd --version | head -1; df -h /; ps aux | grep main.py`
