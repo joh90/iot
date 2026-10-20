@@ -17,6 +17,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from iotbot import telemetry
+from iotbot.bot import wizard as wz
 from iotbot.bot.callbacks import encode
 from iotbot.bot.text import b, h, popup, reply, safe_edit
 from iotbot.llm.assistant import MAX_INPUT_CHARS, Assistant, Outcome
@@ -131,6 +132,10 @@ def result_screen(card: Card, who: str, at: str) -> tuple[str, InlineKeyboardMar
         row.append(_btn("Retry failed", "retry", card))
     if any(r and r.ok and r.undo for r in card.results):
         row.append(_btn("Undo", "undo", card))
+    timers = [r.timer for r in card.results if r and r.ok and r.timer]
+    if len(timers) == 1:                 # one timer set: [+30m] opens it as a timer screen
+        sid, rev = timers[0]
+        row.append(InlineKeyboardButton(f"+{wz.TIMER_PLUS}m", callback_data=encode(wz.NS, "-", "tplus", sid, rev)))
     return text, InlineKeyboardMarkup([row]) if row else None
 
 

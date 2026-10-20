@@ -237,7 +237,9 @@ repeat on days or just once, time, days, then shows a preview with the next runs
 - **Aircon on** uses a picker card: [-] temp [+], fan, vane, Powerful. It starts from the room preset.
 - **Change temp** only changes the temperature, and only if the bot last turned that aircon on; it never
   switches on an aircon someone turned off.
-- **Timer** on an aircon's buttons: off in 30m / 1h / 2h / 3h, or at a time. Two taps, with Undo.
+- **Timer** on an aircon's buttons: off in 30m / 1h / 2h / 3h, or at a time. Two taps. The saved timer
+  shows **+30m** (push it back; a double tap adds 30 minutes once) and **Cancel timer** (with Undo).
+  A timer set in chat gets the same **+30m** on its done card, and so does its /schedule card.
 - One line instead of buttons:
 
   ```
@@ -249,6 +251,9 @@ repeat on days or just once, time, days, then shows a preview with the next runs
 
 When a schedule runs, its creator gets a silent message with **Undo** (10 minutes, only if nothing newer
 was sent), **Skip next** and **Pause**. Failures and missed runs make a sound; failures offer **Retry**.
+The buttons follow the schedule: after a tap the message is redrawn, so **Pause** becomes **Resume** and
+**Skip next** becomes **Don't skip**, with a "Now: Paused until you resume it." line. An old notice tapped
+after a change elsewhere (e.g. in /schedule) redraws to the current state. The /schedule card works the same way.
 Two schedules for the same device within 5 minutes of each other count as a clash: you choose Keep both
 or Replace. Every change is logged in `logs/schedule_events-*.jsonl` and can be undone from its message.
 

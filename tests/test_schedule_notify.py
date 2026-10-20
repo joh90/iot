@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -266,3 +267,65 @@ async def test_buttons_work_only_for_who_got_them_and_removed_users_get_nothing(
     before = len(nt.sent)
     await nt.changed(Actor(2, "Bob", "button"), Result.success("x", data={"notify": [1]}))
     assert len(nt.sent) == before
+
+
+def _labels(rows):
+    return [label for row in rows for label, _ in row]
+
+
+async def test_controls_follow_the_schedule_and_keep_live_undo(nt):
+    e = nt.env
+    await e.ctx.devices.run("bed_ac", "power_on", ALICE)
+    await e.add(sched())
+    await e.tick(FIRE + timedelta(seconds=1))
+    (n,) = nt.sent
+    shown = [b for row in n.buttons for b in row]
+    assert await nt.service.pause(CREATOR, ["s7f3a"])
+    line, rows = nt.controls("s7f3a", shown)
+    assert line == "Paused until you resume it." and _labels(rows) == ["Undo", "Resume"]
+    assert decode(rows[0][1][1])[:3] == ["sc", "resume", "s7f3a"]
+    await nt.service.resume(CREATOR, ["s7f3a"])
+    await nt.service.skip(CREATOR, "s7f3a")
+    line, rows = nt.controls("s7f3a", shown)
+    assert line.startswith("Skipping ") and _labels(rows) == ["Undo", "Don't skip", "Pause"]
+    assert len(decode(rows[0][1][1])) == 5                       # sc:unskip:<sid>:<rev>:<YYYYMMDD>
+    e.clock.t += 11 * 60                                         # Undo expired: dropped
+    assert _labels(nt.controls("s7f3a", shown)[1]) == ["Don't skip", "Pause"]
+    await nt.service.delete(CREATOR, "s7f3a")
+    assert nt.controls("s7f3a", shown) == ("Deleted.", [])
+
+
+async def test_dont_skip_only_for_the_next_run(nt):
+    e = nt.env
+    await e.add(sched())
+    await e.tick(FIRE + timedelta(seconds=1))
+    shown = [b for row in nt.sent[0].buttons for b in row]
+    later = nt.service.list()[0]
+    from iotbot.schedule import timing as tm
+    third = tm.next_runs(later, nt.service.now(), nt.service.tz, 3)[2].date()
+    assert (await nt.service.skip(CREATOR, "s7f3a", day=third)).ok         # a skip further ahead
+    assert _labels(nt.controls("s7f3a", shown)[1]) == ["Skip next", "Pause"]
+    assert (await nt.service.skip(CREATOR, "s7f3a")).ok                    # now the next run too
+    _, rows = nt.controls("s7f3a", shown)
+    assert _labels(rows) == ["Don't skip", "Pause"]
+    nxt = tm.next_runs(replace(nt.service.get("s7f3a"), skip_dates=()), nt.service.now(), nt.service.tz, 1)[0]
+    assert decode(rows[0][0][1])[4] == f"{nxt:%Y%m%d}"
+
+
+async def test_failure_redraw_keeps_only_live_retry_and_no_skip(nt):
+    e = nt.env
+    e.ctx.fail = HubError("RM offline")
+    await e.add(sched())
+    await e.tick(FIRE + timedelta(seconds=1))
+    (n,), s = nt.sent, "s7f3a"
+    assert n.text.startswith("FAILED")
+    shown = [b for row in n.buttons for b in row]
+    assert _labels(nt.controls(s, shown, failed=True)[1]) == ["Retry", "Pause"]
+    assert await nt.service.pause(CREATOR, [s])                            # rev bumps: Retry cannot work now
+    assert _labels(nt.controls(s, shown, failed=True)[1]) == ["Resume"]
+
+
+async def test_unskip_of_a_day_not_skipped_says_so(nt):
+    await nt.env.add(sched())
+    r = await nt.service.unskip(CREATOR, "s7f3a", FIRE.date())
+    assert r.error == "not_skipped"

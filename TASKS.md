@@ -115,6 +115,8 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4.11 | [x]    | Live-test fixes: answer + card for mixed asks, already-paused refused, no ids, fresh state, 2 new schedules per card          |
 | 4.12 | [~]    | Live-test fixes (202b35e): list before change, said-time guard, 'which aircon?' asked in code, plain cards; user re-test      |
 | 4.13 | [x]    | Security leftovers (202b35e): ADMIN_IDS (empty = all equal), private chats only, notices/Undo per recipient, NEA prune        |
+| 4.14 | [~]    | Notice buttons follow state: Pause<->Resume, Skip next<->Don't skip, 'Now:' line, old notices redraw; same on /schedule       |
+| 4.15 | [~]    | Timer [+30m] (rev-checked, clash -> preview) + [Cancel timer] on the saved timer, its card and chat done cards                |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
@@ -125,4 +127,5 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 6 | [~]    | Telemetry: shipped 3347df5; user verifies 6.5; 6.6 speed after Phase 4                        |
 | 4 | [~]    | LLM: planned 2026-10-13, building (see Phase 4 table above)                                   |
 | 7 | [ ]    | Weekly report + hours-run + kWh/SGD; habit nudges ('turn it on?', live); daily brief (opt-in) |
-| 5 | [ ]    | TTL prompts (non-LLM): run-time nudge, pre-schedule heads-up; prefs shown in /memory          |
+| 5 | [-]    | Dropped 2026-10-20 by the user: run-time nudges and pre-schedule heads-ups (too noisy)        |
+| 8 | [ ]    | Presence: phone on home Wi-Fi -> welcome-home / nobody-home offers; /phone pairing; UX first  |

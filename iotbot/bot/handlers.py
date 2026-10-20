@@ -29,6 +29,7 @@ from iotbot.outside.weather import REGIONS
 from iotbot.store import read_since
 from iotbot.result import Actor, Result, Surface
 from iotbot.schedule import notify as sn
+from iotbot.schedule import text as tx
 from iotbot.services.users import parse_user_id
 
 logger = logging.getLogger(__name__)
@@ -445,7 +446,7 @@ async def _users_button(update: Update, context: ContextTypes.DEFAULT_TYPE, quer
 
 async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
                                   action: str, args: list[str]) -> None:
-    """Buttons on schedule notices: [Undo] [Retry] [Skip next] [Pause]."""
+    """Buttons on schedule notices: [Undo] [Retry] [Skip next|Don't skip] [Pause|Resume]."""
     ctx = app_ctx(context)
     if ctx.notifier is None or ctx.schedules is None or not args:
         await query.answer("This button is no longer active.")
@@ -468,14 +469,44 @@ async def _schedule_notice_button(update: Update, context: ContextTypes.DEFAULT_
         r = await ctx.schedules.skip(actor, args[0], rev=rev)
     elif action == "pause":
         r = await ctx.schedules.pause(actor, [args[0]], rev=rev)
+    elif action == "resume":
+        r = await ctx.schedules.resume(actor, [args[0]], rev=rev)
+    elif action == "unskip" and len(args) > 2 and (day := tx.parse_day(args[2])):
+        r = await ctx.schedules.unskip(actor, args[0], day, rev=rev)
     else:
         await query.answer("This button is no longer active.")
         return
     telemetry.note_result(r.ok, r.error)
     if r.error == "stale":
-        r.message = "Already changed (maybe a double tap). /schedule shows the current state."
+        r.message = "Already changed (maybe a double tap); the buttons now show the current state."
     await answer_or_message(query, r.message, alert=not r.ok)
     await ctx.notifier.changed(actor, r)
+    if action != "undo":               # args[0] is a schedule id, not an Undo token
+        await _redraw_notice(query, ctx.notifier, args[0])
+
+
+NOW_LINE = "\n\nNow: "
+
+
+async def _redraw_notice(query: CallbackQuery, notifier: sn.Notifier, sid: str) -> None:
+    """Rebuild a notice's buttons (and its 'Now:' line) from the schedule's state, so
+    Pause becomes Resume. Best effort: an old or deleted message is left alone."""
+    msg = query.message
+    if msg is None or isinstance(msg, InaccessibleMessage) or not getattr(msg, "text", None):
+        return
+    markup = getattr(msg, "reply_markup", None)
+    buttons = [(btn.text, btn.callback_data) for row in (markup.inline_keyboard if markup else ())
+               for btn in row if isinstance(btn.callback_data, str)]
+    line, rows = notifier.controls(sid, buttons, failed=msg.text.startswith(sn.FAILED))
+    text = msg.text_html.split(NOW_LINE)[0] + (NOW_LINE + h(line) if line else "")
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data) for label, data in row]
+                                   for row in rows]) if rows else None
+    try:
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup,
+                                      disable_web_page_preview=True)
+    except TelegramError as e:          # best effort: the tap itself already worked
+        if "not modified" not in str(e).lower():
+            logger.info("Could not redraw schedule notice: %s", e)
 
 
 async def send_notice(bot: Bot, n: sn.Notice) -> None:

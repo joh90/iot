@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from iotbot.schedule import timing as tm
 from iotbot.schedule.model import DAYS, Adjust, Capture, Off, On, Once, Schedule, Weekly
 
 NIGHT_END = 5     # a run before 05:00 belongs to the previous night ("Fri night (Sat 01:00)")
@@ -81,3 +83,43 @@ def describe(s: Schedule, now: datetime, tz: ZoneInfo) -> str:
     """'Bedtime: bed_ac on, cool 22C fan 3 vane auto, 23:00 Sun-Thu'."""
     head = f"{s.label}: " if s.label else ""
     return f"{head}{s.device} {describe_action(s)}, {describe_when(s, now, tz)}"
+
+
+def is_paused(s: Schedule, now: datetime) -> bool:
+    return not s.enabled or (s.paused_until is not None and s.paused_until > now)
+
+
+def state_line(s: Schedule, now: datetime, tz: ZoneInfo) -> str:
+    """'Paused until you resume it.' / 'Skipping Tue 21 Oct.' / '' -- the state the buttons act on."""
+    if not s.enabled:
+        return "Paused until you resume it."
+    if s.paused_until is not None and s.paused_until > now:
+        return f"Paused until {fmt_at(s.paused_until, now, tz)}."
+    skips = [d for d in s.skip_dates if d >= now.astimezone(tz).date()]
+    if skips and isinstance(s.when, Weekly):
+        return "Skipping " + ", ".join(night_of(d, s.when.time) for d in skips) + "."
+    return ""
+
+
+def toggles(s: Schedule, now: datetime, tz: ZoneInfo) -> list[tuple[str, str, tuple[str, ...]]]:
+    """Buttons that follow the schedule's state, as (label, op, extra args): [Skip next] or
+    [Don't skip] (the first skipped run), then [Pause] or [Resume]. A paused schedule shows
+    only [Resume]; a timer only [Resume] when disabled."""
+    if s.is_timer:
+        return [("Resume", "resume", ())] if not s.enabled else []
+    if is_paused(s, now):
+        return [("Resume", "resume", ())]
+    # [Don't skip] only when the run that would come next is the skipped one; a skip further
+    # ahead (e.g. Fri, set in chat) must not hide [Skip next] for tonight
+    runs = tm.next_runs(replace(s, skip_dates=()), now, tz, 1)
+    nxt = runs[0].astimezone(tz).date() if runs else None
+    first = (("Don't skip", "unskip", (f"{nxt:%Y%m%d}",)) if nxt in s.skip_dates else ("Skip next", "skip", ()))
+    return [first, ("Pause", "pause", ())]
+
+
+def parse_day(text: str) -> date | None:
+    """'20261021' (a button's skip date) -> date."""
+    try:
+        return datetime.strptime(text, "%Y%m%d").date() if len(text) == 8 and text.isdecimal() else None
+    except ValueError:
+        return None

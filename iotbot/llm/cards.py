@@ -32,6 +32,7 @@ class Done:
     ok: bool
     text: str                                                   # "ok", or why it failed
     undo: Callable[[Actor], Awaitable[Done]] | None = None      # set when this line can be undone
+    timer: tuple[str, int] | None = None                        # (id, rev) of a timer this line set: [+30m]
 
 
 @dataclass(slots=True)
