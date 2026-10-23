@@ -307,7 +307,7 @@ Design changes from the spike:
 | Night         | Departure messages 23:00-07:00 are sent silently (a sleeping phone can look away); arrival has no night rule                 |
 | Visibility    | Counts only: '2 of 3 home'. Never names in presence text ('Someone is back, offer closed'); tap results may name the tapper  |
 | History       | Arrive/leave events logged on the Pi for #7 patterns; each person sees only their own; deletable per person                  |
-| First run     | No 24h test (user's choice). PROPOSED: first day ships with offers off (log only), then offers turn on              |
+| First run     | No 24h test (user's choice). PROPOSED: first day ships with offers off (log only), then offers turn on                       |
 | Open          | Arrival sound (default audible); per-person arrival/departure toggles live in /phone (default on)                            |
 
 ## Pending before build
