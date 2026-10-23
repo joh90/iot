@@ -95,7 +95,8 @@ def state_line(s: Schedule, now: datetime, tz: ZoneInfo) -> str:
         return "Paused until you resume it."
     if s.paused_until is not None and s.paused_until > now:
         return f"Paused until {fmt_at(s.paused_until, now, tz)}."
-    skips = [d for d in s.skip_dates if d >= now.astimezone(tz).date()]
+    # By fire time, not date: a skipped 01:00 run is over at 02:00 the same day
+    skips = [d for d in s.skip_dates if isinstance(s.when, Weekly) and tm.local_time(d, s.when.time, tz) > now]
     if skips and isinstance(s.when, Weekly):
         return "Skipping " + ", ".join(night_of(d, s.when.time) for d in skips) + "."
     return ""
