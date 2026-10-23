@@ -22,10 +22,12 @@ from iotbot.bot import stats
 from iotbot.bot import wizard as wz
 from iotbot.bot.callbacks import decode, encode
 from iotbot.bot import chat
+from iotbot.bot import phone as ph
 from iotbot.bot.chat import on_chat
 from iotbot.bot.text import NOT_ALLOWED, START, b, dm, h, human_duration, popup, reply, safe_edit, split_text
 from iotbot.context import AppContext
 from iotbot.outside.weather import REGIONS
+from iotbot.presence import offers as po
 from iotbot.store import read_since
 from iotbot.result import Actor, Result, Surface
 from iotbot.schedule import notify as sn
@@ -154,6 +156,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     lines.append("")
     lines.append(f"Rooms: {len(ctx.registry.rooms)}, devices: {len(ctx.registry.devices)}")
     lines.append("Approved users: " + h(", ".join(name for _, name in ctx.users.list())))
+    if ctx.presence is not None:
+        home, paired = ctx.presence.counts()
+        lines.append(f"Home: {home} of {paired} phones" if paired else "Home: no phones set up (/phone)")
     if ctx.warnings:
         lines.append("")
         lines.append(b(f"Config warnings ({len(ctx.warnings)})"))
@@ -213,6 +218,11 @@ def schedule_status(ctx: AppContext, now: datetime) -> list[str]:
 async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = app_ctx(context)
     await chat.cmd_memory(update, context, ctx.memory, actor_of(update, ctx, "slash"))
+
+
+@restricted
+async def cmd_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await ph.cmd_phone(update, context, app_ctx(context))
 
 
 @restricted
@@ -346,6 +356,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _ac_card_button(update, context, query, action[len(AC_CARD):], args)
     elif ns == chat.NS:
         await _card_button(update, context, query, action, args)
+    elif ns == ph.NS:
+        ctx = app_ctx(context)
+        await ph.phone_button(context, query, ctx, actor_of(update, ctx, "button"), action, args)
+    elif ns == po.NS:
+        ctx = app_ctx(context)
+        await ph.offer_button(query, ctx, actor_of(update, ctx, "button"), action, args)
     elif ns == chat.MEM:
         ctx = app_ctx(context)
         await chat.memory_button(query, ctx.memory, actor_of(update, ctx, "button"), action, args)

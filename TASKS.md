@@ -118,6 +118,22 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4.14 | [~]    | Notice buttons follow state: Pause<->Resume, Skip next<->Don't skip, 'Now:' line, old notices redraw; same on /schedule       |
 | 4.15 | [~]    | Timer [+30m] (rev-checked, clash -> preview) + [Cancel timer] on the saved timer, its card and chat done cards                |
 
+## Phase 8 -- Presence (planned 2026-10-20/23)
+
+Design: PLAN.md "Phase 8 decisions". No 24h test; offers on from the start (user, 2026-10-23).
+
+| #   | Status | Task                                                                                                      |
+|-----|--------|-----------------------------------------------------------------------------------------------------------|
+| 8.0 | [-]    | 24h detection test: skipped by the user; tune from presence_events after ship                             |
+| 8.1 | [~]    | `presence/net.py`: TCP-connect probe (refused/accepted/timeout = there), ARP table, sweep, fake LAN tests |
+| 8.2 | [~]    | `/phone`: setup by Wi-Fi toggle, confirm, remove, arrival/departure toggles, delete my history            |
+| 8.3 | [~]    | `presence/tracker.py`: home/away (15 min), arrival after 30+ min, restart = unknown, IP moves by sweep    |
+| 8.4 | [~]    | On-since per aircon in ac_state.json (kept by changes while on)                                           |
+| 8.5 | [~]    | Arrival offer: per-aircon buttons, last state powered on, Undo, expiry 30 min                             |
+| 8.6 | [~]    | Departure offer: everyone set up, first tap wins, copies redrawn, silent 23-07, closes on return          |
+| 8.7 | [~]    | `/status` "Home: N of M phones"; chat home state gets people_home (counts) and on_since                   |
+| 8.8 | [~]    | Tests (fake LAN/clock, no IR), README, reviewer; ship on user OK                                          |
+
 ## Later phases (coarse; split into numbered subtasks when started)
 
 | # | Status | Task                                                                                          |
@@ -128,4 +144,4 @@ Design: PLAN.md "Phase 4 decisions". Ships in 3 waves, each after a reviewer and
 | 4 | [~]    | LLM: planned 2026-10-13, building (see Phase 4 table above)                                   |
 | 7 | [ ]    | Weekly report + hours-run + kWh/SGD; habit nudges ('turn it on?', live); daily brief (opt-in) |
 | 5 | [-]    | Dropped 2026-10-20 by the user: run-time nudges and pre-schedule heads-ups (too noisy)        |
-| 8 | [ ]    | Presence: phone on home Wi-Fi -> welcome-home / nobody-home offers; /phone pairing; UX first  |
+| 8 | [~]    | Presence: built 2026-10-23 (see Phase 8 table above); ship on user OK                         |

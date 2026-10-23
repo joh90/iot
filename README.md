@@ -20,6 +20,7 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 - `/stats [days]` shows how fast the bot answers (p50/p95 per surface, share under 300 ms), the slowest
   remotes, failed sends and who or what sent them, strangers, chat assistant use, and whether the LLM PC
   answers (default 7 days)
+- `/phone` sets up your phone for welcome-home and everyone-out offers (see "Presence" below)
 - Plain messages in a private chat go to the chat assistant (see below), e.g. "a bit cooler in the
   bedroom", "off the office aircon at 7am weekdays", "is the bedroom aircon on?"
 
@@ -344,6 +345,31 @@ Holidays ("is next Monday a PH?", "next long weekend?", "holidays next year"):
 
 Every chat turn that reached the model has its full requests and replies in
 `logs/llm/llm-YYYY-MM-DD.jsonl` (kept 90 days), to replay against a new model or prompt later. Group chats and strangers never reach the model.
+
+## Presence (/phone)
+
+The bot can tell whether each person who set up their phone is home, by checking once a minute
+whether the phone answers on the home Wi-Fi. It needs no extra container permissions: a TCP connect
+makes the kernel ask "who has this address?" (ARP), and only "no answer" means away. If the router
+itself stops answering, rounds are skipped, so a network outage never looks like everyone leaving.
+
+- **Setup**: `/phone` > Set up my phone, then turn your phone's Wi-Fi off, wait 10 seconds and turn it
+  back on. The bot picks the one device that dropped off and came back, and asks you to confirm. Phones
+  use a private Wi-Fi address that stays fixed for your home network unless set to "Rotating".
+- **Away** means unseen for 15 minutes (locked phones go quiet for a while). After a restart everyone
+  starts as "checking", so a reboot never triggers an offer, and someone not seen since the restart
+  never counts toward "everyone is out".
+- **Welcome home**: after 30+ minutes away, if nobody else with a phone was home and an aircon is off,
+  you get a button per aircon that is off, Both, and No thanks. On uses the last state the bot sent to
+  that aircon (the room preset if none). Undo for 10 minutes; the offer expires after 30 minutes.
+- **Everyone is out**: once every phone set up is away and an aircon is on, everyone set up gets
+  Turn off all, one button per aircon, and Leave on. The first tap wins and every copy is redrawn;
+  someone coming back closes it. Between 23:00 and 07:00 it arrives silently.
+- Nothing is sent to an aircon without a tap. Presence shows counts only ("Home: 1 of 2 phones" in
+  `/status`), never who is home. Arrive/leave times go to `logs/presence_events-YYYY-MM.jsonl` for weekly
+  patterns; `/phone` > Delete my history removes yours. Each person can switch either offer off in `/phone`.
+- `PRESENCE=off` in `.env` stops all probing; `PRESENCE_SUBNET` sets the Wi-Fi network (default: the
+  Pi's own /24). Presence needs the aircon encoder (`AC_ENCODER=on`).
 
 ## Usage log
 

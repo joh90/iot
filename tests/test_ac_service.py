@@ -59,6 +59,21 @@ def no_network(ctx):
         ctx.outside.nea.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
     if ctx.holidays:
         ctx.holidays.http = httpx.AsyncClient(transport=httpx.MockTransport(_no_llm))
+    if ctx.presence:
+        ctx.presence.net = NoLan()
+
+
+class NoLan:
+    """Tests never probe the real LAN; presence tests install tests.test_presence.FakeLan."""
+
+    async def probe(self, ip):
+        raise AssertionError("tests never probe the real network")
+
+    async def arp(self):
+        raise AssertionError("tests never read the real ARP table")
+
+    async def sweep(self):
+        raise AssertionError("tests never sweep the real network")
 
 
 def _no_llm(request):
