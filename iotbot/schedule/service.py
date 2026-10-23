@@ -392,7 +392,8 @@ class ScheduleService:
 
     async def unskip(self, actor: Actor, sid: str, day: date, rev: int | None = None) -> Result:
         s = self.get(sid)
-        if s is not None and day not in s.skip_dates:
+        # A stale rev (double tap) goes on to _edit for the usual "Already changed"
+        if s is not None and (rev is None or rev == s.rev) and day not in s.skip_dates:
             return Result.fail("not_skipped", f"{tx.name(s)} is not skipping {day:%a %d %b}.")
 
         def change(cur: Schedule) -> Schedule:

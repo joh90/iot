@@ -329,3 +329,19 @@ async def test_unskip_of_a_day_not_skipped_says_so(nt):
     await nt.env.add(sched())
     r = await nt.service.unskip(CREATOR, "s7f3a", FIRE.date())
     assert r.error == "not_skipped"
+
+
+async def test_dont_skip_double_tap_is_stale_not_an_error(nt):
+    await nt.env.add(sched())
+    await nt.service.skip(CREATOR, "s7f3a")
+    s = nt.service.get("s7f3a")
+    day = s.skip_dates[0]
+    assert (await nt.service.unskip(CREATOR, "s7f3a", day, rev=s.rev)).ok
+    assert (await nt.service.unskip(CREATOR, "s7f3a", day, rev=s.rev)).error == "stale"
+
+
+def test_state_line_drops_a_skipped_run_that_already_passed():
+    from iotbot.schedule import text as tx
+    s = replace(sched(), skip_dates=(FIRE.date(),))
+    assert tx.state_line(s, FIRE - timedelta(minutes=1), SGT).startswith("Skipping ")
+    assert tx.state_line(s, FIRE + timedelta(minutes=1), SGT) == ""

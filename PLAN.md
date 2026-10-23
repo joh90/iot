@@ -290,7 +290,7 @@ Design changes from the spike:
   prompt forbids stating data a tool did not return.
 - Thinking stays off (same answers, 3-4x slower).
 
-## Phase 8 decisions: presence (2026-10-20, UX agreed; not built)
+## Phase 8 decisions: presence (2026-10-20/23, UX agreed; not built)
 
 | Topic         | Decision                                                                                                                     |
 |---------------|------------------------------------------------------------------------------------------------------------------------------|
@@ -304,7 +304,11 @@ Design changes from the spike:
 | Departure to  | Everyone paired; first tap wins, the others' copies redraw ("Turned off all (by X)") with [Undo]                             |
 | Never         | No IR without a tap; no locations or MACs beyond the paired phones; nothing leaves the LAN                                   |
 | Needs         | On-since per aircon (was 5.1; Phase 5 dropped, so built here; Phase 7 hours-run reuses it)                                   |
-| Open          | Silent or audible messages; per-person on/off for arrival and departure offers (likely in `/phone`)                          |
+| Night         | Departure messages 23:00-07:00 are sent silently (a sleeping phone can look away); arrival has no night rule                 |
+| Visibility    | Counts only: '2 of 3 home'. Never names in presence text ('Someone is back, offer closed'); tap results may name the tapper  |
+| History       | Arrive/leave events logged on the Pi for #7 patterns; each person sees only their own; deletable per person                  |
+| First run     | No 24h test (user's choice). PROPOSED: first day ships with offers off (log only), then offers turn on              |
+| Open          | Arrival sound (default audible); per-person arrival/departure toggles live in /phone (default on)                            |
 
 ## Pending before build
 
