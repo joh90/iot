@@ -22,13 +22,16 @@ from iotbot.llm.world import HolidayTools, OutsideTools
 from iotbot.outside.holidays import Holidays
 from iotbot.outside.nea import NeaClient
 from iotbot.outside.weather import Outside
+from iotbot.presence.net import Net
+from iotbot.presence.offers import Offers
+from iotbot.presence.tracker import Presence, validate_phones
 from iotbot.schedule.notify import Notifier
 from iotbot.schedule.runner import Scheduler
 from iotbot.schedule.service import ScheduleService
 from iotbot.schedule.store import ScheduleStore
 from iotbot.services.devices import DeviceService
 from iotbot.services.users import UserService, validate_users
-from iotbot.store import JsonlLog, JsonStore, read_json
+from iotbot.store import JsonlLog, JsonStore, StoreError, read_json
 from iotbot.telemetry import Tracker
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,8 @@ class AppContext:
     memory: Memory | None = None
     outside: Outside | None = None
     holidays: Holidays | None = None
+    presence: Presence | None = None             # None: PRESENCE=off or no AC encoder
+    offers: Offers | None = None
     started_at: float = field(default_factory=time.time)
     warnings: list[str] = field(default_factory=list)
 
@@ -148,6 +153,23 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     if (w := holidays.load()):
         warnings.append(w)
 
+    presence = offers = None
+    if settings.presence and ac is not None:
+        phones = JsonStore(settings.state_dir / "phones.json", dict, validate=validate_phones)
+        try:
+            phones.load()
+            if phones.load_warning:
+                warnings.append(phones.load_warning)
+        except StoreError as e:
+            # Not a cache, but losing it only means setting phones up again: never block startup
+            phones.use_default()
+            warnings.append(f"{e}; presence starts with no phones set up")
+        presence = Presence(phones, Net(settings.presence_subnet),
+                            JsonlLog(settings.log_dir, "presence_events", settings.timezone), users.is_allowed)
+        offers = Offers(presence, devices, ac, registry, users.name_of, settings.timezone)
+    elif settings.presence:
+        logger.info("Presence needs the AC encoder (AC_ENCODER=on); switched off")
+
     assistant = memory = None
     if settings.llm_enabled:
         memory = Memory(settings.state_dir / "memory.json", settings.timezone)
@@ -166,7 +188,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         settings=settings, registry=registry, hub=hub,
         devices=devices, users=users, ac=ac,
         schedules=schedules, scheduler=scheduler, notifier=notifier, tracker=tracker, assistant=assistant, memory=memory,
-        outside=outside, holidays=holidays, warnings=warnings,
+        outside=outside, holidays=holidays, presence=presence, offers=offers, warnings=warnings,
     )
     if assistant is not None:
         home = HomeTools(ctx)

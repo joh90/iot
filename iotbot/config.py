@@ -40,6 +40,10 @@ class Settings:
     outside_regions: tuple[str, ...] = ("central",)
     # Who may approve and remove users; empty = every approved user may (all equal)
     admin_ids: frozenset[int] = frozenset()
+    # Phase 8 presence: probe paired phones on the home Wi-Fi (off: /phone says so, nothing probed)
+    presence: bool = True
+    # The home Wi-Fi to look for phones on, e.g. 192.168.1.0/24; empty = the Pi's own /24
+    presence_subnet: str = ""
 
 
 def _path(env: dict[str, str], key: str, default: str, base: Path) -> Path:
@@ -116,6 +120,20 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         raise ConfigError("ADMIN_IDS must be a comma list of Telegram user ids (numbers), or empty")
     admin_ids = frozenset(int(a) for a in admin_raw)
 
+    presence_raw = (environ.get("PRESENCE") or "on").strip().lower()
+    if presence_raw not in ("on", "off"):
+        raise ConfigError(f"PRESENCE must be 'on' or 'off', got '{presence_raw}'")
+    presence_subnet = (environ.get("PRESENCE_SUBNET") or "").strip()
+    if presence_subnet:
+        import ipaddress
+        try:
+            net = ipaddress.ip_network(presence_subnet, strict=False)
+        except ValueError:
+            raise ConfigError(f"PRESENCE_SUBNET '{presence_subnet}' is not a network like 192.168.1.0/24") from None
+        if net.version != 4 or not net.is_private or not 22 <= net.prefixlen <= 30:
+            raise ConfigError("PRESENCE_SUBNET must be a private IPv4 network from /22 to /30")
+        presence_subnet = str(net)
+
     tz = environ.get("TZ_NAME") or "Asia/Singapore"
     try:
         ZoneInfo(tz)
@@ -140,4 +158,6 @@ def load_settings(env_file: str | os.PathLike | None = ".env",
         outside_area=outside_area,
         outside_regions=outside_regions,
         admin_ids=admin_ids,
+        presence=presence_raw == "on",
+        presence_subnet=presence_subnet,
     )

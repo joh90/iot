@@ -133,8 +133,15 @@ class HomeTools:
                 at = datetime.fromtimestamp(last.at, self.tz)
                 row.update(bot_last_sent=last.state.describe(), power_as_last_sent="on" if last.state.power else "off",
                            sent_at=f"{at:%a %H:%M} ({_ago(now - last.at)})", sent_via_bot_by=last.actor)
+                if last.on_since is not None:
+                    row["on_since"] = f"{datetime.fromtimestamp(last.on_since, self.tz):%a %H:%M}"
             out.append(row)
-        return {"aircons": out, "note": STATE_NOTE}
+        result: dict[str, Any] = {"aircons": out, "note": STATE_NOTE}
+        presence = getattr(self.ctx, "presence", None)
+        if presence is not None and (counts := presence.counts())[1]:
+            # Counts only, never names (PLAN Phase 8: visibility)
+            result["people_home"] = f"{counts[0]} of {counts[1]} phones set up are on the home Wi-Fi"
+        return result
 
     async def _list(self, args: dict[str, Any], listed: set[str] | None = None) -> dict[str, Any]:
         svc = self.ctx.schedules

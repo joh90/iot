@@ -90,10 +90,20 @@ class SentState:
     state: AcState
     at: float
     actor: str
+    on_since: float | None = None     # when it went from off to on; kept by temp/fan changes
+
+
+def next_on_since(prev: SentState | None, state: AcState, at: float) -> float | None:
+    """An On after an Off (or after nothing) starts the clock; changes while on keep it."""
+    if not state.power:
+        return None
+    if prev is not None and prev.state.power:
+        return prev.on_since if prev.on_since is not None else prev.at
+    return at
 
 
 class AcStateStore:
-    """Last state sent per AC, in `state/ac_state.json`: {device_id: {state, at, actor}}.
+    """Last state sent per AC, in `state/ac_state.json`: {device_id: {state, at, actor, on_since}}.
 
     This is a cache, so a damaged file never stops the bot: it starts empty with a
     warning, and a bad entry is skipped rather than failing the whole file.
@@ -120,7 +130,11 @@ class AcStateStore:
             at = entry["at"]
             if isinstance(at, bool) or not isinstance(at, (int, float)):
                 raise TypeError(f"'at' must be a number, got {at!r}")
-            return SentState(AcState.from_dict(entry["state"]), float(at), str(entry["actor"]))
+            state = AcState.from_dict(entry["state"])
+            since = entry.get("on_since")
+            if isinstance(since, bool) or not isinstance(since, (int, float)) or not math.isfinite(since):
+                since = at if state.power else None      # files from before on_since: best guess
+            return SentState(state, float(at), str(entry["actor"]), float(since) if state.power else None)
         except (AcStateError, KeyError, TypeError, ValueError) as e:
             logger.warning("Ignoring stored AC state for %s: %s", device_id, e)
             return None
@@ -135,10 +149,9 @@ class AcStateStore:
         at = time.time() if at is None else at
         if not math.isfinite(at):
             raise ValueError(f"bad timestamp {at!r}")
-        record = {"state": state.to_dict(), "at": at, "actor": actor}
-
         def apply(data: dict) -> None:
-            data[device_id] = record
+            since = next_on_since(self.get(device_id), state, at)
+            data[device_id] = {"state": state.to_dict(), "at": at, "actor": actor, "on_since": since}
 
         await self._store.update(apply)
 

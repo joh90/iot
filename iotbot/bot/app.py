@@ -19,6 +19,7 @@ from telegram.ext import (
 
 from iotbot.bot import handlers as hd
 from iotbot.bot.backlog import Backlog, gate
+from iotbot.bot.phone import offer_io, stop_setups
 from iotbot.context import AppContext, expected_devices
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ COMMANDS = [
     ("stats", "Speed, failures, LLM health"),
     ("memory", "What the assistant remembers"),
     ("outside", "Weather and air (NEA)"),
+    ("phone", "Your phone for welcome-home offers"),
 ]
 
 
@@ -126,6 +128,9 @@ def build_application(ctx: AppContext) -> Application:
             ctx.notifier.send = send
             ctx.scheduler.start()
             await ctx.notifier.report_problems()
+        if ctx.presence and ctx.offers:
+            ctx.offers.send, ctx.offers.edit = offer_io(app.bot)
+            ctx.presence.start()
         if ctx.holidays and ctx.assistant:
             # MOM's list: refreshed in the background when over a month old (never blocks startup)
             app.bot_data["holidays_task"] = asyncio.create_task(ctx.holidays.run())
@@ -135,6 +140,9 @@ def build_application(ctx: AppContext) -> Application:
         # Before the bot shuts down, so a last fire can still send its notice
         if ctx.scheduler:
             await ctx.scheduler.stop()
+        if ctx.presence:
+            await stop_setups()
+            await ctx.presence.stop()
         if ctx.assistant:
             await ctx.assistant.drain()
             await ctx.assistant.llm.aclose()
@@ -173,7 +181,8 @@ def register(app: Application) -> None:
                        ("list", hd.cmd_list), ("keyboard", hd.cmd_keyboard), ("on", hd.cmd_on),
                        ("off", hd.cmd_off), ("d", hd.cmd_device), ("user", hd.cmd_user),
                        ("adduser", hd.cmd_adduser), ("schedule", hd.cmd_schedule),
-                       ("stats", hd.cmd_stats), ("memory", hd.cmd_memory), ("outside", hd.cmd_outside)):
+                       ("stats", hd.cmd_stats), ("memory", hd.cmd_memory), ("outside", hd.cmd_outside),
+                       ("phone", hd.cmd_phone)):
         app.add_handler(CommandHandler(name, func, filters=new_only))
     # Plain text: the wizard's "Type a time", else the chat assistant (private chats only)
     app.add_handler(MessageHandler(new_only & filters.TEXT & ~filters.COMMAND, hd.on_text))

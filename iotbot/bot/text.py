@@ -51,6 +51,7 @@ Commands:
 /stats [days] - speed, failed sends, LLM health (default 7 days)
 /memory - what the chat assistant remembers (forget items)
 /outside [area] - weather and air from NEA (default: home)
+/phone - your phone for welcome-home and everyone-out offers
 
 Or just type, e.g. "a bit cooler in the bedroom" or "off the office aircon at 7am weekdays"."""
 
