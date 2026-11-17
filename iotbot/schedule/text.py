@@ -21,10 +21,15 @@ def describe_action(s: Schedule) -> str:
     if isinstance(a, Off):
         return "off"
     if isinstance(a, Adjust):
-        return "set " + ", ".join(f"{k} {v}" for k, v in a.changes)
+        return "set " + ", ".join(f"{k} {_value(v)}" for k, v in a.changes)
     if isinstance(a, Capture):
         return a.key.replace("_", " ")
     return "?"
+
+
+def _value(v: object) -> str:
+    """'powerful on', not 'powerful True' (live card 2026-11-16)."""
+    return {True: "on", False: "off"}.get(v, str(v)) if isinstance(v, bool) else str(v)
 
 
 def describe_days(days: tuple[str, ...]) -> str:

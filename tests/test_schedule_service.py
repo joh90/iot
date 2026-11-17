@@ -406,3 +406,39 @@ def test_text_helpers():
     assert tx.describe_days(("sat", "sun")) == "weekends"
     assert tx.night_of(date(2026, 10, 17), "01:00") == "Fri 16 Oct night (Sat 01:00)"
     assert tx.night_of(date(2026, 10, 17), "23:00") == "Sat 17 Oct"
+
+
+async def test_one_time_on_timers_do_not_warn_about_never_off(svc):
+    # Live: 8 of 9 one-time 'on' timers carried it and nobody acted on it; repeats still warn
+    p = svc.plan(ALICE, {"device": "bed_ac", "action": ON22, "when": {"kind": "once", "at": (T0 + timedelta(hours=2)).isoformat()}})
+    assert p.ok and not p.warnings
+
+
+SET_POWERFUL = {"kind": "adjust", "changes": {"powerful": True}}
+
+
+def _at(hours):
+    return {"kind": "once", "at": (T0 + timedelta(hours=hours)).isoformat()}
+
+
+async def test_a_setting_change_on_an_aircon_that_will_be_off_warns(svc):
+    from iotbot.ac.state import AcState
+    from iotbot.schedule import text as tx
+    # Live 2026-11-16 10:13: "powerful at 6pm" on an aircon off since the night before
+    p = svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(8)})
+    assert p.ok and "may be off" in p.warnings[0] and "ask for on with it" in p.warnings[0]   # bot never sent
+    assert tx.describe_action(p.data["schedule"]) == "set powerful on"
+    ac = svc.devices.ac
+    await ac.store.put("bed_ac", AcState(power=False, temp=23), "Alice", at=T0.timestamp() - 3600)
+    assert "will be off" in svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(8)}).warnings[0]
+    await ac.store.put("bed_ac", AcState(power=True, temp=23), "Alice", at=T0.timestamp() - 60)
+    assert not svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(8)}).warnings
+    # On now, but an off timer runs first
+    await create(svc, action={"kind": "off"}, when=_at(4))
+    assert "will be off" in svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(8)}).warnings[0]
+    # ...and an on timer after that turns it back on
+    await create(svc, action=ON22, when=_at(6))
+    assert not svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(8)}).warnings
+    # More than a day away: what the bot sent now says little about then
+    await ac.store.put("bed_ac", AcState(power=False, temp=23), "Alice", at=T0.timestamp())
+    assert not svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(30)}).warnings

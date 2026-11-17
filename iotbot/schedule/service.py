@@ -155,7 +155,8 @@ class ScheduleService:
                     "message": f"{tx.name(o)} ({tx.describe_action(o)}) runs {tx.fmt_at(hit[1], now, self.tz)}",
                 })
         warnings = []
-        if mine and _turns_on(cand):
+        # One-time timers: never acted on live (8 of 9 'on' timers carried it), so only repeats warn
+        if mine and _turns_on(cand) and not cand.is_timer:
             offs = [o for o in others if _turns_off(o)]
             bare = [at for at in mine
                     if not any(self._runs(o, at, at + timedelta(seconds=NEVER_OFF_S)) for o in offs)]
@@ -163,7 +164,25 @@ class ScheduleService:
                 n = f"{len(bare)} of its runs" if len(mine) > 1 else "its run"
                 warnings.append(f"Nothing turns {cand.device} off within 24 hours after {n} "
                                 f"(first: {tx.fmt_at(bare[0], now, self.tz)}).")
+        # A change of settings does nothing to an aircon that is off (live 2026-11-16: "powerful at
+        # 6pm" on an aircon off since the night before was an Adjust that would have been skipped)
+        if mine and isinstance(cand.action, Adjust) and mine[0] - now <= timedelta(seconds=NEVER_OFF_S) \
+                and (on := self._power_at(cand.device, mine[0], others, now)) is not True:
+            warnings.append(f"{cand.device} {'will be off' if on is False else 'may be off'} at "
+                            f"{tx.fmt_at(mine[0], now, self.tz)}, so this change does nothing then. To turn it "
+                            f"on with this setting, ask for on with it.")
         return conflicts, warnings
+
+    def _power_at(self, device: str, at: datetime, others: list[Schedule], now: datetime) -> bool | None:
+        """Will the device be on at `at`? From what the bot last sent and the on/off schedules due
+        before then. None = not known (the bot never sent anything)."""
+        ac = getattr(self.devices, "ac", None)
+        last = ac.last(device) if ac is not None and hasattr(ac, "last") else None
+        power = last.state.power if last is not None else None
+        runs = sorted((r, o) for o in others if _turns_on(o) or _turns_off(o) for r in self._runs(o, now, at))
+        for _, o in runs:
+            power = _turns_on(o)
+        return power
 
     # ---- plan / apply ----------------------------------------------------------------------
 

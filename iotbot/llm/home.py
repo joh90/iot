@@ -89,7 +89,9 @@ class HomeTools:
                  write=True, prepare=lambda a: self.prepare_ac(actor, a)),
             Tool("add_schedule", "New timer or repeating schedule. Timer (the default): in_minutes, or at "
                                  "(+ date). Repeating: at + days, only when the person said a repeat (every "
-                                 "day, weekdays, Mondays). action set = change settings without on/off. Give "
+                                 "day, weekdays, Mondays). action set = change settings of an aircon that is on, "
+                                 "without on/off; for a setting at a time on an aircon that is off or may be "
+                                 "off, use action on with the setting. Give "
                                  "temp, fan, vane, powerful ONLY if the person said them: left out, 'on' uses "
                                  "the room's usual settings.",
                  {"type": "object", "required": ["device", "action"], "properties": {
@@ -370,12 +372,14 @@ class HomeTools:
             raise ArgError(f"nothing would change: {tx.name(cur)} already does that")
         line = f"{tx.describe(cur, now, self.tz)} -> {after}" if cur else after
         clash = [str(c.get("message") or c.get("with")) for c in r.conflicts]
+        parts = [line]
         if clash:
-            line += f". Clashes with {'; '.join(clash)}; both are kept"
+            parts.append(f"Clashes with {'; '.join(clash)}; both are kept")
         if r.warnings:
-            line += ". Note: " + " ".join(r.warnings)
+            parts.append("Note: " + " ".join(w.rstrip(".") + "." for w in r.warnings).rstrip("."))
         if (ph := self._holiday_note(cand, now)):
-            line += f". {ph}"
+            parts.append(ph)
+        line = ". ".join(p.rstrip(".") for p in parts)                  # no ".." between parts
         plan_id = r.data["plan_id"]
         shown = {c["with"] for c in r.conflicts}
 
