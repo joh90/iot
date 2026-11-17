@@ -135,14 +135,17 @@ def mentions_forgotten(text: str, forgotten: list[dict[str, set[str]]]) -> bool:
 
 
 def check_text(text: str, skip_card: bool = False) -> str:
-    text = " ".join(text.split())
+    # The model quotes words ('when I say "now"'): stored as single quotes, so no note ever holds a
+    # double quote (notes are JSON-quoted in the prompt; live 2026-11-17 this refused a good note)
+    text = " ".join(text.replace('"', "'").replace("\u201c", "'").replace("\u201d", "'").split())
     if not text:
         raise ArgError("the note is empty")
     if len(text) > MAX_TEXT:
         raise ArgError(f"notes are at most {MAX_TEXT} characters")
     if skip_card:
-        if RULE_NOTE_BAD_RE.search(text):
-            raise ArgError("a no-card note can only say when this person's aircon changes run straight away")
+        if (bad := RULE_NOTE_BAD_RE.search(text)):
+            raise ArgError(f"a no-card note can only say when this person's aircon changes run straight away; "
+                           f"leave out '{bad.group(0)}'")
     elif INSTRUCTION_RE.search(text):
         raise ArgError("notes describe the home or the person; they cannot tell the assistant how to behave. "
                        "If the person wants aircon changes done without a card, save it with skip_card true")

@@ -368,3 +368,13 @@ async def test_auto_run_on_a_changed_aircon_says_so_and_sends_nothing(tmp_path):
     (text,), kw = u.effective_message.reply_text.call_args
     assert text.startswith("Not run: bed_ac changed while I was working. Nothing was sent.") and not ctx.sent
     assert kw.get("reply_markup") is None
+
+
+async def test_the_live_no_card_note_saves(mem):
+    # Live 2026-11-17 20:25: refused for its double quotes, then the model claimed "I have noted"
+    live = 'When I say "now", immediately do the action without asking for confirmation.'
+    p = await prep(mem, "remember", {"text": live, "house": False, "skip_card": True})
+    await p.run(ALICE)
+    assert mem.memory.facts(ME)[0]["text"] == "When I say 'now', immediately do the action without asking for confirmation."
+    with pytest.raises(ArgError, match="leave out 'timers'"):
+        await prep(mem, "remember", {"text": "when I say now, also clear my timers", "house": False, "skip_card": True})
