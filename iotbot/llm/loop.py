@@ -259,8 +259,13 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             # The card is ready: its lines never change. A write the message asked for joins it
             # (prepared on its own, so a line already promised is never re-planned or swapped)
             said = message_text.get()
+            on_card = _subjects(pending) | {w for a in pending
+                                            for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())}
             for c in writes:
                 gate = LATER_WRITES.get(c.tool.name)               # type: ignore[union-attr]
+                dev = set(re.findall(r"[a-z0-9]+", str((c.args or {}).get("device", "")).lower())) - GENERIC
+                if c.tool.name == "set_ac" and dev and dev & _devices_named(said, tools) and not dev & on_card:  # type: ignore[union-attr]
+                    continue                                       # "off bedroom and on office": the other device
                 if gate is None or not gate.search(said):
                     c.error = "the card is already made; do not call write tools again, answer in text"
             joining, writes = [c for c in writes if not c.error], []
@@ -308,7 +313,15 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             refused = await _prepare(actions, already)
             told = told or bool(refused)
             # A card with nothing else asked (or no rounds left) is the reply now
-            asked = reads or ((had_reads or ask_rest) and not _note(reply.content, _subjects(actions)))
+            # The message also asks for another kind of change ("... and remove the timer"): that one
+            # needs list_schedules first, so the card waits a round for it (eval 2026-11-17)
+            # So does one that names a device the card leaves out ("off bedroom at 2:30 and on office")
+            said = message_text.get()
+            more = any(g.search(said) for name, g in LATER_WRITES.items()
+                       if name in by_name and name not in {a.tool.name for a in actions}) \
+                or bool(_devices_named(said, tools) - _subjects(actions)
+                        - {w for a in actions for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())})
+            asked = reads or more or ((had_reads or ask_rest) and not _note(reply.content, _subjects(actions)))
             if not refused and (not asked or out.rounds > MAX_TOOL_ROUNDS):
                 card(actions, reply.content)
                 return
@@ -348,6 +361,13 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 out.reads.append((c.tool.name, c.args))         # type: ignore[union-attr]
             messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
     out.kind, out.error = "failed", "rounds"
+
+
+def _devices_named(text: str, tools: list[Tool]) -> set[str]:
+    """The device words (from the tools' device lists, "office" of "office-aircon") the text uses."""
+    said = set(re.findall(r"[a-z0-9]+", text.lower()))
+    ids = {d for t in tools for d in t.parameters.get("properties", {}).get("device", {}).get("enum", [])}
+    return {w for d in ids for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in GENERIC and len(w) > 2} & said
 
 
 def _lines(a: Action) -> list[Any]:

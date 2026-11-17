@@ -519,12 +519,20 @@ async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.tool.name for a in out.actions] == ["set_ac"]
     assert out.text == "Could not add: no schedule tgone. Ask for it again after this."
-    # Never a second set_ac, even when asked
-    srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "office-aircon", "power": False}, "c")]),
-                      completion("-")])
-    message_text.set("off bedroom and remove the timer, off office too")
+    # A second set_ac only for a device the message names and the card leaves out
+    office = {"device": "office-aircon", "power": False}
+    srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
+    message_text.set("off bedroom and remove the timer")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.args for a in out.actions] == [off]
+    srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
+    message_text.set("off bedroom and remove the timer, off office too")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.args for a in out.actions] == [off, office]
+    srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "bedroom-aircon", "power": True}, "c")]),
+                      completion("-")])
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.args for a in out.actions] == [off]                 # never a second line for the same aircon
 
 
 @pytest.mark.parametrize("text", [
@@ -563,3 +571,33 @@ async def test_a_repeated_or_corrected_join_reads_right():
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"] and out.text == ""
     assert "already on this card" in [m for m in srv.requests[3]["messages"] if m["role"] == "tool"][-1]["content"]
+
+
+async def test_a_card_waits_a_round_when_the_message_asks_for_another_kind_of_change():
+    # Eval 2026-11-17: round 1 was only set_ac, so the card closed before the delete
+    off = {"device": "bedroom-aircon", "power": False}
+    srv = FakeServer([completion(calls=[call("set_ac", off, "a")]), completion(calls=[call("list_schedules", {}, "b")]),
+                      completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]), completion("-")])
+    message_text.set("Turn off bedroom aircon and remove all my timers")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"]
+    # A plain order is still one call
+    srv = FakeServer([completion(calls=[call("set_ac", off, "a")])])
+    message_text.set("off bedroom")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert out.kind == "actions" and out.rounds == 1
+
+
+async def test_a_card_waits_a_round_when_the_message_names_another_device():
+    # Eval 2026-11-17: "off bedroom at 2:30pm and on office at 1330" got one timer
+    off = {"device": "bedroom-aircon", "power": False}
+    on = {"device": "office-aircon", "power": True}
+    srv = FakeServer([completion(calls=[call("set_ac", off, "a")]), completion(calls=[call("set_ac", on, "b")]),
+                      completion("-")])
+    message_text.set("off bedroom and on office")
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert [a.args for a in out.actions] == [off, on]
+    srv = FakeServer([completion(calls=[call("set_ac", off, "a"), call("set_ac", on, "b")])])
+    message_text.set("off bedroom and on office")
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert [a.args for a in out.actions] == [off, on] and out.rounds == 1
