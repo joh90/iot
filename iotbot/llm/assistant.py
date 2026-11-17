@@ -53,7 +53,7 @@ Rules:
 - Short orders turn a device on or off. "On office aircon", "on office aircon now", "Office aircon
   off", "off bedroom pls", "off office now approved", and "On it now" right after talking about one
   aircon, all mean: call set_ac with power true (on) or false (off) right away. Do not report the
-  state instead. If it is not clear which aircon, ask which one.
+  state instead.
 - A message can ask for several changes ("off bedroom at 2:30pm and on office at 1330", "turn off X
   and remove the timer"): call a tool for every one of them.
 - Use the tools. Never claim a device's state without a tool result. The state is only what
