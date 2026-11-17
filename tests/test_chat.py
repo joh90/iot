@@ -97,6 +97,28 @@ async def test_a_made_up_claim_drops_the_answer_it_copied():
     assert [m["role"] for m in srv.requests[-1]["messages"]] == ["system", "user"]
 
 
+async def test_a_made_up_claim_keeps_the_question_asked_in_code():
+    # review 2026-11-17: "office" only means something next to "Which aircon?"
+    srv = FakeServer([completion("The office aircon is now off.")])
+    a = Assistant(srv.client(), list, "Asia/Singapore", Clock(), aircons=lambda: TWO)
+    await a.handle(ALICE, "off my aircon")
+    assert (await a.handle(ALICE, "office")).turn.error == "fake_card"
+    assert [m["content"] for m in a.context(ME)] == ["[16:00] off my aircon", "Which aircon: bedroom or office?"]
+
+
+async def test_history_time_is_when_the_message_came_in():
+    clock = Clock()
+    a, srv = make_assistant([], clock)
+
+    async def slow(messages, tools=None):
+        clock.t += 120                                         # a slow turn: two minutes
+        return await FakeServer([completion("ok")]).client().chat(messages)
+
+    a.llm.chat = slow
+    await a.handle(ALICE, "hi")
+    assert a.context(ME)[0]["content"] == "[16:00] hi"
+
+
 async def test_a_made_up_claim_never_drops_a_card():
     from tests.test_llm import SET_AC
     a, _ = make_assistant([completion(calls=[call("set_ac", {"device": "office-aircon", "power": True})]),

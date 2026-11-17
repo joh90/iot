@@ -493,3 +493,14 @@ async def test_a_chat_timer_card_offers_plus_30(home):
     # a weekly schedule gets no +30m
     p = await prep(home, "add_schedule", {"device": "bed_ac", "action": "off", "at": "23:00", "days": ["mon"]})
     assert (await p.run(ALICE)).timer is None
+
+
+async def test_someone_elses_timer_says_whose_it_is(home):
+    # "remove all my timers" may list the housemate's too: the card line says so
+    bob = SimpleNamespace(tools={t.name: t for t in HomeTools(home.ctx).tools(BOB)})
+    p = await prep(bob, "add_schedule", {"device": "bed_ac", "action": "off", "at": "07:00", "days": ["mon"]})
+    await p.run(BOB)
+    sid = home.ctx.schedules.list()[0].id
+    line = (await prep(home, "delete_schedule", {"schedule_id": sid})).line
+    assert line.endswith(")") and "(made by " in line
+    assert "made by" not in (await prep(bob, "delete_schedule", {"schedule_id": sid})).line

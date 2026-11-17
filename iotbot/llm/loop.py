@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from iotbot.llm.client import LlmClient, LlmError, Reply
-from iotbot.llm.tools import AlreadyError, ArgError, Tool, parse_args
+from iotbot.llm.tools import AlreadyError, ArgError, Tool, message_text, parse_args
 
 logger = logging.getLogger(__name__)
 
@@ -33,22 +33,25 @@ CLAIM_RE = re.compile(
     r"\btap (do it|remember|save)\b|\bdo this\?|"
     r"\b(i will|i'll|i am going to|i'm going to|let me) (now )?(turn|set|switch|change|make|run|start|stop)\b|"
     r"\bturning (it |the \w+ )?(on|off) (now|for you)\b|"
-    r"(?<!may )(?<!might )(?<!could )\b(has|have) been (turned|set|switched|changed|paused|resumed|deleted|"
+    r"(?<!may )(?<!might )(?<!could )\b(has|have)( now)? been (turned|set|switched|changed|paused|resumed|deleted|"
     r"removed|added|created|scheduled)\b|"
     r"\b(i've|i have|done|ok)[,.!]? .{0,40}\bis now (on|off|set)\b|"
     r"\b(i've|i have|i will|i'll) (now )?(noted|note|saved|save|remembered|remember|stored|store)\b|"
-    r"\bnoted that\b|"
-    # live 2026-11-01..15: "I have turned off the office aircon." with no tool call
-    r"\b(i|i've|i have|i just|we)( also| just| now| already)? (turned|switched|set|changed|removed|deleted|added|"
-    r"paused|resumed|cancelled|executed)\b", re.IGNORECASE)
-# A promise to work differently (live 2026-11-10: "I will execute commands immediately without asking
+    r"\bnoted that\b", re.IGNORECASE)
+# live 2026-11-01..15: "I have turned off the office aircon." with no tool call. Per sentence, never
+# in a question or a condition ("Should I set it to 23?", "If I set it ...")
+FIRST_PERSON_RE = re.compile(
+    r"\b(i|i've|i have|i just|we)( also| just| now| already| successfully| gone ahead and)? (turned|switched|set|"
+    r"changed|removed|deleted|added|paused|resumed|cancelled|executed)\b", re.IGNORECASE)
+CONDITION_RE = re.compile(r"\?\s*$|\b(if|when|should|shall|can|could|would|do|does|whether)\b", re.IGNORECASE)
+# A promise to stop asking (live 2026-11-10: "I will execute commands immediately without asking
 # for confirmation"): only code decides when a card shows
-PROMISE_RE = re.compile(r"\b(i will|i'll|from now on)\b.{0,60}\b(without (asking|confirm\w*|a card)|immediately|"
-                        r"straight away|right away|skip)\b", re.IGNORECASE)
+PROMISE_RE = re.compile(r"\b(i will|i'll|from now on|okay, from now on)\b.{0,60}\b(without (asking|confirm\w*|a card)|"
+                        r"skip(ping)? (the )?(cards?|confirm\w*|asking)|no longer ask|not ask)\b", re.IGNORECASE)
 # A state stated as fact ("The office aircon is now on."): only true after a tool said so. Checked
 # only when no tool ran this turn (live 2026-11-15: six of these, nothing was sent)
-STATE_CLAIM_RE = re.compile(r"\b(is|are) now (on|off|running)\b|\b(was|were) (just )?(turned|switched) (on|off)\b",
-                            re.IGNORECASE)
+STATE_CLAIM_RE = re.compile(r"\b(is|are) now (on|off|running|cooling|set to)\b|"
+                            r"\b(was|were) (just )?(turned|switched) (on|off)\b", re.IGNORECASE)
 DEVICE_WORD_RE = re.compile(r"\b(aircons?|air[- ]?cons?|a/?c|acs|it|they|both)\b", re.IGNORECASE)
 # A sentence that is only a result: "Bedroom set to 23." / "Okay, both rooms turned off." A diary
 # line goes on ("... at 23:00 by the schedule") and a state answer says "is set to": neither matches
@@ -71,6 +74,20 @@ NOTE_DROP_RE = re.compile(
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 # A sentence about something that is not there or cannot be done
 MISSING_RE = re.compile(r"\b(no|not|none|isn't|aren't|doesn't|don't|cannot|can't|couldn't|nothing)\b", re.IGNORECASE)
+# A write after the card is ready joins it only when the message asks for that kind of change
+# (live 2026-11-14/16: "turn off X and remove the timer" lost the delete: it needs list_schedules
+# first, so it always comes a round after the set_ac). Never another set_ac
+LATER_WRITES = {
+    "delete_schedule": re.compile(r"\b(delete|remove|cancel|clear|get rid)\b", re.IGNORECASE),
+    "pause_schedule": re.compile(r"\b(pause|hold)\b", re.IGNORECASE),
+    "resume_schedule": re.compile(r"\b(resume|unpause|restart)\b", re.IGNORECASE),
+    "add_schedule": re.compile(r"\b(timers?|schedules?|at \d|in \d+)\b", re.IGNORECASE),
+    "edit_schedule": re.compile(r"\b(timers?|schedules?|change|move|update|at \d)\b", re.IGNORECASE),
+}
+READY = ("ready: shown to the person after your reply, for them to confirm. Do not call it again. If the "
+         "message also asks for another change (e.g. remove a timer), call that tool now and it joins this "
+         "card. If it asks or checks something, answer that in one or two short sentences (use read tools "
+         "if needed), without saying anything is done; if nothing else was asked, reply with just: -")
 # Tool-call markup in plain text: the server's parser missed a (malformed) call
 TOOL_MARKUP_RE = re.compile(r"<tool_call>|</?function[=>]|<parameter=|</tool_call>")
 
@@ -171,6 +188,8 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
     already: list[str] = []                      # refused because nothing would change: the card says so
     pending: list[Action] | None = None          # a ready card, waiting for the model's answer to the rest
     had_reads = False                            # a check was looked up in an earlier round
+    not_on: list[str] = []                       # later writes that could not join the card: said below it
+    told = False                                 # a write was refused with a reason ("bed is off"): state came from code
 
     def card(actions: list[Action], text: str | None) -> None:
         out.kind, out.actions, out.error = "actions", actions, None
@@ -182,6 +201,9 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             # covers part of the message does not read as the whole of it
             note = " ".join(s for s in SENTENCE_RE.split(note) if MISSING_RE.search(s))
         out.text = note or ("Left out: " + "; ".join(already) + "." if already else "")
+        if not_on:
+            out.text = (out.text + "\n" if out.text else "") + (
+                "Not on this card: " + "; ".join(not_on) + ". Ask for it again after this.")
 
     for _ in range(MAX_TOOL_ROUNDS + 1):
         reply = await llm.chat(messages, specs)
@@ -204,7 +226,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 out.tool_calls.append("claim!")
                 out.kind, out.error = "failed", "promise"
                 return
-            if claims(reply.content, tools_ran=bool(out.tool_calls)):
+            if claims(reply.content, tools_ran=had_reads or told):
                 # Text that announces an action or a card, without the tool call: no card exists.
                 # No retry: at temperature 0 the model repeats itself (live 2 of 2, eval 0 of 18 rescued)
                 out.tool_calls.append("claim!")
@@ -230,10 +252,37 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
         reads = [c for c in checked if c.tool and not c.tool.write and not c.error]
         ready = False
         if writes and pending:
-            # The card is ready and told "do not call it again": never drop or swap its lines
+            # The card is ready: its lines never change. A write the message asked for joins it
+            # (prepared on its own, so a line already promised is never re-planned or swapped)
+            said = message_text.get()
             for c in writes:
-                c.error = "the card is already made; do not call write tools again, answer in text"
-            writes = []
+                gate = LATER_WRITES.get(c.tool.name)               # type: ignore[union-attr]
+                if gate is None or not gate.search(said):
+                    c.error = "the card is already made; do not call write tools again, answer in text"
+            joining, writes = [c for c in writes if not c.error], []
+            if joining and not bad:
+                new: list[Action] = []
+                for c in joining:
+                    a = Action(c.tool, c.args)                     # type: ignore[arg-type]
+                    if a not in new and a not in pending:
+                        new.append(a)
+                refused = ({("", ""): f"a card holds at most {MAX_WRITES} changes"}
+                           if len(pending) + len(new) > MAX_WRITES else
+                           await _prepare(new, already, {k for a in pending for p in _lines(a)
+                                                         if (k := getattr(p, "key", None)) is not None}))
+                if refused:
+                    # All or none: a card that holds half of a later request would read as all of it
+                    why = next(iter(refused.values()))
+                    for c in joining:
+                        c.error = refused.get((c.tool.name, _key(c.args)),  # type: ignore[union-attr]
+                                              "not added: another change in this round could not be made")
+                    not_on.append(why)
+                    card(pending, None)
+                else:
+                    pending, ready = pending + new, True
+                    card(pending, None)
+            out.tool_calls = out.tool_calls[:-len(checked)] + [
+                (c.tool.name if c.tool else "?") + ("!" if c.error else "") for c in checked]
         if writes and not bad:
             actions: list[Action] = []
             for c in writes:
@@ -244,6 +293,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 out.kind, out.error = "failed", "too_many"
                 return
             refused = await _prepare(actions, already)
+            told = told or bool(refused)
             # A card with nothing else asked (or no rounds left) is the reply now
             asked = reads or ((had_reads or ask_rest) and not _note(reply.content, _subjects(actions)))
             if not refused and (not asked or out.rounds > MAX_TOOL_ROUNDS):
@@ -275,10 +325,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             if c.error is not None:
                 result = _dump({"error": c.error})
             elif c.tool.write and ready:                       # type: ignore[union-attr]
-                result = _dump({"card": "ready: shown to the person after your reply, for them to confirm. "
-                                        "Do not call it again. If their message also asks or checks something, "
-                                        "answer that in one or two short sentences (use read tools if needed), "
-                                        "without saying this is done; if not, reply with just: -"})
+                result = _dump({"card": READY})
             elif c.tool.write:                                 # type: ignore[union-attr]
                 result = _dump({"error": "not done: fix the other calls in this round first"})
             else:
@@ -288,11 +335,17 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
     out.kind, out.error = "failed", "rounds"
 
 
-async def _prepare(actions: list[Action], already: list[str] | None = None) -> dict[tuple[str, str], str]:
+def _lines(a: Action) -> list[Any]:
+    return a.prepared if isinstance(a.prepared, list) else [a.prepared]
+
+
+async def _prepare(actions: list[Action], already: list[str] | None = None,
+                   taken: set[str] | None = None) -> dict[tuple[str, str], str]:
     """Build every card line. Returns {(tool, args): reason} for the calls that cannot be done;
-    the reasons for "nothing to change" also go into `already`."""
+    the reasons for "nothing to change" also go into `already`. `taken`: what the card already
+    changes (a later round joining it)."""
     refused = {}
-    names: set[str] = set()
+    names: set[str] = set(taken or ())
     for a in actions:
         if a.tool.prepare is None:
             continue
@@ -306,8 +359,8 @@ async def _prepare(actions: list[Action], already: list[str] | None = None) -> d
             names |= mine
         except ArgError as e:
             refused[(a.tool.name, _key(a.args))] = str(e)
-            if isinstance(e, AlreadyError) and already is not None and str(e) not in already:
-                already.append(str(e))
+            if isinstance(e, AlreadyError) and already is not None and e.short not in already:
+                already.append(e.short)                          # the short form: it goes on the card
         except Exception as e:  # noqa: BLE001 -- a prepare bug is a refused call, not a crashed turn
             logger.exception("Preparing %s failed", a.tool.name)
             refused[(a.tool.name, _key(a.args))] = f"could not prepare this ({e.__class__.__name__})"
@@ -330,10 +383,12 @@ def claims(text: str, tools_ran: bool = True) -> bool:
     `tools_ran` False: no tool ran this turn, so a device's state stated as fact is a claim too
     ("The office aircon is now on."), while a state answer after a read stays fine."""
     sentences = SENTENCE_RE.split(text.replace("**", ""))
-    if CLAIM_RE.search(text) or any(SHORT_CLAIM_RE.fullmatch(s.strip(" -*_`")) for s in sentences):
+    said = [s for s in sentences if not CONDITION_RE.search(s)]           # statements, not questions or ifs
+    if CLAIM_RE.search(text) or any(SHORT_CLAIM_RE.fullmatch(s.strip(" -*_`")) for s in sentences) \
+            or any(FIRST_PERSON_RE.search(s) for s in said):
         return True
-    return not tools_ran and (bool(STATE_CLAIM_RE.search(text))
-                              or any(STATE_RE.search(s) and DEVICE_WORD_RE.search(s) for s in sentences))
+    return not tools_ran and any(STATE_CLAIM_RE.search(s) or (STATE_RE.search(s) and DEVICE_WORD_RE.search(s))
+                                 for s in said)
 
 
 def _note(text: str | None, subjects: set[str] = frozenset()) -> str:

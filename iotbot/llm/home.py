@@ -189,7 +189,9 @@ class HomeTools:
             raise ArgError(str(e)) from None
         if before == after:
             raise AlreadyError(f"{d} is already {after.describe()} (as last sent by the bot). Nothing was sent; "
-                               "if someone used the remote, the person can use /keyboard")
+                               "if someone used the remote, tell them to use /keyboard",
+                               short=f"{d} is already {after.describe()} as last sent (use /keyboard if "
+                                     "the remote changed it)")
         line = f"{before.describe() if before else 'unknown'} -> {after.describe()}"
 
         async def run(who: Actor) -> Done:
@@ -412,7 +414,7 @@ class HomeTools:
         if op == "pause" and (not s.enabled if until is None else (s.enabled and s.paused_until == until)):
             raise AlreadyError(f"{tx.describe(s, now, self.tz)} is already paused")
         line = {"delete": "delete", "pause": f"pause until {until:%a %d %b}" if until else "pause",
-                "resume": "resume"}[op] + f": {tx.describe(s, now, self.tz)}"
+                "resume": "resume"}[op] + f": {tx.describe(s, now, self.tz)}" + self._made_by(s, actor)
         rev = s.rev
 
         async def run(who: Actor) -> Done:
@@ -425,6 +427,13 @@ class HomeTools:
             return await self._schedule_done(who, r)
 
         return Prepared(_sched_name(s), line, run, self._sched_version(s.id), key=f"schedule {s.id}")
+
+    def _made_by(self, s: Any, actor: Actor) -> str:
+        """Someone else's schedule on your card says whose it is ("remove all my timers")."""
+        if s.created_by == actor.user_id:
+            return ""
+        name = self.ctx.users.name_of(s.created_by) if hasattr(getattr(self.ctx, "users", None), "name_of") else None
+        return f" (made by {name or 'someone else'})"
 
     def _sched_version(self, sid: str | None):
         if sid is None:

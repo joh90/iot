@@ -8,7 +8,7 @@ import pytest
 
 from iotbot.llm import loop as lp
 from iotbot.llm.client import LlmClient, LlmError, parse_reply
-from iotbot.llm.tools import ArgError, Tool, parse_args, schema_problems
+from iotbot.llm.tools import ArgError, Tool, message_text, parse_args, schema_problems
 
 SET_AC = Tool("set_ac", "Set an aircon", {
     "type": "object", "required": ["device"], "properties": {
@@ -433,3 +433,95 @@ def test_card_note_drops_state_claims_about_what_the_card_changes():
     subj = lp._subjects(acts)
     assert lp._note("The office aircon is off. The bedroom is on at 24C.", subj) == "The bedroom is on at 24C."
     assert lp._note("The office aircon is set to 23C.", subj) == "The office aircon is set to 23C."
+
+
+@pytest.mark.parametrize("text", [
+    "Should I set it to 23?", "What temperature should I set?",
+    "If I set it to 23, it gets cold.", "Which time should we set for bed time?", "If it is on, I can turn it off. Which one?",
+    "I will check right away.", "From now on the bed time schedule will skip public holidays."])
+def test_questions_and_conditions_are_not_claims(text):
+    # review 2026-11-17: these failed as made-up actions with no second try
+    assert not lp.claims(text, tools_ran=False) and not lp.PROMISE_RE.search(text)
+    # after a read, a state answer that offers a change is fine too
+    assert not lp.claims("The office aircon is off. Should I set it to cool 23C?")
+
+
+@pytest.mark.parametrize("text", [
+    "The office aircon has now been turned on.", "I've gone ahead and turned it off.",
+    "I've successfully turned off the office aircon.", "The office aircon is now set to cool 23C."])
+def test_more_claims_without_a_tool(text):
+    assert lp.claims(text, tools_ran=False)
+
+
+async def test_a_failed_tool_call_does_not_excuse_a_state_claim():
+    # A bad call reads nothing: "is now on" after it is the 11-15 failure again
+    srv = FakeServer([completion(calls=[call("set_ac", {"bogus": 1})]), completion("The office aircon is now on.")])
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
+    assert (out.kind, out.error) == ("failed", "fake_card")
+
+
+# ---- later writes join a ready card (9.5; live 2026-11-14 13:25 and 11-16 11:50) ---------
+
+def _sched_tools():
+    from iotbot.llm.cards import Done, Prepared
+
+    def item(name, line, key):
+        async def run(actor):
+            return Done(True, "ok")
+        return Prepared(name, line, run, lambda: 0, key=key)
+
+    async def prep_ac(args):
+        return item(args["device"], "ON -> OFF", "")
+
+    async def prep_del(args):
+        if args["schedule_id"] == "tgone":
+            raise ArgError("no schedule tgone")
+        return item(f"timer {args['schedule_id']}", "delete", f"schedule {args['schedule_id']}")
+
+    async def listing(args):
+        return {"schedules": [{"id": "t2905"}, {"id": "tcc65"}]}
+
+    set_ac = Tool("set_ac", "Set", SET_AC.parameters, write=True, prepare=prep_ac)
+    lst = Tool("list_schedules", "List", {"type": "object", "properties": {}}, run=listing)
+    dele = Tool("delete_schedule", "Delete", {"type": "object", "properties": {"schedule_id": {"type": "string"}},
+                                              "required": ["schedule_id"]}, write=True, prepare=prep_del)
+    return [set_ac, lst, dele]
+
+
+async def test_later_writes_join_the_ready_card():
+    off = {"device": "bedroom-aircon", "power": False}
+    srv = FakeServer([completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")]),
+                      completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c"),
+                                        call("delete_schedule", {"schedule_id": "tcc65"}, "d")]),
+                      completion("I've turned off the bedroom aircon. I also removed all your timers.")])
+    message_text.set("Turn off bedroom aircon and remove all my timers")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert out.kind == "actions" and [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule", "delete_schedule"]
+    assert out.text == "" and out.tool_calls == ["set_ac", "list_schedules", "delete_schedule", "delete_schedule"]
+    results = [m["content"] for m in srv.requests[2]["messages"] if m["role"] == "tool"]
+    assert all("ready" in r for r in results[-2:])
+
+
+async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
+    off = {"device": "bedroom-aircon", "power": False}
+    first = completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")])
+    # No "remove" in the message: a delete the model adds on its own is refused
+    srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]),
+                      completion("-")])
+    message_text.set("Turn off bedroom aircon, what timers do I have?")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.tool.name for a in out.actions] == ["set_ac"] and out.tool_calls[-1] == "delete_schedule!"
+    # All or none: one bad id keeps both deletes off, and the card says so
+    srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c"),
+                                               call("delete_schedule", {"schedule_id": "tgone"}, "d")]),
+                      completion("-")])
+    message_text.set("off bedroom and remove the timers")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.tool.name for a in out.actions] == ["set_ac"]
+    assert out.text == "Not on this card: no schedule tgone. Ask for it again after this."
+    # Never a second set_ac, even when asked
+    srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "office-aircon", "power": False}, "c")]),
+                      completion("-")])
+    message_text.set("off bedroom and remove the timer, off office too")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.args for a in out.actions] == [off]

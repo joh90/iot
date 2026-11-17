@@ -28,7 +28,12 @@ class ArgError(ValueError):
 
 
 class AlreadyError(ArgError):
-    """Nothing to change: it is already like that (the card says so; a recipe skips the step)."""
+    """Nothing to change: it is already like that (the card says so; a recipe skips the step).
+    `short`: the words for the card's "Left out:" line; the full text goes to the model."""
+
+    def __init__(self, message: str, short: str | None = None):
+        super().__init__(message)
+        self.short = short or message
 
 
 @dataclass(frozen=True, slots=True)

@@ -174,6 +174,8 @@ def clean_answer(text: str) -> str:
 class Chat:
     exchanges: deque[list[dict[str, Any]]] = field(default_factory=lambda: deque(maxlen=CONTEXT_EXCHANGES))
     last: float = 0.0
+    asked: float = 0.0                          # when the message being answered was sent: its history time
+    questions: list[int] = field(default_factory=list)   # id() of exchanges asked in code ("Which aircon?")
 
 
 @dataclass(slots=True)
@@ -249,8 +251,10 @@ class Assistant:
         chat.exchanges.append(messages)
         chat.last = self._clock()
 
-    def _said(self, user_text: str) -> dict[str, Any]:
-        return {"role": "user", "content": f"[{self.now():%H:%M}] {user_text}"}
+    def _said(self, user_id: int, user_text: str) -> dict[str, Any]:
+        chat = self.chats.get(user_id)
+        at = chat.asked if chat and chat.asked else self._clock()
+        return {"role": "user", "content": f"[{datetime.fromtimestamp(at, self.tz):%H:%M}] {user_text}"}
 
     def remember(self, user_id: int, user_text: str, reply: str,
                  reads: list[tuple[str, dict[str, Any]]] | None = None) -> dict[str, Any]:
@@ -262,15 +266,16 @@ class Assistant:
         looked = ([{"role": "assistant", "content": "", "tool_calls": calls},
                    *({"role": "tool", "tool_call_id": c["id"], "content": READ_NOT_KEPT} for c in calls)]
                   if calls else [])
-        self._keep(user_id, [self._said(user_text), *looked, msg])
+        self._keep(user_id, [self._said(user_id, user_text), *looked, msg])
         return msg
 
     def _drop_last_answer(self, user_id: int) -> None:
         """After a made-up claim: the answer before it is what the model was copying (live
         2026-11-15, six times), so it goes too. A card is never dropped (its taps rewrite it)."""
         chat = self.chats.get(user_id)
-        if chat and chat.exchanges and not any(str(c.get("id", "")).startswith("card")
-                                               for m in chat.exchanges[-1] for c in m.get("tool_calls") or []):
+        if chat and chat.exchanges and id(chat.exchanges[-1]) not in chat.questions \
+                and not any(str(c.get("id", "")).startswith("card")
+                            for m in chat.exchanges[-1] for c in m.get("tool_calls") or []):
             chat.exchanges.pop()
 
     def remember_card(self, user_id: int, user_text: str, actions: list[lp.Action],
@@ -281,9 +286,16 @@ class Assistant:
         calls = [{"id": f"card{tag}{i}", "type": "function",
                   "function": {"name": a.tool.name, "arguments": json.dumps(a.args)}} for i, a in enumerate(actions)]
         results = [{"role": "tool", "tool_call_id": c["id"], "content": ""} for c in calls]
-        self._keep(user_id, [self._said(user_text),
+        self._keep(user_id, [self._said(user_id, user_text),
                              {"role": "assistant", "content": note, "tool_calls": calls}, *results])
         return results
+
+    def _mark_sent(self, user_id: int) -> None:
+        """The time a message came in, for its line in history (it is stored after the reply)."""
+        chat = self.chats.get(user_id)
+        if chat is None or self._clock() - chat.last > CONTEXT_IDLE_S:
+            chat = self.chats[user_id] = Chat()
+        chat.asked = self._clock()
 
     def forget(self, user_id: int) -> None:
         self.chats.pop(user_id, None)
@@ -332,12 +344,17 @@ class Assistant:
         if ask:
             # Asked in code: the model picked one at random (live 2026-10-15). The reply ("office",
             # "both") is the next turn, with this question in its context
+            self._mark_sent(uid)
             self.remember(uid, text, ask)
+            chat = self.chats[uid]
+            chat.questions = [*[q for q in chat.questions if any(id(e) == q for e in chat.exchanges)],
+                              id(chat.exchanges[-1])]     # kept when a claim drops the answer after it
             return Outcome("asked", ask)
         wait = self._rate_wait(uid)
         if wait:
             return Outcome("limited", wait_s=wait)
         self.in_flight.add(uid)
+        self._mark_sent(uid)
         try:
             messages = [{"role": "system", "content": self.system_prompt()},
                         *self.context(uid), {"role": "user", "content": self.stamp(actor, text)}]
