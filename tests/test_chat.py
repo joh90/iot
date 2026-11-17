@@ -60,10 +60,10 @@ async def test_context_keeps_last_six_and_resets_when_idle():
     for i in range(4):
         await a.handle(ALICE, f"q{i}")
     def sent(i):
-        return [m["content"].split("\n")[-1] for m in srv.requests[i]["messages"][1:]]
+        return [asst.HHMM_RE.sub("", m["content"].split("\n")[-1]) for m in srv.requests[i]["messages"][1:]]
 
     assert sent(3) == ["q0", "a0", "q1", "a1", "q2", "a2", "q3"]
-    assert srv.requests[3]["messages"][1]["content"] == "q0"          # history holds the bare text
+    assert srv.requests[3]["messages"][1]["content"] == "[16:00] q0"  # history: the text and when, no stamp
     await a.handle(ALICE, "q4")
     assert sent(4) == ["q1", "a1", "q2", "a2", "q3", "a3", "q4"]
     clock.t += asst.CONTEXT_IDLE_S + 1
@@ -76,7 +76,36 @@ async def test_failed_and_action_turns_are_not_remembered_by_the_core():
     o = await a.handle(ALICE, "first")
     assert (o.kind, o.turn.error) == ("failed", "empty") and a.context(ME) == []
     await a.handle(ALICE, "second")
-    assert [m["content"] for m in a.context(ME)] == ["second", "ok"]        # tool rounds not kept
+    # A read is kept as its call with no data: the answer came from a tool, the data goes stale
+    kept = a.context(ME)
+    assert [m["role"] for m in kept] == ["user", "assistant", "tool", "assistant"]
+    assert kept[0]["content"] == "[16:00] second" and kept[-1]["content"] == "ok"
+    assert kept[1]["tool_calls"][0]["function"]["name"] == "get_home_state"
+    assert kept[2]["tool_call_id"] == kept[1]["tool_calls"][0]["id"] and "not kept" in kept[2]["content"]
+
+
+async def test_a_made_up_claim_drops_the_answer_it_copied():
+    # Live 2026-11-15: a state answer to "On office aircon", then six copies of "is now on"
+    a, srv = make_assistant([completion(calls=[call("get_home_state", {})]),
+                             completion("The office aircon is off. Last set by the bot to cool 23C."),
+                             completion("The office aircon is now on."), completion("Which one?")])
+    await a.handle(ALICE, "On office aircon")
+    assert len(a.context(ME)) == 4
+    o = await a.handle(ALICE, "On it now")
+    assert o.turn.error == "fake_card" and a.context(ME) == []               # the next try starts clean
+    await a.handle(ALICE, "On office aircon")
+    assert [m["role"] for m in srv.requests[-1]["messages"]] == ["system", "user"]
+
+
+async def test_a_made_up_claim_never_drops_a_card():
+    from tests.test_llm import SET_AC
+    a, _ = make_assistant([completion(calls=[call("set_ac", {"device": "office-aircon", "power": True})]),
+                           completion("I have turned it on.")])
+    a.add_tools(lambda actor: [SET_AC])
+    o = await a.handle(ALICE, "on the office")
+    a.remember_card(ME, "on the office", o.turn.actions)
+    assert (await a.handle(ALICE, "did it work")).turn.error == "fake_card"
+    assert a.context(ME)[1]["tool_calls"][0]["id"].startswith("card")
 
 
 async def test_one_turn_at_a_time_per_person():
@@ -305,6 +334,7 @@ def test_answers_lose_echoed_stamps_and_markdown():
                              "[Alice's notes: x]\nWhich room?") == "Which room?"
     assert asst.clean_answer("Two:\n* **Office**: off\n  - bed on") == "Two:\n- Office: off\n- bed on"
     assert asst.clean_answer("Two:\n\n- a") == "Two:\n\n- a"                   # blank lines stay
+    assert asst.clean_answer("[08:47] The office aircon is off.") == "The office aircon is off."
 
 
 async def test_an_answer_that_is_only_a_stamp_is_a_failure():
@@ -411,7 +441,8 @@ async def test_the_question_is_asked_in_code_and_kept_for_the_reply():
     o = await a.handle(ALICE, "off my aircon in 35 mins")
     assert (o.kind, o.text) == ("asked", "Which aircon: bedroom or office?") and srv.requests == []
     assert outcome_text(o) == "Which aircon: bedroom or office?"
-    assert [m["content"] for m in a.context(ME)] == ["off my aircon in 35 mins", "Which aircon: bedroom or office?"]
+    assert [m["content"] for m in a.context(ME)] == ["[16:00] off my aircon in 35 mins",
+                                                     "Which aircon: bedroom or office?"]
 
 
 async def test_a_plain_change_shows_no_note_but_a_mixed_one_does():

@@ -95,6 +95,7 @@ class TurnResult:
     completion_tokens: int = 0
     model: str | None = None
     tool_calls: list[str] = field(default_factory=list)   # "name" or "name!" when refused
+    reads: list[tuple[str, dict[str, Any]]] = field(default_factory=list)   # read tools run: kept in history
     exchanges: list[dict[str, Any]] = field(default_factory=list)
 
     def note(self, reply: Reply) -> None:
@@ -282,6 +283,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 result = _dump({"error": "not done: fix the other calls in this round first"})
             else:
                 result = await _run_read(c.tool, c.args)        # type: ignore[arg-type]
+                out.reads.append((c.tool.name, c.args))         # type: ignore[union-attr]
             messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
     out.kind, out.error = "failed", "rounds"
 

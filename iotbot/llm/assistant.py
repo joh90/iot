@@ -5,6 +5,8 @@ here. Limits: one turn in flight per person, RATE_MAX turns per RATE_WINDOW_S. C
 the last CONTEXT_EXCHANGES exchanges, forgotten after CONTEXT_IDLE_S without a message. A
 card is kept as the tool calls that made it plus a tool result saying what the person did,
 so the model sees actions as tool calls (as text it imitated them: "Card shown: ...").
+An answer is kept with the reads that made it (calls only, no data) and the time it was
+asked; an answer the claim guard rejects is never kept, and drops the answer it copied.
 All state is in memory: a restart only forgets the last few minutes of chat.
 """
 
@@ -149,7 +151,14 @@ def which_device(text: str, devices: list[tuple[str, str]], before: str = "") ->
         if name not in names:
             names.append(name)
     return f"Which aircon: {', '.join(names[:-1])} or {names[-1]}?"
-STAMP_RE = re.compile(r"^\[From [^\]\n]{1,300}\]\s*(\[[^\]]*\]\s*)?")
+STAMP_RE = re.compile(r"^(\[From [^\]\n]{1,300}\]\s*(\[[^\]]*\]\s*)?|\[\d\d:\d\d\]\s*)")
+# History keeps each message with the time it was sent ("[08:47] on office"): the model can tell
+# an old answer from a fresh one (live 2026-11-15 it repeated a 08:47 answer word for word)
+HHMM_RE = re.compile(r"^\[\d\d:\d\d\] ")
+# The result kept for a read in history: the call shows the answer came from a tool, the data does
+# not stay (it goes stale, and the model would quote it)
+READ_NOT_KEPT = json.dumps({"result": "not kept; call the tool again for current data"})
+FAILED_CLAIMS = ("fake_card", "promise")
 
 
 def clean_answer(text: str) -> str:
@@ -240,11 +249,29 @@ class Assistant:
         chat.exchanges.append(messages)
         chat.last = self._clock()
 
-    def remember(self, user_id: int, user_text: str, reply: str) -> dict[str, Any]:
-        """Keep one question and answer as context."""
+    def _said(self, user_text: str) -> dict[str, Any]:
+        return {"role": "user", "content": f"[{self.now():%H:%M}] {user_text}"}
+
+    def remember(self, user_id: int, user_text: str, reply: str,
+                 reads: list[tuple[str, dict[str, Any]]] | None = None) -> dict[str, Any]:
+        """Keep one question and answer as context, with the reads that answered it as tool calls
+        (as plain text the model copied the answer later without looking again)."""
         msg = {"role": "assistant", "content": reply}
-        self._keep(user_id, [{"role": "user", "content": user_text}, msg])
+        calls = [{"id": f"read{secrets.token_hex(3)}{i}", "type": "function",
+                  "function": {"name": name, "arguments": json.dumps(args)}} for i, (name, args) in enumerate(reads or [])]
+        looked = ([{"role": "assistant", "content": "", "tool_calls": calls},
+                   *({"role": "tool", "tool_call_id": c["id"], "content": READ_NOT_KEPT} for c in calls)]
+                  if calls else [])
+        self._keep(user_id, [self._said(user_text), *looked, msg])
         return msg
+
+    def _drop_last_answer(self, user_id: int) -> None:
+        """After a made-up claim: the answer before it is what the model was copying (live
+        2026-11-15, six times), so it goes too. A card is never dropped (its taps rewrite it)."""
+        chat = self.chats.get(user_id)
+        if chat and chat.exchanges and not any(str(c.get("id", "")).startswith("card")
+                                               for m in chat.exchanges[-1] for c in m.get("tool_calls") or []):
+            chat.exchanges.pop()
 
     def remember_card(self, user_id: int, user_text: str, actions: list[lp.Action],
                       note: str = "") -> list[dict[str, Any]]:
@@ -254,7 +281,7 @@ class Assistant:
         calls = [{"id": f"card{tag}{i}", "type": "function",
                   "function": {"name": a.tool.name, "arguments": json.dumps(a.args)}} for i, a in enumerate(actions)]
         results = [{"role": "tool", "tool_call_id": c["id"], "content": ""} for c in calls]
-        self._keep(user_id, [{"role": "user", "content": user_text},
+        self._keep(user_id, [self._said(user_text),
                              {"role": "assistant", "content": note, "tool_calls": calls}, *results])
         return results
 
@@ -300,7 +327,7 @@ class Assistant:
             return Outcome("busy_you")
         if len(text) > MAX_INPUT_CHARS:
             return Outcome("too_long")
-        before = next((m["content"] for m in reversed(self.context(uid)) if m["role"] == "user"), "")
+        before = next((HHMM_RE.sub("", m["content"]) for m in reversed(self.context(uid)) if m["role"] == "user"), "")
         ask = which_device(text, self.aircons(), before) if self.aircons else None
         if ask:
             # Asked in code: the model picked one at random (live 2026-10-15). The reply ("office",
@@ -324,7 +351,9 @@ class Assistant:
             if not turn.text:
                 turn.kind, turn.error = "failed", "empty"
             else:
-                self.remember(uid, text, turn.text)
+                self.remember(uid, text, turn.text, turn.reads)
+        elif turn.kind == "failed" and turn.error in FAILED_CLAIMS:
+            self._drop_last_answer(uid)
         elif turn.kind == "actions":
             turn.text = clean_answer(turn.text)              # the note above the card, often empty
         if turn.kind == "failed" and turn.error in NOT_COUNTED:
