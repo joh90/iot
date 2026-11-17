@@ -200,7 +200,10 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
         card.context = list(zip(assistant.remember_card(actor.user_id, text, o.turn.actions, note), sizes, strict=True))
         _context_note(card, "not run: " + stale)
         telemetry.note(card="auto", card_id=card.id, outcome="refused")
-        await reply(update, closed_screen(card, f"Not run: {stale}. Nothing was sent."))
+        names = ", ".join(dict.fromkeys(p.name for p in card.items))
+        await reply(update, closed_screen(card, f"Not run: {names} changed while I was working. Nothing was "
+                                                "sent. Ask again."))
+        await _close_replaced(context, replaced)
         return
     if auto:
         telemetry.note(card="auto", card_id=card.id)
@@ -226,6 +229,10 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
         sent = await context.bot.send_message(msg.chat_id, "Ran straight away: " + "; ".join(
             f"{p.name}: {p.line}" for p in card.items))
     card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
+    await _close_replaced(context, replaced)
+
+
+async def _close_replaced(context: ContextTypes.DEFAULT_TYPE, replaced: list[Card]) -> None:
     for old in replaced:
         _context_note(old, "replaced by a newer request; nothing was done")
         if old.chat_id is not None and old.message_id is not None:

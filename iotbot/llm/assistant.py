@@ -42,8 +42,9 @@ MAX_INPUT_CHARS = 1000
 # Retrying while the PC is off (or after an empty answer) must not use up the limit
 NOT_COUNTED = ("down", "busy", "empty")
 
-# The system prompt and tools never change between turns, so llama-server reuses the cached
-# prefix (rules, tools, devices, history); who is asking and the time ride on the new message.
+# The system prompt and a person's tools rarely change between their turns (set_ac_now comes and
+# goes with a no-card note), so llama-server reuses the cached prefix (rules, tools, devices,
+# history); who is asking and the time ride on the new message.
 RULES = """You are the home assistant inside a Telegram bot for a flat in Singapore.
 You only help with the home: the devices listed below, their settings, timers and schedules,
 questions about what the bot did, and other home topics your tools cover. For anything else,

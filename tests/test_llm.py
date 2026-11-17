@@ -528,7 +528,11 @@ async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
     srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
     message_text.set("off bedroom and remove the timer, off office too")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.args for a in out.actions] == [off]                 # set_ac never joins a ready card
+    assert [a.args for a in out.actions] == [off, office]         # "off office too" orders it
+    srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
+    message_text.set("off bedroom and remove the timer, office is fine")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.args for a in out.actions] == [off]                 # named, not ordered: never joins
     srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "bedroom-aircon", "power": True}, "c")]),
                       completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
@@ -596,7 +600,7 @@ async def test_a_card_waits_a_round_when_the_message_names_another_device():
                       completion("-")])
     message_text.set("off bedroom and on office")
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
-    assert [a.args for a in out.actions] == [off] and out.rounds == 3      # waited, but set_ac does not join
+    assert [a.args for a in out.actions] == [off, on]             # office is ordered and not on the card
     srv = FakeServer([completion(calls=[call("set_ac", off, "a"), call("set_ac", on, "b")])])
     message_text.set("off bedroom and on office")
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
@@ -629,3 +633,10 @@ async def test_a_timed_second_change_joins_and_a_note_needs_a_read():
     message_text.set("off office and on bedroom")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert out.text == ""
+
+
+
+@pytest.mark.parametrize("text", ["Sorry, it is off-topic; I only help with the home.",
+                                  "I cannot tell if it is on without checking."])
+def test_hyphens_and_ifs_are_not_state_claims(text):
+    assert not lp.claims(text, tools_ran=False)

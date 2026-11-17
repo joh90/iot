@@ -366,5 +366,5 @@ async def test_auto_run_on_a_changed_aircon_says_so_and_sends_nothing(tmp_path):
     u.effective_message.reply_text = AsyncMock(return_value=SimpleNamespace(chat_id=ME, message_id=9))
     await hd.on_text(u, tg_context(ctx))
     (text,), kw = u.effective_message.reply_text.call_args
-    assert text.startswith("Not run:") and "Nothing was sent" in text and not ctx.sent
+    assert text.startswith("Not run: bed_ac changed while I was working. Nothing was sent.") and not ctx.sent
     assert kw.get("reply_markup") is None

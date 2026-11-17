@@ -2,10 +2,14 @@
 
 Bounds: at most MAX_TOOL_ROUNDS rounds of tool calls (a write on the call after them is still
 accepted: it needs no further round) and TURN_TIMEOUT_S for the whole turn.
-A WRITE call ends the loop: code, not the model, writes the reply (a confirm card), because
-in the 4.0 spike the model claimed "Both aircons are now off" while the card was pending.
+A WRITE call makes the card: code, not the model, writes the reply, because in the 4.0 spike
+the model claimed "Both aircons are now off" while the card was pending. The card is final
+unless the message also asks something (reads run, the model answers) or another change
+(LATER_WRITES, a device ordered but not on it): then it waits a round, and only writes the
+message asks for join it; its lines never change.
 Text the model writes next to its write calls is kept as a short note above the card (the
-answer to "... and also check X"), unless it claims anything was done.
+answer to "... and also check X"), unless it claims anything was done. A plain answer that
+claims an action, or promises to skip cards, ends the turn as failed (no retry).
 """
 
 from __future__ import annotations
@@ -260,8 +264,13 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             # The card is ready: its lines never change. A write the message asked for joins it
             # (prepared on its own, so a line already promised is never re-planned or swapped)
             said = message_text.get()
+            ordered = _devices_ordered(said, tools) - _subjects(pending) - {
+                w for a in pending for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())}
             for c in writes:
                 gate = LATER_WRITES.get(c.tool.name)               # type: ignore[union-attr]
+                dev = set(re.findall(r"[a-z0-9]+", str((c.args or {}).get("device", "")).lower()))
+                if c.tool.name == "set_ac" and dev & ordered:      # type: ignore[union-attr]
+                    continue                                       # "off bedroom and on office": ordered, not on the card
                 if gate is None or not gate.search(said):
                     c.error = "the card is already made; do not call write tools again, answer in text"
             joining, writes = [c for c in writes if not c.error], []
@@ -413,7 +422,9 @@ async def _prepare(actions: list[Action], already: list[str] | None = None,
     return refused
 
 
-STATE_RE = re.compile(r"\b(is|are|was|were)( already| still)?( not)? (on|off|paused|active|running)\b", re.IGNORECASE)
+STATE_RE = re.compile(r"\b(is|are|was|were)( already| still)?( not)? (on|off|paused|active|running)\b(?!-)",
+                      re.IGNORECASE)
+IF_BEFORE_RE = re.compile(r"\b(if|whether|without)\b", re.IGNORECASE)
 GENERIC = {"aircon", "ac", "schedule", "timer", "new", "note", "forget", "recipe"}
 
 
@@ -433,8 +444,10 @@ def claims(text: str, tools_ran: bool = True) -> bool:
     if CLAIM_RE.search(text) or any(SHORT_CLAIM_RE.fullmatch(s.strip(" -*_`")) for s in sentences) \
             or any(FIRST_PERSON_RE.search(s) for s in said):
         return True
-    return not tools_ran and any(STATE_CLAIM_RE.search(s) or (STATE_RE.search(s) and DEVICE_WORD_RE.search(s))
-                                 for s in said)
+    def stated(s: str) -> bool:
+        m = STATE_CLAIM_RE.search(s) or (DEVICE_WORD_RE.search(s) and STATE_RE.search(s))
+        return bool(m) and not IF_BEFORE_RE.search(s[:m.start()])     # "I cannot tell if it is on"
+    return not tools_ran and any(stated(s) for s in said)
 
 
 def _note(text: str | None, subjects: set[str] = frozenset(), tools_ran: bool = True) -> str:
