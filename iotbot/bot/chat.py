@@ -39,7 +39,8 @@ FAILED = {
     "too_many": "That is more than 10 changes at once. Please split it up.",
     # The model said something was done (or would be) without a tool call: say plainly nothing was
     "fake_card": f"Nothing was changed: I could not turn that into an action. Try again, or {FALLBACK}.",
-    "promise": "I cannot change how I work by agreeing in chat. Nothing was changed.",
+    "promise": ("I cannot change how I work by agreeing in chat. Nothing was changed. To skip the card, "
+                "ask me to remember it as a no-card note (it shows in /memory)."),
 }
 FAILED_OTHER = f"Sorry, I could not work that out. Try saying it another way, or {FALLBACK}."
 
@@ -181,13 +182,31 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
         return
     note = o.text if o.turn else ""
     card, replaced = assistant.cards.new(actor.user_id, items, note)
-    telemetry.note(card="shown", card_id=card.id)
-    body, markup = card_screen(card)
+    # set_ac_now (the person's own no-card note): runs now, shows the result with Undo. Only when
+    # every line is one; anything mixed shows the usual card
+    auto = all(p.auto for p in items)
+    if auto:
+        try:
+            assistant.cards.begin(card, "do")
+        except CardError:
+            auto = False
+    sizes = [len(a.prepared) if isinstance(a.prepared, list) else 1 for a in o.turn.actions]
+    if auto:
+        telemetry.note(card="auto", card_id=card.id)
+        results = await assistant.cards.run(card, "do", actor)
+        _note_results(results)
+        body, markup = result_screen(card, actor.name, assistant.now().strftime("%H:%M"))
+        body = "<i>Ran straight away (your no-card note in /memory).</i>\n" + body
+    else:
+        telemetry.note(card="shown", card_id=card.id)
+        body, markup = card_screen(card)
     sent = await update.effective_message.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
     card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
-    sizes = [len(a.prepared) if isinstance(a.prepared, list) else 1 for a in o.turn.actions]
     card.context = list(zip(assistant.remember_card(actor.user_id, text, o.turn.actions, note), sizes, strict=True))
-    _context_note(card, "shown to the person, waiting for their tap")
+    if auto:
+        _context_note(card, "ran straight away (the person's no-card note)", [_mark(r) for r in card.results])
+    else:
+        _context_note(card, "shown to the person, waiting for their tap")
     for old in replaced:
         _context_note(old, "replaced by a newer request; nothing was done")
         if old.chat_id is not None and old.message_id is not None:
@@ -273,7 +292,8 @@ def memory_screen(memory: Memory, actor: Actor, page: str = "me",
         rows.append([InlineKeyboardButton(f"Yours ({len(facts) + len(recipes)})", callback_data=encode(MEM, "p", "me"))])
     else:
         lines.append(b("Your notes") + " (only your assistant uses these)")
-        lines += [f'- "{h(_cut(f["text"], LINE))}"' for f in facts] or ["- none yet"]
+        lines += [f'- "{h(_cut(f["text"], LINE))}"' + (" (no card)" if f.get("skip_card") else "")
+                  for f in facts] or ["- none yet"]
         lines += ["", b("Your recipes")]
         lines += [f'- "{h(r["name"])}": {h(_cut("; ".join(step_text(st) for st in r["steps"]), LINE))}'
                   for r in recipes] or ["- none yet"]

@@ -50,6 +50,8 @@ class Prepared:
     # What this line changes ("" = its name): a card holds one line per key, because a second
     # line for the same device or schedule would always fail as stale. None = no limit (notes).
     key: str | None = ""
+    # Runs without the confirm card (set_ac_now: the person's own note says when): result + Undo
+    auto: bool = False
 
     def __post_init__(self) -> None:
         self.seen = self.version()
