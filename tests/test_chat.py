@@ -120,6 +120,7 @@ def test_failure_lines():
     assert "busy right now" in failed("busy") and "not reachable" in failed("down")
     assert "took too long" in failed("timeout") and "more than 10" in failed("too_many")
     assert "could not work that out" in failed("bug") and "could not work that out" in failed("truncated")
+    assert "Nothing was changed" in failed("fake_card") and "Nothing was changed" in failed("promise")
     assert outcome_text(Outcome("answer", "a <b> & c")) == "a &lt;b&gt; &amp; c"
     assert outcome_text(Outcome("busy_you")) == "Still working on your last message."
 
@@ -313,24 +314,34 @@ async def test_an_answer_that_is_only_a_stamp_is_a_failure():
     assert len(a.recent[ME]) == 0                                            # not counted
 
 
-async def test_an_answer_claiming_an_action_is_nudged_then_refused():
+async def test_an_answer_claiming_an_action_fails_at_once():
     for fake in ("Card shown: Run recipe \"good night\"", "Do this?\n- bed: off",
                  "I will turn off the bedroom aircon now.\n\n[Card: Confirm action]", "Done, the office AC is now off.",
                  "Turning the bedroom off for you", "I have noted that you sleep at 23:00.", "I'll remember that.",
                  "Bedroom set to 23°C.\n\nYou have two schedules.", "Done. Office turned off.",
                  "Okay, bedroom set to 23.", "Bedroom now set to 23.", "Both rooms turned off.",
                  "Living room turned off.", "**Bedroom** set to 23.", "Bedroom aircon: set to 23.",
-                 "Office turned off\nAnything else?"):
-        a, srv = make_assistant([completion(fake), completion(fake)])
+                 "Office turned off\nAnything else?",
+                 # live, with no tool call (2026-11-01, 11-10, 11-15): nothing was sent
+                 "I have turned off the office aircon.",
+                 "The office aircon is now on. Last set by the bot to cool 23C, fan 3, vane 4 at 21:07 on Saturday.",
+                 "The office aircon is on. It is set to cool 23°C, fan 3, vane 1.",
+                 "The office aircon was turned on at 18:20 today.",
+                 "The office aircon is now off (last set by the bot).", "The office AC is already off.",
+                 "I've turned off the bedroom aircon. I also removed all your timers."):
+        a, srv = make_assistant([completion(fake), completion("unused")])
         o = await a.handle(ALICE, "off the bedroom ac")
-        assert (o.kind, o.turn.error) == ("failed", "fake_card"), fake
-        assert "no card exists" in srv.requests[1]["messages"][-1]["content"]
-        assert "could not work that out" in outcome_text(o) and a.context(ME) == []
-    a, _ = make_assistant([completion("I will turn it off."), completion("Which aircon?")])
-    o = await a.handle(ALICE, "off it")
-    assert (o.kind, o.text, o.turn.tool_calls) == ("answer", "Which aircon?", ["claim!"])
-    for fine in ("The office AC is already off.", "The bedroom aircon was last set by the bot to ON cool 24C.",
-                 "The office aircon is now off (last set by the bot).", "The card asked to turn off the office.",
+        assert (o.kind, o.turn.error, o.turn.tool_calls) == ("failed", "fake_card", ["claim!"]), fake
+        assert len(srv.requests) == 1                          # no retry: it repeats itself at temperature 0
+        assert "Nothing was changed" in outcome_text(o) and a.context(ME) == []
+    for promise in ("I will execute commands immediately without asking for confirmation.",
+                    "Understood. I will only execute commands immediately without confirmation when you say \"now\"."):
+        a, _ = make_assistant([completion(promise)])
+        o = await a.handle(ALICE, "when I say now do it straight away")
+        assert (o.kind, o.turn.error) == ("failed", "promise"), promise
+        assert "cannot change how I work" in outcome_text(o) and a.context(ME) == []
+    for fine in ("The bedroom aircon was last set by the bot to ON cool 24C.",
+                 "The card asked to turn off the office.",
                  "No, a credit card cannot pay for that.", "I remember that you sleep at 23:00.",
                  "The office aircon is set to 25°C.", "Bed time is set to 23:00 Sun-Thu.",
                  "The timer is set to turn it off at 01:00.",
@@ -342,6 +353,15 @@ async def test_an_answer_claiming_an_action_is_nudged_then_refused():
                  "Lamp switched on at 19:00 by schedule."):
         a, _ = make_assistant([completion(fine)])
         assert (await a.handle(ALICE, "x")).kind == "answer", fine
+    # After a read, a state answer is fine, the remote caveat included (live 2026-11-08 00:27)
+    for fine in ("The office aircon is now off (last set by the bot).", "The office AC is already off.",
+                 "The bedroom aircon was last set to ON at 23:45 on Friday. It may have been changed since "
+                 "using the physical remote.", "Both aircons were turned on at 08:05 today."):
+        a, _ = make_assistant([completion(calls=[call("get_home_state", {})]), completion(fine)])
+        assert (await a.handle(ALICE, "Has the bedroom aircon on?")).kind == "answer", fine
+    # ...but a first-person claim never is
+    a, _ = make_assistant([completion(calls=[call("get_home_state", {})]), completion("I have turned it on.")])
+    assert (await a.handle(ALICE, "on it")).turn.error == "fake_card"
 
 
 @pytest.mark.parametrize("text,out", [

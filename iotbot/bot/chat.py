@@ -37,6 +37,9 @@ FAILED = {
     "down": f"The assistant is not reachable right now (the PC may be off). Please {FALLBACK}.",
     "timeout": f"That took too long, so I stopped. Try again, or {FALLBACK}.",
     "too_many": "That is more than 10 changes at once. Please split it up.",
+    # The model said something was done (or would be) without a tool call: say plainly nothing was
+    "fake_card": f"Nothing was changed: I could not turn that into an action. Try again, or {FALLBACK}.",
+    "promise": "I cannot change how I work by agreeing in chat. Nothing was changed.",
 }
 FAILED_OTHER = f"Sorry, I could not work that out. Try saying it another way, or {FALLBACK}."
 

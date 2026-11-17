@@ -188,7 +188,8 @@ class HomeTools:
         except AcStateError as e:
             raise ArgError(str(e)) from None
         if before == after:
-            raise AlreadyError(f"{d} is already {after.describe()} (as last sent)")
+            raise AlreadyError(f"{d} is already {after.describe()} (as last sent by the bot). Nothing was sent; "
+                               "if someone used the remote, the person can use /keyboard")
         line = f"{before.describe() if before else 'unknown'} -> {after.describe()}"
 
         async def run(who: Actor) -> Done:

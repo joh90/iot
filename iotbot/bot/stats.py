@@ -31,7 +31,8 @@ SURFACES = {"button": "buttons", "slash": "commands", "text": "chat", "scheduler
 TURN_KEYS = ("surface", "total_ms", "outcome", "allowed", "user_id", "lag_s",
              "intent", "llm_ms", "tokens", "error", "card", "card_id")
 # Why chat turns failed, in household words
-CHAT_FAILS = {"down": "PC off or unreachable", "busy": "PC busy", "timeout": "too slow", "llm_off": "switched off"}
+CHAT_FAILS = {"down": "PC off or unreachable", "busy": "PC busy", "timeout": "too slow", "llm_off": "switched off",
+              "fake_card": "made-up action", "promise": "made-up promise"}
 EVENT_KEYS = ("device", "ms", "ok", "surface", "user_id", "error", "maybe_delivered")
 NOT_WORK = ("denied", "dropped_offline")   # never reached a handler: no speed to measure
 

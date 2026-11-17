@@ -33,10 +33,23 @@ CLAIM_RE = re.compile(
     r"\btap (do it|remember|save)\b|\bdo this\?|"
     r"\b(i will|i'll|i am going to|i'm going to|let me) (now )?(turn|set|switch|change|make|run|start|stop)\b|"
     r"\bturning (it |the \w+ )?(on|off) (now|for you)\b|"
-    r"\b(has|have) been (turned|set|switched|changed|paused|resumed|deleted|removed|added|created|scheduled)\b|"
+    r"(?<!may )(?<!might )(?<!could )\b(has|have) been (turned|set|switched|changed|paused|resumed|deleted|"
+    r"removed|added|created|scheduled)\b|"
     r"\b(i've|i have|done|ok)[,.!]? .{0,40}\bis now (on|off|set)\b|"
     r"\b(i've|i have|i will|i'll) (now )?(noted|note|saved|save|remembered|remember|stored|store)\b|"
-    r"\bnoted that\b", re.IGNORECASE)
+    r"\bnoted that\b|"
+    # live 2026-11-01..15: "I have turned off the office aircon." with no tool call
+    r"\b(i|i've|i have|i just|we)( also| just| now| already)? (turned|switched|set|changed|removed|deleted|added|"
+    r"paused|resumed|cancelled|executed)\b", re.IGNORECASE)
+# A promise to work differently (live 2026-11-10: "I will execute commands immediately without asking
+# for confirmation"): only code decides when a card shows
+PROMISE_RE = re.compile(r"\b(i will|i'll|from now on)\b.{0,60}\b(without (asking|confirm\w*|a card)|immediately|"
+                        r"straight away|right away|skip)\b", re.IGNORECASE)
+# A state stated as fact ("The office aircon is now on."): only true after a tool said so. Checked
+# only when no tool ran this turn (live 2026-11-15: six of these, nothing was sent)
+STATE_CLAIM_RE = re.compile(r"\b(is|are) now (on|off|running)\b|\b(was|were) (just )?(turned|switched) (on|off)\b",
+                            re.IGNORECASE)
+DEVICE_WORD_RE = re.compile(r"\b(aircons?|air[- ]?cons?|a/?c|acs|it|they|both)\b", re.IGNORECASE)
 # A sentence that is only a result: "Bedroom set to 23." / "Okay, both rooms turned off." A diary
 # line goes on ("... at 23:00 by the schedule") and a state answer says "is set to": neither matches
 _WORD = r"(?!(is|was|are|were|be|been|being|still|already|stays|remains)\b)[\w-]+"   # not "is set to"
@@ -50,7 +63,7 @@ NOTE_DROP_RE = re.compile(
     r"\b(is|are) now\b|\b(turned|switched) (\w+ )?(on|off)\b|"
     r"\b(turning|switching|adding|pausing|resuming|deleting|removing|scheduling|setting up)\b|"
     r"\b(will|going to|goes|go) (be )?(turn|switch|go|switched|turned)\w* (on|off)\b|\bgoes (on|off)\b|"
-    r"\b(i|i've|i have|i'll|i will|i've just|i just|we) (have |will |just |now )?(added|created|set up|set|"
+    r"\b(i|i've|i have|i'll|i will|i've just|i just|we) (have |will |just |now |also )?(added|created|set up|set|"
     r"scheduled|paused|resumed|deleted|removed|changed|made|turned|switched|updated)\b|"
     r"\b(is|are|has been|have been|will be) (set to |being |now )?(added|created|set up|scheduled|"
     r"deleted|removed|changed|updated|turn(ed)? (on|off)|switch(ed)? (on|off))\b|"
@@ -154,7 +167,6 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 ask_rest: bool = False, plain: bool = False) -> None:
     by_name = {t.name: t for t in tools}
     specs = [t.spec() for t in tools]
-    nudged = False
     already: list[str] = []                      # refused because nothing would change: the card says so
     pending: list[Action] | None = None          # a ready card, waiting for the model's answer to the rest
     had_reads = False                            # a check was looked up in an earlier round
@@ -187,18 +199,16 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             if not reply.content:
                 out.kind, out.error = "failed", "empty"
                 return
-            if claims(reply.content):
-                # Text that announces an action or a card, without the tool call: no card exists
+            if PROMISE_RE.search(reply.content):
                 out.tool_calls.append("claim!")
-                if out.rounds > MAX_TOOL_ROUNDS or nudged:
-                    out.kind, out.error = "failed", "fake_card"
-                    return
-                nudged = True
-                messages += [{"role": "assistant", "content": reply.content},
-                             {"role": "user", "content": "(System: nothing was done or saved and no card "
-                                                         "exists. To change or remember anything, call the "
-                                                         "tool now; otherwise just answer.)"}]
-                continue
+                out.kind, out.error = "failed", "promise"
+                return
+            if claims(reply.content, tools_ran=bool(out.tool_calls)):
+                # Text that announces an action or a card, without the tool call: no card exists.
+                # No retry: at temperature 0 the model repeats itself (live 2 of 2, eval 0 of 18 rescued)
+                out.tool_calls.append("claim!")
+                out.kind, out.error = "failed", "fake_card"
+                return
             if not TOOL_MARKUP_RE.search(reply.content):
                 out.kind, out.text = "answer", reply.content
                 return
@@ -313,10 +323,15 @@ def _subjects(actions: list[Action]) -> set[str]:
     return {w for n in names for w in re.findall(r"[a-z0-9]+", n.lower()) if w not in GENERIC and len(w) > 1}
 
 
-def claims(text: str) -> bool:
-    """True if the text says something was done or a card exists (only a tool call does that)."""
-    return bool(CLAIM_RE.search(text)) or any(
-        SHORT_CLAIM_RE.fullmatch(s.strip(" -*_`")) for s in SENTENCE_RE.split(text.replace("**", "")))
+def claims(text: str, tools_ran: bool = True) -> bool:
+    """True if the text says something was done or a card exists (only a tool call does that).
+    `tools_ran` False: no tool ran this turn, so a device's state stated as fact is a claim too
+    ("The office aircon is now on."), while a state answer after a read stays fine."""
+    sentences = SENTENCE_RE.split(text.replace("**", ""))
+    if CLAIM_RE.search(text) or any(SHORT_CLAIM_RE.fullmatch(s.strip(" -*_`")) for s in sentences):
+        return True
+    return not tools_ran and (bool(STATE_CLAIM_RE.search(text))
+                              or any(STATE_RE.search(s) and DEVICE_WORD_RE.search(s) for s in sentences))
 
 
 def _note(text: str | None, subjects: set[str] = frozenset()) -> str:
