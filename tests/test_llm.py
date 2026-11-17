@@ -375,9 +375,9 @@ def test_enum_matches_type_too_and_schema_typos_are_caught():
 
 async def test_leaked_tool_call_markup_is_retried_never_shown():
     leak = "<tool_call>=call>\n<parameter=action>\nresume_schedule\n</parameter>"
-    srv = FakeServer([completion(leak), completion("Resumed? No: it was not paused.")])
+    srv = FakeServer([completion(leak), completion("Which schedule do you mean?")])
     out = await lp.run_turn(srv.client(), msgs(), [STATE])
-    assert (out.kind, out.text, out.tool_calls) == ("answer", "Resumed? No: it was not paused.", ["?!"])
+    assert (out.kind, out.text, out.tool_calls) == ("answer", "Which schedule do you mean?", ["?!"])
     assert "could not be read" in srv.requests[1]["messages"][-1]["content"]
     srv = FakeServer([completion(leak)] * 5)
     out = await lp.run_turn(srv.client(), msgs(), [STATE])
@@ -528,7 +528,7 @@ async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
     srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
     message_text.set("off bedroom and remove the timer, off office too")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.args for a in out.actions] == [off, office]
+    assert [a.args for a in out.actions] == [off]                 # set_ac never joins a ready card
     srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "bedroom-aircon", "power": True}, "c")]),
                       completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
@@ -596,8 +596,36 @@ async def test_a_card_waits_a_round_when_the_message_names_another_device():
                       completion("-")])
     message_text.set("off bedroom and on office")
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
-    assert [a.args for a in out.actions] == [off, on]
+    assert [a.args for a in out.actions] == [off] and out.rounds == 3      # waited, but set_ac does not join
     srv = FakeServer([completion(calls=[call("set_ac", off, "a"), call("set_ac", on, "b")])])
     message_text.set("off bedroom and on office")
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert [a.args for a in out.actions] == [off, on] and out.rounds == 1
+
+
+
+@pytest.mark.parametrize("text,ordered", [
+    ("off office, bedroom is fine", {"office"}), ("off office, is bedroom on?", {"office"}),
+    ("remove the bedroom timer", set()), ("off bedroom at 2:30pm and on office at 1330", {"bedroom", "office"}),
+    ("off bedroom and on office", {"bedroom", "office"})])
+def test_only_a_device_given_an_order_keeps_the_card_open(text, ordered):
+    # review 2026-11-17: a device named in a question or "is fine" added an unasked line
+    assert lp._devices_ordered(text, [SET_AC]) == ordered
+
+
+async def test_a_timed_second_change_joins_and_a_note_needs_a_read():
+    first = completion(calls=[call("add_schedule", {"device": "bedroom-aircon", "at": "14:30"}, "a")])
+    add = Tool("add_schedule", "Add", {"type": "object", "properties": {
+        "device": {"type": "string", "enum": ["bedroom-aircon", "office-aircon"]}, "at": {"type": "string"}}},
+        write=True, prepare=_sched_tools()[0].prepare)
+    srv = FakeServer([first, completion(calls=[call("add_schedule", {"device": "office-aircon", "at": "13:30"}, "b")]),
+                      completion("-")])
+    message_text.set("off bedroom at 2:30pm and on office at 1330")
+    out = await lp.run_turn(srv.client(), msgs(), [add])
+    assert [a.args["device"] for a in out.actions] == ["bedroom-aircon", "office-aircon"]
+    # A state stated above a card with nothing read is dropped
+    srv = FakeServer([completion(calls=[call("set_ac", {"device": "office-aircon", "power": False}, "a")]),
+                      completion("The bedroom aircon is not on.")])
+    message_text.set("off office and on bedroom")
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert out.text == ""

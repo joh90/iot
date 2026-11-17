@@ -83,7 +83,8 @@ LATER_WRITES = {
     "resume_schedule": re.compile(r"\b(resume|unpause)\b", re.IGNORECASE),
     "add_schedule": re.compile(r"\b(add|create|make|new|set( up)?|schedule)\b.{0,30}\b(timers?|schedules?)\b|"
                                r"\b(timers?|schedules?)\b.{0,15}\b(at|in|for)\s+\d|"
-                               r"\bin \d+\s*(min|mins|minutes|h|hrs?|hours?)\b", re.IGNORECASE),
+                               r"\bin \d+\s*(min|mins|minutes|h|hrs?|hours?)\b|"
+                               r"\b(on|off)\b.{0,30}\b(at|by)\s+\d|\b(on|off)\b.{0,30}\b\d{3,4}\b", re.IGNORECASE),
     "edit_schedule": re.compile(r"\b(change|move|edit|update|shift|push|delay)\b.{0,25}\b(timers?|schedules?)\b",
                                 re.IGNORECASE),
 }
@@ -199,7 +200,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
         out.kind, out.actions, out.error = "actions", actions, None
         # Words above a card only answer what else the message asked; a plain change gets none
         # (live: "pause the 7am one" got "...has been paused. It will resume automatically ...")
-        note = _note(text, _subjects(actions))
+        note = _note(text, _subjects(actions), tools_ran=had_reads or told)
         if plain:
             # Only what is missing or left out ("There is no bedroom timer at 10:41"), so a card that
             # covers part of the message does not read as the whole of it
@@ -259,13 +260,8 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             # The card is ready: its lines never change. A write the message asked for joins it
             # (prepared on its own, so a line already promised is never re-planned or swapped)
             said = message_text.get()
-            on_card = _subjects(pending) | {w for a in pending
-                                            for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())}
             for c in writes:
                 gate = LATER_WRITES.get(c.tool.name)               # type: ignore[union-attr]
-                dev = set(re.findall(r"[a-z0-9]+", str((c.args or {}).get("device", "")).lower())) - GENERIC
-                if c.tool.name == "set_ac" and dev and dev & _devices_named(said, tools) and not dev & on_card:  # type: ignore[union-attr]
-                    continue                                       # "off bedroom and on office": the other device
                 if gate is None or not gate.search(said):
                     c.error = "the card is already made; do not call write tools again, answer in text"
             joining, writes = [c for c in writes if not c.error], []
@@ -319,7 +315,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             said = message_text.get()
             more = any(g.search(said) for name, g in LATER_WRITES.items()
                        if name in by_name and name not in {a.tool.name for a in actions}) \
-                or bool(_devices_named(said, tools) - _subjects(actions)
+                or bool(_devices_ordered(said, tools) - _subjects(actions)
                         - {w for a in actions for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())})
             asked = reads or more or ((had_reads or ask_rest) and not _note(reply.content, _subjects(actions)))
             if not refused and (not asked or out.rounds > MAX_TOOL_ROUNDS):
@@ -363,11 +359,23 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
     out.kind, out.error = "failed", "rounds"
 
 
-def _devices_named(text: str, tools: list[Tool]) -> set[str]:
-    """The device words (from the tools' device lists, "office" of "office-aircon") the text uses."""
-    said = set(re.findall(r"[a-z0-9]+", text.lower()))
+QUESTION_CLAUSE_RE = re.compile(r"^\s*(and |but )?(is|are|was|were|what|what's|which|when|how|does|do|did|"
+                                r"has|have)\b", re.IGNORECASE)
+
+
+def _devices_ordered(text: str, tools: list[Tool]) -> set[str]:
+    """Device words ("office" of "office-aircon") that a clause orders on, off or at a time:
+    "and on office at 1330" counts; "bedroom is fine" and "is bedroom on?" do not."""
     ids = {d for t in tools for d in t.parameters.get("properties", {}).get("device", {}).get("enum", [])}
-    return {w for d in ids for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in GENERIC and len(w) > 2} & said
+    words = {w for d in ids for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in GENERIC and len(w) > 2}
+    out = set()
+    for clause in re.split(r"[,;.?!\n]|\band\b|\bthen\b", text):
+        if not clause.strip() or QUESTION_CLAUSE_RE.match(clause):
+            continue
+        said = re.findall(r"[a-z0-9]+", clause.lower())
+        if {"on", "off"} & set(said) or re.search(r"\b(at|by)\s+\d|\b\d{3,4}\b", clause):
+            out |= words & set(said)
+    return out
 
 
 def _lines(a: Action) -> list[Any]:
@@ -405,7 +413,7 @@ async def _prepare(actions: list[Action], already: list[str] | None = None,
     return refused
 
 
-STATE_RE = re.compile(r"\b(is|are|was|were)( already| still)? (on|off|paused|active|running)\b", re.IGNORECASE)
+STATE_RE = re.compile(r"\b(is|are|was|were)( already| still)?( not)? (on|off|paused|active|running)\b", re.IGNORECASE)
 GENERIC = {"aircon", "ac", "schedule", "timer", "new", "note", "forget", "recipe"}
 
 
@@ -429,7 +437,7 @@ def claims(text: str, tools_ran: bool = True) -> bool:
                                  for s in said)
 
 
-def _note(text: str | None, subjects: set[str] = frozenset()) -> str:
+def _note(text: str | None, subjects: set[str] = frozenset(), tools_ran: bool = True) -> str:
     """The model's words next to a card, shown above it: only the sentences that do not claim
     a result or talk about the card (the card says that). A sentence stating the on/off/paused
     state of something on the card is dropped too: before the tap it is either stale or a claim."""
@@ -441,7 +449,7 @@ def _note(text: str | None, subjects: set[str] = frozenset()) -> str:
         return bool(STATE_RE.search(s)) and bool(subjects & set(re.findall(r"[a-z0-9]+", s.lower())))
 
     keep = [s for s in SENTENCE_RE.split(text)
-            if not (claims(s) or NOTE_DROP_RE.search(s.strip()) or about_card(s))]
+            if not (claims(s, tools_ran) or NOTE_DROP_RE.search(s.strip()) or about_card(s))]
     text = " ".join(s.strip() for s in keep).strip()
     return text if len(text) <= MAX_NOTE_CHARS else text[:MAX_NOTE_CHARS].rsplit(" ", 1)[0] + "..."
 
