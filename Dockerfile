@@ -28,6 +28,9 @@ COPY commands.json /app/commands.json
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     COMMANDS_PATH=/app/commands.json
+# Last, so a new revision does not invalidate the cached layers above: logged at startup
+ARG REV=dev
+ENV IOTBOT_REV=$REV
 USER 1001
 WORKDIR /data
 ENTRYPOINT ["iotbot", "--env-file", "/data/.env"]

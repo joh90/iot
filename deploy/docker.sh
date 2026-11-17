@@ -37,7 +37,7 @@ run() {
 case "${1:-}" in
     build)
         REV=$(git rev-parse --short HEAD 2>/dev/null || echo local)
-        docker build -t "$IMAGE" -t "iotbot:$REV" .
+        docker build --build-arg REV="$REV" -t "$IMAGE" -t "iotbot:$REV" .
         ;;
     ship)
         # Run on the PC, not the Pi: Docker 20.10.7 cannot apply the seccomp profile to build steps,
@@ -45,7 +45,7 @@ case "${1:-}" in
         # Usage: deploy/docker.sh ship user@pi-host
         HOST="${2:?usage: $0 ship user@host}"
         REV=$(git rev-parse --short HEAD 2>/dev/null || echo local)
-        docker buildx build --platform linux/arm/v7 -t "$IMAGE" -t "iotbot:$REV" --load .
+        docker buildx build --platform linux/arm/v7 --build-arg REV="$REV" -t "$IMAGE" -t "iotbot:$REV" --load .
         docker save "$IMAGE" "iotbot:$REV" | gzip -1 | ssh -- "$HOST" "gunzip | docker load"
         ;;
     check)

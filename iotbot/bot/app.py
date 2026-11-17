@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -23,6 +24,31 @@ from iotbot.bot.phone import offer_io, stop_setups
 from iotbot.context import AppContext, expected_devices
 
 logger = logging.getLogger(__name__)
+
+HEARTBEAT_S = 6 * 3600
+# The image's git revision (deploy/docker.sh passes it as a build arg): which code is running
+BUILD = os.environ.get("IOTBOT_REV", "dev")
+
+
+def heartbeat_line(up_s: float, last_update_s: float | None, presence: tuple[int, int] | None) -> str:
+    """One log line every few hours, so a silent outage shows where the log stops (counts only)."""
+    def ago(s: float) -> str:
+        return f"{int(s // 3600)}h{int(s % 3600 // 60):02d}m"
+
+    text = f"Heartbeat: build {BUILD}, up {ago(up_s)}, last update " + (
+        f"{ago(last_update_s)} ago" if last_update_s is not None else "none yet")
+    if presence is not None:
+        text += f", presence {presence[0]} of {presence[1]} home"
+    return text
+
+
+async def _heartbeat(app: Application, ctx: AppContext) -> None:
+    started = time.monotonic()
+    while True:
+        await asyncio.sleep(HEARTBEAT_S)
+        last = app.bot_data.get("last_update")
+        logger.info(heartbeat_line(time.monotonic() - started, time.monotonic() - last if last else None,
+                                   ctx.presence.counts() if ctx.presence else None))
 
 MAX_CLOCK_SKEW_S = 5
 
@@ -99,6 +125,7 @@ class TrackedApplication(Application):
     line is written and its notes would be lost."""
 
     async def process_update(self, update: object) -> None:
+        self.bot_data["last_update"] = time.monotonic()
         ctx: AppContext | None = self.bot_data.get("ctx")
         if ctx is None or ctx.tracker is None or not isinstance(update, Update):
             await super().process_update(update)
@@ -134,9 +161,11 @@ def build_application(ctx: AppContext) -> Application:
         if ctx.holidays and ctx.assistant:
             # MOM's list: refreshed in the background when over a month old (never blocks startup)
             app.bot_data["holidays_task"] = asyncio.create_task(ctx.holidays.run())
-        logger.info("%s running", ctx.settings.bot_name)
+        app.bot_data["heartbeat_task"] = asyncio.create_task(_heartbeat(app, ctx))
+        logger.info("%s running (build %s)", ctx.settings.bot_name, BUILD)
 
     async def post_stop(app: Application) -> None:
+        logger.info("Stopping")
         # Before the bot shuts down, so a last fire can still send its notice
         if ctx.scheduler:
             await ctx.scheduler.stop()
@@ -148,10 +177,11 @@ def build_application(ctx: AppContext) -> Application:
             await ctx.assistant.llm.aclose()
         if ctx.outside:
             await ctx.outside.nea.aclose()
-        task = app.bot_data.get("holidays_task")
-        if task:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        for name in ("holidays_task", "heartbeat_task"):
+            task = app.bot_data.get(name)
+            if task:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         if ctx.holidays:
             await ctx.holidays.aclose()
 

@@ -300,3 +300,25 @@ def test_superscript_digits_are_not_numbers():
     from iotbot.llm.home import _setting
     assert _setting("fan", "²") == "²" and _setting("fan", "3") == 3
     assert acpicker.decode_state("²²aa0") is None
+
+
+async def test_polling_hiccups_are_one_warning_line(caplog):
+    # 98.6% of the live log was tracebacks of these (2026-10-26..11-17)
+    from telegram.error import BadRequest, Conflict, NetworkError
+    caplog.set_level("WARNING", logger="iotbot.bot.handlers")
+    for err, level, text in ((NetworkError("Bad Gateway"), "WARNING", "Telegram poll failed: Bad Gateway"),
+                             (Conflict("terminated by other getUpdates request"), "WARNING", "Telegram Conflict"),
+                             (BadRequest("Chat not found"), "ERROR", "Error handling update None"),
+                             (RuntimeError("bug"), "ERROR", "Error handling update None")):
+        caplog.clear()
+        await hd.on_error(None, SimpleNamespace(error=err))
+        (rec,) = caplog.records
+        assert rec.levelname == level and text in rec.getMessage()
+        assert (rec.exc_info is not None) == (level == "ERROR")
+
+
+def test_heartbeat_line():
+    from iotbot.bot import app as ap
+    assert ap.heartbeat_line(6 * 3600 + 65, 125, (1, 2)) == \
+        f"Heartbeat: build {ap.BUILD}, up 6h01m, last update 0h02m ago, presence 1 of 2 home"
+    assert ap.heartbeat_line(60, None, None).endswith("last update none yet")

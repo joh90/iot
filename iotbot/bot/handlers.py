@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import Bot, CallbackQuery, InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, Conflict, NetworkError, TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from iotbot import telemetry
@@ -781,7 +781,16 @@ async def _wizard_text(update: Update, context: ContextTypes.DEFAULT_TYPE, w: wz
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the update id and the exception only -- no message text or user data (B15)."""
     uid = getattr(update, "update_id", None)
-    logger.error("Error handling update %s", uid, exc_info=context.error)
+    err = context.error
+    if update is None and isinstance(err, Conflict):
+        # Another getUpdates on this token (or our own dropped poll still held): one line, no traceback
+        logger.warning("Telegram Conflict: another poller is using this bot token")
+        return
+    if update is None and isinstance(err, NetworkError) and not isinstance(err, BadRequest):
+        # Polling hiccups (Bad Gateway, connect errors) retry by themselves: they were 98% of the log
+        logger.warning("Telegram poll failed: %s (retrying)", err)
+        return
+    logger.error("Error handling update %s", uid, exc_info=err)
     telemetry.note(outcome="error", error=context.error.__class__.__name__ if context.error else None)
     if uid is None:
         return  # not caused by an update (e.g. a job)
