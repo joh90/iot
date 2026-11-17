@@ -23,7 +23,7 @@ from iotbot.bot.text import b, h, popup, reply, safe_edit
 from iotbot.llm.assistant import MAX_INPUT_CHARS, Assistant, Outcome
 from iotbot.llm.cards import CARD_TTL_S, Card, CardError, Done, Prepared
 from iotbot.llm.loop import MAX_WRITES
-from iotbot.llm.memory import Memory, step_text
+from iotbot.llm.memory import Memory, card_rules, step_text
 from iotbot.result import Actor
 
 logger = logging.getLogger(__name__)
@@ -182,15 +182,26 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
         return
     note = o.text if o.turn else ""
     card, replaced = assistant.cards.new(actor.user_id, items, note)
+    sizes = [len(a.prepared) if isinstance(a.prepared, list) else 1 for a in o.turn.actions]
     # set_ac_now (the person's own no-card note): runs now, shows the result with Undo. Only when
-    # every line is one; anything mixed shows the usual card
-    auto = all(p.auto for p in items)
+    # every line is one, the note is still there (it can be forgotten mid-turn) and the message is
+    # the person's own words (not forwarded); anything else shows the usual card
+    msg = update.effective_message
+    auto = all(p.auto for p in items) and bool(assistant.memory and card_rules(assistant.memory.facts(actor.user_id))) \
+        and getattr(msg, "forward_origin", None) is None
+    stale = None
     if auto:
         try:
             assistant.cards.begin(card, "do")
-        except CardError:
-            auto = False
-    sizes = [len(a.prepared) if isinstance(a.prepared, list) else 1 for a in o.turn.actions]
+        except CardError as e:
+            auto, stale = False, str(e)
+    if stale:
+        # It changed while the turn ran: nothing was sent, and a dead [Do it] would mislead
+        card.context = list(zip(assistant.remember_card(actor.user_id, text, o.turn.actions, note), sizes, strict=True))
+        _context_note(card, "not run: " + stale)
+        telemetry.note(card="auto", card_id=card.id, outcome="refused")
+        await reply(update, closed_screen(card, f"Not run: {stale}. Nothing was sent."))
+        return
     if auto:
         telemetry.note(card="auto", card_id=card.id)
         results = await assistant.cards.run(card, "do", actor)
@@ -200,13 +211,21 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
     else:
         telemetry.note(card="shown", card_id=card.id)
         body, markup = card_screen(card)
-    sent = await update.effective_message.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
-    card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
     card.context = list(zip(assistant.remember_card(actor.user_id, text, o.turn.actions, note), sizes, strict=True))
     if auto:
         _context_note(card, "ran straight away (the person's no-card note)", [_mark(r) for r in card.results])
     else:
         _context_note(card, "shown to the person, waiting for their tap")
+    try:
+        sent = await msg.reply_text(body, parse_mode=ParseMode.HTML, reply_markup=markup)
+    except TelegramError:
+        if not auto:
+            raise
+        # The aircon already changed: say so in plain words (no buttons)
+        logger.warning("Could not show an auto-run result; sending a plain line", exc_info=True)
+        sent = await context.bot.send_message(msg.chat_id, "Ran straight away: " + "; ".join(
+            f"{p.name}: {p.line}" for p in card.items))
+    card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
     for old in replaced:
         _context_note(old, "replaced by a newer request; nothing was done")
         if old.chat_id is not None and old.message_id is not None:
@@ -292,7 +311,7 @@ def memory_screen(memory: Memory, actor: Actor, page: str = "me",
         rows.append([InlineKeyboardButton(f"Yours ({len(facts) + len(recipes)})", callback_data=encode(MEM, "p", "me"))])
     else:
         lines.append(b("Your notes") + " (only your assistant uses these)")
-        lines += [f'- "{h(_cut(f["text"], LINE))}"' + (" (no card)" if f.get("skip_card") else "")
+        lines += [f'- "{h(_cut(f["text"], LINE))}"' + (" (no card)" if f.get("skip_card") is True else "")
                   for f in facts] or ["- none yet"]
         lines += ["", b("Your recipes")]
         lines += [f'- "{h(r["name"])}": {h(_cut("; ".join(step_text(st) for st in r["steps"]), LINE))}'

@@ -154,14 +154,17 @@ def chat_lines(turns: list[dict[str, Any]]) -> list[str]:
         out.append(f"- tokens per message: {_typical_slow(tokens, 'tokens')}")
     # Joined by card id, so a card shown before the window and tapped inside it is not counted
     shown = {t.get("card_id") for t in chat if t.get("card") == "shown" and t.get("card_id")}
+    auto = {t.get("card_id") for t in chat if t.get("card") == "auto" and t.get("outcome") != "refused"
+            and t.get("card_id")}
     tapped: dict[str, set] = defaultdict(set)
     for t in turns:
-        if str(t.get("intent") or "").startswith("lc:") and t.get("outcome") != "refused" and t.get("card_id") in shown:
+        if str(t.get("intent") or "").startswith("lc:") and t.get("outcome") != "refused" \
+                and t.get("card_id") in shown | auto:
             tapped[str(t.get("card"))].add(t["card_id"])
-    if shown:
+    if shown or auto:
         out.append(f"- cards: {len(shown)} shown, {len(tapped['do'])} done, {len(tapped['x'])} cancelled, "
                    f"{len(shown - tapped['do'] - tapped['x'])} not tapped; {len(tapped['undo'])} undone, "
-                   f"{len(tapped['retry'])} retried")
+                   f"{len(tapped['retry'])} retried" + (f"; {len(auto)} ran straight away" if auto else ""))
     return out
 
 

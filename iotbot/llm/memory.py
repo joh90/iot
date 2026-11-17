@@ -375,8 +375,10 @@ class MemoryTools:
             # Only for someone whose own note asks for it; the model decides from the note's words
             out.append(Tool(
                 "set_ac_now", "Like set_ac, but runs straight away with no confirm card (the person can Undo "
-                              "for 10 minutes). Use it only when this person's no-card notes say this message "
-                              "should run straight away; otherwise use set_ac. Never for schedules or timers.",
+                              "for 10 minutes). Use it only when THIS message contains the words or meets the "
+                              "condition that the person's no-card note names (e.g. the note says 'when I say "
+                              "now' and this message says 'now'). Any other message uses set_ac, even right "
+                              "after a set_ac_now. Never for schedules or timers.",
                 base.parameters, write=True, prepare=lambda a: self._prep_now(base, a)))
         if mine and acs:
             out.append(Tool(

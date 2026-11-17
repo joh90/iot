@@ -325,3 +325,46 @@ async def test_set_ac_now_runs_without_a_card_and_offers_undo(tmp_path):
     assert text.startswith("Do this?") and len(ctx.sent) == sent
     screen, _ = ch.memory_screen(ctx.memory, ALICE)
     assert "(no card)" in screen
+
+
+async def test_auto_run_needs_the_note_still_there_and_your_own_words(tmp_path):
+    # review 2026-11-17: a note forgotten mid-turn, or a forwarded message, gets the usual card
+    ctx = make_ctx(tmp_path)
+    await (await prep(ctx, "remember", {"text": NOW_NOTE, "house": False, "skip_card": True})).run(ALICE)
+    context = tg_context(ctx)
+    for forwarded, forget in ((True, False), (False, True)):
+        ctx.assistant.llm = FakeServer([completion(calls=[call("set_ac_now", {"device": "bed_ac", "power": True})])]).client()
+        u = say("on bedroom now")
+        u.effective_message.forward_origin = object() if forwarded else None
+        u.effective_message.reply_text = AsyncMock(return_value=SimpleNamespace(chat_id=ME, message_id=9))
+        if forget:
+            real = ctx.assistant.llm.chat
+
+            async def chat_then_forget(*a, **k):
+                fid = ctx.memory.facts(ME)[0]["id"]
+                await ctx.memory.remove(ME, fid)                   # Forget tapped while the turn runs
+                return await real(*a, **k)
+            ctx.assistant.llm.chat = chat_then_forget
+        await hd.on_text(u, context)
+        (text,), _ = u.effective_message.reply_text.call_args
+        assert text.startswith("Do this?") and not ctx.sent, (forwarded, forget)
+
+
+async def test_auto_run_on_a_changed_aircon_says_so_and_sends_nothing(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await (await prep(ctx, "remember", {"text": NOW_NOTE, "house": False, "skip_card": True})).run(ALICE)
+    real_new = ctx.assistant.cards.new
+
+    def new_then_change(*a, **k):
+        card, old = real_new(*a, **k)
+        for p in card.items:
+            p.seen = "changed"                                     # a schedule fired mid-turn
+        return card, old
+    ctx.assistant.cards.new = new_then_change
+    ctx.assistant.llm = FakeServer([completion(calls=[call("set_ac_now", {"device": "bed_ac", "power": True})])]).client()
+    u = say("on bedroom now")
+    u.effective_message.reply_text = AsyncMock(return_value=SimpleNamespace(chat_id=ME, message_id=9))
+    await hd.on_text(u, tg_context(ctx))
+    (text,), kw = u.effective_message.reply_text.call_args
+    assert text.startswith("Not run:") and "Nothing was sent" in text and not ctx.sent
+    assert kw.get("reply_markup") is None
