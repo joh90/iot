@@ -518,7 +518,7 @@ async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
     message_text.set("off bedroom and remove the timers")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.tool.name for a in out.actions] == ["set_ac"]
-    assert out.text == "Not on this card: no schedule tgone. Ask for it again after this."
+    assert out.text == "Could not add: no schedule tgone. Ask for it again after this."
     # Never a second set_ac, even when asked
     srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "office-aircon", "power": False}, "c")]),
                       completion("-")])
@@ -550,14 +550,16 @@ async def test_a_repeated_or_corrected_join_reads_right():
     off = {"device": "bedroom-aircon", "power": False}
     first = completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")])
     message_text.set("off bedroom and remove the timers")
-    # A refused id, then the right one: the card has it and says nothing is missing
+    # A refused id, then another one: the card has it, and still says what could not be added
+    # (review: "remove the 7am and 9pm timers" with the 9pm one never found must not go quiet)
     srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "tgone"}, "c")]),
                       completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "d")]), completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"] and out.text == ""
+    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"]
+    assert out.text == "Could not add: no schedule tgone. Ask for it again after this."
     # The same delete twice: one line, and "ready" both times
     srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]),
                       completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "d")]), completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"] and out.text == ""
-    assert "ready" in [m for m in srv.requests[3]["messages"] if m["role"] == "tool"][-1]["content"]
+    assert "already on this card" in [m for m in srv.requests[3]["messages"] if m["role"] == "tool"][-1]["content"]

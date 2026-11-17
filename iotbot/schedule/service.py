@@ -181,10 +181,14 @@ class ScheduleService:
         power = last.state.power if last is not None else None
         # A managed aircon's "powerful" button sends the preset with powerful on: it turns it on
         managed = bool(ac is not None and ac.manages(device))
-        runs = sorted(((r, o.id, p) for o in others if (p := _power_of(o, managed)) is not None
-                       for r in self._runs(o, now, at)), key=lambda x: (x[0], x[1]))
-        for _, _, p in runs:
-            power = p
+        by_time: dict[datetime, set[bool]] = {}
+        for o in others:
+            if (p := _power_of(o, managed)) is not None:
+                for r in self._runs(o, now, at):
+                    by_time.setdefault(r, set()).add(p)
+        for r in sorted(by_time):
+            # An on and an off at the same minute: which wins depends on store order, so not known
+            power = by_time[r].pop() if len(by_time[r]) == 1 else None
         return power
 
     # ---- plan / apply ----------------------------------------------------------------------

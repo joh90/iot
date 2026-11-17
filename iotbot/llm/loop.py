@@ -193,6 +193,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
     had_reads = False                            # a check was looked up in an earlier round
     not_on: dict[tuple[str, str], str] = {}      # later writes that could not join the card: said below it
     told = False                                 # a write was refused with a reason ("bed is off"): state came from code
+    repeats: set[str] = set()                    # call ids that only repeat a line already on the card
 
     def card(actions: list[Action], text: str | None) -> None:
         out.kind, out.actions, out.error = "actions", actions, None
@@ -206,7 +207,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
         out.text = note or ("Left out: " + "; ".join(already) + "." if already else "")
         if not_on:
             out.text = (out.text + "\n" if out.text else "") + (
-                "Not on this card: " + "; ".join(dict.fromkeys(not_on.values())) + ". Ask for it again after this.")
+                "Could not add: " + "; ".join(dict.fromkeys(not_on.values())) + ". Ask for it again after this.")
 
     for _ in range(MAX_TOOL_ROUNDS + 1):
         reply = await llm.chat(messages, specs)
@@ -276,24 +277,22 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 hard = {k: v for k, v in refused.items() if k not in no_op}   # "already paused" is on Left out
                 lines = sum(len(_lines(a)) for a in pending + new if (a.tool.name, _key(a.args)) not in refused)
                 if not hard and lines > MAX_WRITES:
-                    hard = {(a.tool.name, _key(a.args)): f"a card holds at most {MAX_WRITES} changes" for a in new}
+                    hard = {(a.tool.name, _key(a.args)): f"a card holds at most {MAX_WRITES} changes"
+                            for a in new if (a.tool.name, _key(a.args)) not in refused}
+                for c in joining:
+                    k = (c.tool.name, _key(c.args))                # type: ignore[union-attr]
+                    if k in promised:
+                        repeats.add(c.id)                          # already a card line: told so, nothing added
+                    elif hard:
+                        # All or none: a card that holds half of a later request would read as all of it
+                        c.error = hard.get(k) or refused.get(k) or "not added: another change in this round could not be made"
+                    elif k in refused:
+                        c.error = refused[k]
                 if hard:
-                    # All or none: a card that holds half of a later request would read as all of it
-                    for c in joining:
-                        k = (c.tool.name, _key(c.args))            # type: ignore[union-attr]
-                        c.error = hard.get(k) or refused.get(k) or (
-                            None if k in promised else "not added: another change in this round could not be made")
-                    for k, why in hard.items():
-                        not_on[k] = why
+                    not_on.update(hard)                            # kept: a later fix cannot tell which one it fixed
                 else:
-                    for c in joining:
-                        k = (c.tool.name, _key(c.args))            # type: ignore[union-attr]
-                        if k in refused:
-                            c.error = refused[k]
                     pending = pending + [a for a in new if (a.tool.name, _key(a.args)) not in refused]
                     ready = True
-                    for k in [k for k in not_on if k[0] in {c.tool.name for c in joining}]:  # type: ignore[union-attr]
-                        not_on.pop(k)                              # asked again, and it joined
                 card(pending, None)
             out.tool_calls = out.tool_calls[:-len(checked)] + [
                 (c.tool.name if c.tool else "?") + ("!" if c.error else "") for c in checked]
@@ -338,6 +337,8 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
         for c in checked:
             if c.error is not None:
                 result = _dump({"error": c.error})
+            elif c.id in repeats:
+                result = _dump({"card": "already on this card; do not call it again"})
             elif c.tool.write and ready:                       # type: ignore[union-attr]
                 result = _dump({"card": READY})
             elif c.tool.write:                                 # type: ignore[union-attr]
