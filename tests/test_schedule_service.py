@@ -442,3 +442,17 @@ async def test_a_setting_change_on_an_aircon_that_will_be_off_warns(svc):
     # More than a day away: what the bot sent now says little about then
     await ac.store.put("bed_ac", AcState(power=False, temp=23), "Alice", at=T0.timestamp())
     assert not svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(30)}).warnings
+
+
+async def test_setting_warning_with_two_runs_at_once_and_a_powerful_button(svc):
+    from iotbot.ac.state import AcState
+    # review 2026-11-17: two on/off runs at the same minute crashed the sort; a "powerful"
+    # capture turns a managed aircon on
+    await svc.devices.ac.store.put("bed_ac", AcState(power=False, temp=23), "Alice", at=T0.timestamp() - 60)
+    await create(svc, action={"kind": "off"}, when=_at(4))
+    await create(svc, action=ON22, when=_at(4), resolve="keep_both")
+    p = svc.plan(ALICE, {"device": "bed_ac", "action": SET_POWERFUL, "when": _at(8)})
+    assert p.ok
+    await create(svc, action={"kind": "capture", "key": "powerful"}, when=_at(6), resolve="keep_both")
+    assert not svc.plan(ALICE, {"device": "bed_ac", "action": {"kind": "adjust", "changes": {"temp": 22}},
+                                "when": _at(8)}).warnings

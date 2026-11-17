@@ -179,9 +179,12 @@ class ScheduleService:
         ac = getattr(self.devices, "ac", None)
         last = ac.last(device) if ac is not None and hasattr(ac, "last") else None
         power = last.state.power if last is not None else None
-        runs = sorted((r, o) for o in others if _turns_on(o) or _turns_off(o) for r in self._runs(o, now, at))
-        for _, o in runs:
-            power = _turns_on(o)
+        # A managed aircon's "powerful" button sends the preset with powerful on: it turns it on
+        managed = bool(ac is not None and ac.manages(device))
+        runs = sorted(((r, o.id, p) for o in others if (p := _power_of(o, managed)) is not None
+                       for r in self._runs(o, now, at)), key=lambda x: (x[0], x[1]))
+        for _, _, p in runs:
+            power = p
         return power
 
     # ---- plan / apply ----------------------------------------------------------------------
@@ -606,6 +609,13 @@ def _turns_on(s: Schedule) -> bool:
 
 def _turns_off(s: Schedule) -> bool:
     return isinstance(s.action, Off) or (isinstance(s.action, Capture) and s.action.key == "power_off")
+
+
+def _power_of(s: Schedule, managed: bool) -> bool | None:
+    """The power a run leaves the device in, or None if it does not change it."""
+    if _turns_on(s) or (managed and isinstance(s.action, Capture) and s.action.key == "powerful"):
+        return True
+    return False if _turns_off(s) else None
 
 
 def _batch_id() -> str:

@@ -525,3 +525,39 @@ async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
     message_text.set("off bedroom and remove the timer, off office too")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.args for a in out.actions] == [off]
+
+
+@pytest.mark.parametrize("text", [
+    "I have turned off the office aircon, so you can sleep well.",
+    "I turned off the bedroom aircon as you asked, let me know if you would like anything else.",
+    "The office aircon is now on, so the room should be cool when you get home.",
+    "I set it to 23 like you do every night."])
+def test_claims_with_a_condition_word_later_still_count(text):
+    assert lp.claims(text, tools_ran=False)
+
+
+@pytest.mark.parametrize("text", ["Turn off bedroom aircon, what timers do I have?", "Change the bedroom to 23",
+                                  "hold on, turn off the bedroom", "restart the aircon"])
+def test_later_writes_need_the_verb_for_them(text):
+    for tool, gate in lp.LATER_WRITES.items():
+        if tool != "delete_schedule":
+            assert not gate.search(text), (tool, text)
+    assert lp.LATER_WRITES["add_schedule"].search("off bedroom and add a timer to on office at 7")
+    assert lp.LATER_WRITES["edit_schedule"].search("off bedroom and move the 7am timer to 8")
+
+
+async def test_a_repeated_or_corrected_join_reads_right():
+    off = {"device": "bedroom-aircon", "power": False}
+    first = completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")])
+    message_text.set("off bedroom and remove the timers")
+    # A refused id, then the right one: the card has it and says nothing is missing
+    srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "tgone"}, "c")]),
+                      completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "d")]), completion("-")])
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"] and out.text == ""
+    # The same delete twice: one line, and "ready" both times
+    srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]),
+                      completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "d")]), completion("-")])
+    out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
+    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"] and out.text == ""
+    assert "ready" in [m for m in srv.requests[3]["messages"] if m["role"] == "tool"][-1]["content"]

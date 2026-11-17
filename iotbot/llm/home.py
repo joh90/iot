@@ -436,8 +436,8 @@ class HomeTools:
         """Someone else's schedule on your card says whose it is ("remove all my timers")."""
         if s.created_by == actor.user_id:
             return ""
-        name = self.ctx.users.name_of(s.created_by) if hasattr(getattr(self.ctx, "users", None), "name_of") else None
-        return f" (made by {name or 'someone else'})"
+        name = self.ctx.users.name_of(s.created_by)
+        return f" (made by {name if name != str(s.created_by) else 'someone else'})"   # a removed user: no raw id
 
     def _sched_version(self, sid: str | None):
         if sid is None:

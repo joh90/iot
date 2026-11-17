@@ -175,7 +175,7 @@ class Chat:
     exchanges: deque[list[dict[str, Any]]] = field(default_factory=lambda: deque(maxlen=CONTEXT_EXCHANGES))
     last: float = 0.0
     asked: float = 0.0                          # when the message being answered was sent: its history time
-    questions: list[int] = field(default_factory=list)   # id() of exchanges asked in code ("Which aircon?")
+    questions: list[list[dict[str, Any]]] = field(default_factory=list)   # exchanges asked in code ("Which aircon?")
 
 
 @dataclass(slots=True)
@@ -273,7 +273,7 @@ class Assistant:
         """After a made-up claim: the answer before it is what the model was copying (live
         2026-11-15, six times), so it goes too. A card is never dropped (its taps rewrite it)."""
         chat = self.chats.get(user_id)
-        if chat and chat.exchanges and id(chat.exchanges[-1]) not in chat.questions \
+        if chat and chat.exchanges and not any(chat.exchanges[-1] is q for q in chat.questions) \
                 and not any(str(c.get("id", "")).startswith("card")
                             for m in chat.exchanges[-1] for c in m.get("tool_calls") or []):
             chat.exchanges.pop()
@@ -347,8 +347,8 @@ class Assistant:
             self._mark_sent(uid)
             self.remember(uid, text, ask)
             chat = self.chats[uid]
-            chat.questions = [*[q for q in chat.questions if any(id(e) == q for e in chat.exchanges)],
-                              id(chat.exchanges[-1])]     # kept when a claim drops the answer after it
+            chat.questions = [*[q for q in chat.questions if any(e is q for e in chat.exchanges)],
+                              chat.exchanges[-1]]         # kept when a claim drops the answer after it
             return Outcome("asked", ask)
         wait = self._rate_wait(uid)
         if wait:

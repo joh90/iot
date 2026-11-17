@@ -43,7 +43,7 @@ CLAIM_RE = re.compile(
 FIRST_PERSON_RE = re.compile(
     r"\b(i|i've|i have|i just|we)( also| just| now| already| successfully| gone ahead and)? (turned|switched|set|"
     r"changed|removed|deleted|added|paused|resumed|cancelled|executed)\b", re.IGNORECASE)
-CONDITION_RE = re.compile(r"\?\s*$|\b(if|when|should|shall|can|could|would|do|does|whether)\b", re.IGNORECASE)
+CONDITION_RE = re.compile(r"\?\s*$|^\W*(if|when|should|shall|can|could|would|do|does|whether)\b", re.IGNORECASE)
 # A promise to stop asking (live 2026-11-10: "I will execute commands immediately without asking
 # for confirmation"): only code decides when a card shows
 PROMISE_RE = re.compile(r"\b(i will|i'll|from now on|okay, from now on)\b.{0,60}\b(without (asking|confirm\w*|a card)|"
@@ -79,10 +79,13 @@ MISSING_RE = re.compile(r"\b(no|not|none|isn't|aren't|doesn't|don't|cannot|can't
 # first, so it always comes a round after the set_ac). Never another set_ac
 LATER_WRITES = {
     "delete_schedule": re.compile(r"\b(delete|remove|cancel|clear|get rid)\b", re.IGNORECASE),
-    "pause_schedule": re.compile(r"\b(pause|hold)\b", re.IGNORECASE),
-    "resume_schedule": re.compile(r"\b(resume|unpause|restart)\b", re.IGNORECASE),
-    "add_schedule": re.compile(r"\b(timers?|schedules?|at \d|in \d+)\b", re.IGNORECASE),
-    "edit_schedule": re.compile(r"\b(timers?|schedules?|change|move|update|at \d)\b", re.IGNORECASE),
+    "pause_schedule": re.compile(r"\bpause\b", re.IGNORECASE),
+    "resume_schedule": re.compile(r"\b(resume|unpause)\b", re.IGNORECASE),
+    "add_schedule": re.compile(r"\b(add|create|make|new|set( up)?|schedule)\b.{0,30}\b(timers?|schedules?)\b|"
+                               r"\b(timers?|schedules?)\b.{0,15}\b(at|in|for)\s+\d|"
+                               r"\bin \d+\s*(min|mins|minutes|h|hrs?|hours?)\b", re.IGNORECASE),
+    "edit_schedule": re.compile(r"\b(change|move|edit|update|shift|push|delay)\b.{0,25}\b(timers?|schedules?)\b",
+                                re.IGNORECASE),
 }
 READY = ("ready: shown to the person after your reply, for them to confirm. Do not call it again. If the "
          "message also asks for another change (e.g. remove a timer), call that tool now and it joins this "
@@ -188,7 +191,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
     already: list[str] = []                      # refused because nothing would change: the card says so
     pending: list[Action] | None = None          # a ready card, waiting for the model's answer to the rest
     had_reads = False                            # a check was looked up in an earlier round
-    not_on: list[str] = []                       # later writes that could not join the card: said below it
+    not_on: dict[tuple[str, str], str] = {}      # later writes that could not join the card: said below it
     told = False                                 # a write was refused with a reason ("bed is off"): state came from code
 
     def card(actions: list[Action], text: str | None) -> None:
@@ -203,7 +206,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
         out.text = note or ("Left out: " + "; ".join(already) + "." if already else "")
         if not_on:
             out.text = (out.text + "\n" if out.text else "") + (
-                "Not on this card: " + "; ".join(not_on) + ". Ask for it again after this.")
+                "Not on this card: " + "; ".join(dict.fromkeys(not_on.values())) + ". Ask for it again after this.")
 
     for _ in range(MAX_TOOL_ROUNDS + 1):
         reply = await llm.chat(messages, specs)
@@ -261,26 +264,37 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                     c.error = "the card is already made; do not call write tools again, answer in text"
             joining, writes = [c for c in writes if not c.error], []
             if joining and not bad:
+                promised = {(a.tool.name, _key(a.args)) for a in pending}
                 new: list[Action] = []
                 for c in joining:
                     a = Action(c.tool, c.args)                     # type: ignore[arg-type]
-                    if a not in new and a not in pending:
-                        new.append(a)
-                refused = ({("", ""): f"a card holds at most {MAX_WRITES} changes"}
-                           if len(pending) + len(new) > MAX_WRITES else
-                           await _prepare(new, already, {k for a in pending for p in _lines(a)
-                                                         if (k := getattr(p, "key", None)) is not None}))
-                if refused:
+                    if (c.tool.name, _key(c.args)) not in promised and a not in new:   # type: ignore[union-attr]
+                        new.append(a)                              # a repeat of a card line just gets "ready"
+                no_op: set[tuple[str, str]] = set()
+                refused = await _prepare(new, already, {k for a in pending for p in _lines(a)
+                                                        if (k := getattr(p, "key", None)) is not None}, no_op)
+                hard = {k: v for k, v in refused.items() if k not in no_op}   # "already paused" is on Left out
+                lines = sum(len(_lines(a)) for a in pending + new if (a.tool.name, _key(a.args)) not in refused)
+                if not hard and lines > MAX_WRITES:
+                    hard = {(a.tool.name, _key(a.args)): f"a card holds at most {MAX_WRITES} changes" for a in new}
+                if hard:
                     # All or none: a card that holds half of a later request would read as all of it
-                    why = next(iter(refused.values()))
                     for c in joining:
-                        c.error = refused.get((c.tool.name, _key(c.args)),  # type: ignore[union-attr]
-                                              "not added: another change in this round could not be made")
-                    not_on.append(why)
-                    card(pending, None)
+                        k = (c.tool.name, _key(c.args))            # type: ignore[union-attr]
+                        c.error = hard.get(k) or refused.get(k) or (
+                            None if k in promised else "not added: another change in this round could not be made")
+                    for k, why in hard.items():
+                        not_on[k] = why
                 else:
-                    pending, ready = pending + new, True
-                    card(pending, None)
+                    for c in joining:
+                        k = (c.tool.name, _key(c.args))            # type: ignore[union-attr]
+                        if k in refused:
+                            c.error = refused[k]
+                    pending = pending + [a for a in new if (a.tool.name, _key(a.args)) not in refused]
+                    ready = True
+                    for k in [k for k in not_on if k[0] in {c.tool.name for c in joining}]:  # type: ignore[union-attr]
+                        not_on.pop(k)                              # asked again, and it joined
+                card(pending, None)
             out.tool_calls = out.tool_calls[:-len(checked)] + [
                 (c.tool.name if c.tool else "?") + ("!" if c.error else "") for c in checked]
         if writes and not bad:
@@ -340,7 +354,7 @@ def _lines(a: Action) -> list[Any]:
 
 
 async def _prepare(actions: list[Action], already: list[str] | None = None,
-                   taken: set[str] | None = None) -> dict[tuple[str, str], str]:
+                   taken: set[str] | None = None, no_op: set[tuple[str, str]] | None = None) -> dict[tuple[str, str], str]:
     """Build every card line. Returns {(tool, args): reason} for the calls that cannot be done;
     the reasons for "nothing to change" also go into `already`. `taken`: what the card already
     changes (a later round joining it)."""
@@ -359,8 +373,11 @@ async def _prepare(actions: list[Action], already: list[str] | None = None,
             names |= mine
         except ArgError as e:
             refused[(a.tool.name, _key(a.args))] = str(e)
-            if isinstance(e, AlreadyError) and already is not None and e.short not in already:
-                already.append(e.short)                          # the short form: it goes on the card
+            if isinstance(e, AlreadyError):
+                if already is not None and e.short not in already:
+                    already.append(e.short)                      # the short form: it goes on the card
+                if no_op is not None:
+                    no_op.add((a.tool.name, _key(a.args)))
         except Exception as e:  # noqa: BLE001 -- a prepare bug is a refused call, not a crashed turn
             logger.exception("Preparing %s failed", a.tool.name)
             refused[(a.tool.name, _key(a.args))] = f"could not prepare this ({e.__class__.__name__})"
