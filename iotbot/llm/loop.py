@@ -56,6 +56,10 @@ PROMISE_RE = re.compile(r"\b(i will|i'll|from now on|okay, from now on)\b.{0,60}
 # only when no tool ran this turn (live 2026-11-15: six of these, nothing was sent)
 STATE_CLAIM_RE = re.compile(r"\b(is|are) now (on|off|running|cooling|set to)\b|"
                             r"\b(was|were) (just )?(turned|switched) (on|off)\b", re.IGNORECASE)
+# "Remember X" answered with "Got it, I'll use X" and no remember call: nothing was saved (live
+# 2026-11-17 20:30, twice). Checked only when the message asks to remember and no write ran
+MEMORY_ASK_RE = re.compile(r"^\W*(pls |please |can you |could you )?(remember|note|save|keep in mind)\b", re.IGNORECASE)
+ACK_RE = re.compile(r"\b(got it|noted|understood|will do|i'll|i will|i've|i have|from now on)\b", re.IGNORECASE)
 DEVICE_WORD_RE = re.compile(r"\b(aircons?|air[- ]?cons?|a/?c|acs|it|they|both)\b", re.IGNORECASE)
 # A sentence that is only a result: "Bedroom set to 23." / "Okay, both rooms turned off." A diary
 # line goes on ("... at 23:00 by the schedule") and a state answer says "is set to": neither matches
@@ -235,7 +239,8 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                 out.tool_calls.append("claim!")
                 out.kind, out.error = "failed", "promise"
                 return
-            if claims(reply.content, tools_ran=had_reads or told):
+            if claims(reply.content, tools_ran=had_reads or told) or (
+                    MEMORY_ASK_RE.search(message_text.get()) and ACK_RE.search(reply.content)):
                 # Text that announces an action or a card, without the tool call: no card exists.
                 # No retry: at temperature 0 the model repeats itself (live 2 of 2, eval 0 of 18 rescued)
                 out.tool_calls.append("claim!")

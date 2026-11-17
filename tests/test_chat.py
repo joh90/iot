@@ -480,3 +480,16 @@ async def test_a_plain_change_shows_no_note_but_a_mixed_one_does():
         a.add_tools(lambda actor: [SET_AC])
         o = await a.handle(ALICE, text)
         assert (o.kind, o.text) == ("actions", note), text
+
+
+async def test_remember_answered_without_saving_is_a_claim():
+    # Live 2026-11-17 20:30: "Remember bedroom is bedroom aircon" -> "Got it. I'll use ..." and nothing saved
+    for said in ("Got it. I'll use \"bedroom\" to refer to the bedroom aircon.",
+                 "Got it. I'll remember that \"office\" refers to the office aircon."):
+        a, _ = make_assistant([completion(said)])
+        o = await a.handle(ALICE, "Remember bedroom is bedroom aircon")
+        assert (o.kind, o.turn.error) == ("failed", "fake_card"), said
+    a, _ = make_assistant([completion("I already know bedroom means the bedroom aircon, so there is nothing to save.")])
+    assert (await a.handle(ALICE, "Remember bedroom is bedroom aircon")).kind == "answer"
+    a, _ = make_assistant([completion("Got it.")])
+    assert (await a.handle(ALICE, "what do you remember about me?")).kind == "answer"
