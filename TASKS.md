@@ -118,14 +118,29 @@ Design: PLAN.md "Phase 8 decisions". No 24h test; offers on from the start (user
 | #   | Status | Task                                                                                                      |
 |-----|--------|-----------------------------------------------------------------------------------------------------------|
 | 8.0 | [-]    | 24h detection test: skipped by the user; tune from presence_events after ship                             |
-| 8.1 | [~]    | `presence/net.py`: TCP-connect probe (refused/accepted/timeout = there), ARP table, sweep, fake LAN tests |
-| 8.2 | [~]    | `/phone`: setup by Wi-Fi toggle, confirm, remove, arrival/departure toggles, delete my history            |
-| 8.3 | [~]    | `presence/tracker.py`: home/away (15 min), arrival after 30+ min, restart = unknown, IP moves by sweep    |
-| 8.4 | [~]    | On-since per aircon in ac_state.json (kept by changes while on)                                           |
-| 8.5 | [~]    | Arrival offer: per-aircon buttons, last state powered on, Undo, expiry 30 min                             |
-| 8.6 | [~]    | Departure offer: everyone set up, first tap wins, copies redrawn, silent 23-07, closes on return          |
-| 8.7 | [~]    | `/status` "Home: N of M phones"; chat home state gets people_home (counts) and on_since                   |
-| 8.8 | [~]    | Tests (fake LAN/clock, no IR), README, reviewer; ship on user OK                                          |
+| 8.1 | [x]    | `presence/net.py`: TCP-connect probe (refused/accepted/timeout = there), ARP table, sweep, fake LAN tests |
+| 8.2 | [x]    | `/phone`: setup by Wi-Fi toggle, confirm, remove, arrival/departure toggles, delete my history            |
+| 8.3 | [x]    | `presence/tracker.py`: home/away (15 min), arrival after 30+ min, restart = unknown, IP moves by sweep    |
+| 8.4 | [x]    | On-since per aircon in ac_state.json (kept by changes while on)                                           |
+| 8.5 | [x]    | Arrival offer: per-aircon buttons, last state powered on, Undo, expiry 30 min                             |
+| 8.6 | [x]    | Departure offer: everyone set up, first tap wins, copies redrawn, silent 23-07, closes on return          |
+| 8.7 | [x]    | `/status` "Home: N of M phones"; chat home state gets people_home (counts) and on_since                   |
+| 8.8 | [x]    | Tests (fake LAN/clock, no IR), README, reviewer; shipped 2026-10-26 (5e28261)                             |
+
+## Phase 9 -- Fixes from live use (planned 2026-11-17; telemetry review + replay eval)
+
+| #    | Status | Task                                                                                                      |
+|------|--------|-----------------------------------------------------------------------------------------------------------|
+| 9.1  | [~]    | Prompt: short on/off messages are orders; several changes get a call each; card waits for a second change |
+| 9.2  | [~]    | Claim guard: first-person claims always, state claims when no tool ran; promises; "may have been" is fine |
+| 9.3  | [~]    | No retry after a claim: "Nothing was changed"; already-set text points to /keyboard                      |
+| 9.4  | [~]    | History: [HH:MM] times, reads kept as calls, a claim drops the answer it copied (never a card/question)   |
+| 9.5  | [~]    | Later timer delete/pause/add joins the ready card when the message asks; "(made by X)"; "Could not add"  |
+| 9.6  | [~]    | Timed setting change on an aircon that will be off warns; "powerful on"; no never-off note on timers     |
+| 9.7  | [~]    | No-card notes (skip_card) + set_ac_now: the LLM decides from the person's own note; result + Undo        |
+| 9.7e | [x]    | Eval of 9.7: 8/9 "now" ran; 2 of 4 orders without "now" also ran without a card; user decides           |
+| 9.8  | [~]    | Logging: polling errors one line, build in startup line, 6 h heartbeat                                    |
+| 9.9  | [x]    | Philips TV on/off added to Later                                                                          |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 
@@ -137,4 +152,6 @@ Design: PLAN.md "Phase 8 decisions". No 24h test; offers on from the start (user
 | 4 | [~]    | LLM: planned 2026-10-13, building (see Phase 4 table above)                                   |
 | 7 | [ ]    | Weekly report + hours-run + kWh/SGD; habit nudges ('turn it on?', live); daily brief (opt-in) |
 | 5 | [-]    | Dropped 2026-10-20 by the user: run-time nudges and pre-schedule heads-ups (too noisy)        |
-| 8 | [~]    | Presence: built 2026-10-23 (see Phase 8 table above); ship on user OK                         |
+| 8 | [x]    | Presence: shipped 2026-10-26 (see Phase 8 table above)                                        |
+| 9 | [~]    | Fixes from live use: built 2026-11-17 (see Phase 9 table above); ship on user OK              |
+| T | [ ]    | Philips TV on/off (asked 2026-11-17): check network API vs IR; aircon-only paths stay so       |

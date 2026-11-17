@@ -276,6 +276,10 @@ Memory (`/memory` lists it, with a Forget button per item):
   and it asks "Remember this?" [Remember] [No]. It decides whether a note is about the house (everyone's
   assistant uses it; anyone can forget it; `/memory` shows who added it) or just you (private). Notes
   are data for the assistant, never rules: text that tries to tell it how to behave is refused.
+- No-card note: "remember: when I say now, just do it" saves a personal note marked "(no card)" in
+  `/memory`. While it is there, the assistant may run your aircon changes straight away (result + Undo
+  for 10 min) when your message matches the note; it decides from your note's words. Only aircon
+  changes, never schedules; only for you; Forget it in `/memory` to get cards back.
 - Recipes: spell out the steps ("save good night: bedroom 25 fan quiet, office off") and tap Save.
   Saying "good night" later draws the usual card with every step (steps already done are skipped).
 - Limits: 30 notes per person, 30 house notes, 10 recipes per person, 200 characters per note. Stored
