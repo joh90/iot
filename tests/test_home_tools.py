@@ -39,6 +39,28 @@ async def send(home, device, **state):
     assert r.ok
 
 
+def test_timer_date_is_only_for_a_later_day(home):
+    # live 2026-11-20 10:40: "at 1930 today" was sent with tomorrow's date; at alone already means today
+    t = home.tools["add_schedule"]
+    date = t.parameters["properties"]["date"]["description"]
+    assert "only for a later day" in date and "Leave out for today" in date
+    assert "a day name alone" in t.description and "Repeating: at + days, only when the person said a repeat" \
+        in t.description
+    # an edit keeps the day that is not mentioned: moving a timer to today needs the date
+    edit = home.tools["edit_schedule"].parameters["properties"]["date"]["description"]
+    assert "timers only" in edit and "left out, the day stays" in edit
+
+
+async def test_a_timer_at_a_time_without_a_date_is_the_next_time_it_comes(home):
+    # what the date description promises the model: at alone is today if still ahead, else tomorrow
+    from datetime import datetime
+
+    freeze(home, datetime(2026, 11, 20, 10, 40, tzinfo=home.h.tz))
+    later = await prep(home, "add_schedule", {"device": "bed_ac", "action": "on", "at": "19:30"})
+    passed = await prep(home, "add_schedule", {"device": "bed_ac", "action": "on", "at": "09:00"})
+    assert "today 19:30" in later.line and "tomorrow 09:00" in passed.line
+
+
 def test_only_managed_aircons_and_clean_schemas(home):
     assert home.h.acs() == ["bed_ac", "office_ac"]                  # old_ac (daikin) is not managed
     for t in home.tools.values():

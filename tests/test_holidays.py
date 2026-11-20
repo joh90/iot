@@ -135,8 +135,8 @@ def test_stamp_marks_holidays_and_eves(tmp_path):
     clock = lambda: datetime(2026, 11, 6, 20, 0, tzinfo=SGT).timestamp()
     a = Assistant(LlmClient("http://llm", 1), list, "Asia/Singapore", clock=clock, day_label=h.label)
     stamp = a.stamp(ALICE, "hi")
-    assert "Sun 08 Nov (PH: Deepavali), Mon 09 Nov (PH: Deepavali (Observed))" in stamp
-    assert stamp.startswith("[From Alice, Fri 06 Nov 2026 20:00; next days:")
+    assert "Sun 2026-11-08 (PH: Deepavali), Mon 2026-11-09 (PH: Deepavali (Observed))" in stamp
+    assert stamp.startswith("[From Alice, today Fri 2026-11-06 20:00; next days: Sat 2026-11-07")
 
 
 def test_context_has_holidays_and_the_tool(tmp_path):

@@ -160,7 +160,9 @@ def which_device(text: str, devices: list[tuple[str, str]], before: str = "") ->
         if name not in names:
             names.append(name)
     return f"Which aircon: {', '.join(names[:-1])} or {names[-1]}?"
-STAMP_RE = re.compile(r"^(\[From [^\]\n]{1,300}\]\s*(\[[^\]]*\]\s*)?|\[\d\d:\d\d\]\s*)")
+# 800: a stamp with a holiday label on every day (CNY week, a year whose list is not known yet) runs
+# past 400 chars
+STAMP_RE = re.compile(r"^(\[From [^\]\n]{1,800}\]\s*(\[[^\]]*\]\s*)?|\[\d\d:\d\d\]\s*)")
 # History keeps each message with the time it was sent ("[08:47] on office"): the model can tell
 # an old answer from a fresh one (live 2026-11-15 it repeated a 08:47 answer word for word)
 HHMM_RE = re.compile(r"^\[\d\d:\d\d\] ")
@@ -238,8 +240,10 @@ class Assistant:
         mine = self.memory.person_prompt(actor.user_id, actor.name) if self.memory else ""
         # The next days spelled out: the model gets "next Monday" wrong when it counts itself.
         # Holidays and eves are marked, so a card can mention one (information only)
-        week = ", ".join(self._day(now + timedelta(days=i), "%a %d %b") for i in range(1, 8))
-        head = (f"[From {actor.name}, {self._day(now, '%a %d %b %Y %H:%M')}; next days: {week}]"
+        # Dates as YYYY-MM-DD, the form add_schedule takes, so a date is copied, never converted (live
+        # 2026-11-20 10:40: "at 1930 today" got date 2026-11-21 from "Fri 20 Nov 2026; next days: Sat 21 Nov")
+        week = ", ".join(self._day(now + timedelta(days=i), "%a %Y-%m-%d") for i in range(1, 8))
+        head = (f"[From {actor.name}, today {self._day(now, '%a %Y-%m-%d %H:%M')}; next days: {week}]"
                 + (f"\n[{mine}]" if mine else ""))
         return f"{head}\n{text}"
 

@@ -27,7 +27,12 @@ if TYPE_CHECKING:
     from iotbot.context import AppContext
 
 TIME = {"type": "string", "pattern": "[0-2][0-9]:[0-5][0-9]", "description": "24h local time HH:MM"}
-DATE = {"type": "string", "pattern": "20[0-9][0-9]-[01][0-9]-[0-3][0-9]", "description": "YYYY-MM-DD"}
+DATE = {"type": "string", "pattern": "20[0-9][0-9]-[01][0-9]-[0-3][0-9]",
+        "description": "YYYY-MM-DD, only for a later day. Leave out for today or tonight: at alone means the "
+                       "next time that clock time comes"}
+# edit_schedule keeps the day that is not mentioned, so a move to today needs today's date
+EDIT_DATE = {**DATE, "description": "YYYY-MM-DD, timers only, only when the day changes (today too); left out, "
+                                    "the day stays"}
 SID = {"type": "string", "pattern": "[A-Za-z0-9_-]{1,40}", "description": "schedule id from list_schedules"}
 SETTINGS = {
     "temp": {"type": "integer", "minimum": TEMP_MIN, "maximum": TEMP_MAX},
@@ -88,8 +93,10 @@ class HomeTools:
                      "temp_change": {"type": "integer", "minimum": -5, "maximum": 5}, **SETTINGS}},
                  write=True, prepare=lambda a: self.prepare_ac(actor, a)),
             Tool("add_schedule", "New timer or repeating schedule. Timer (the default): in_minutes, or at "
-                                 "(+ date). Repeating: at + days, only when the person said a repeat (every "
-                                 "day, weekdays, Mondays). action set = change settings of an aircon that is on, "
+                                 "(+ date only for a later day); a day name alone ('on Sunday', 'next Monday') "
+                                 "is a timer on that date. Repeating: at + days, only when the person said a "
+                                 "repeat (every day, weekdays, Mondays). action set = change settings of an "
+                                 "aircon that is on, "
                                  "without on/off; for a setting at a time on an aircon that is off or may be "
                                  "off, use action on with the setting. Give "
                                  "temp, fan, vane, powerful ONLY if the person said them: left out, 'on' uses "
@@ -104,7 +111,7 @@ class HomeTools:
             Tool("edit_schedule", "Change an existing schedule or timer. Give only what changes; label only "
                                   "when the person asks to rename it.",
                  {"type": "object", "required": ["schedule_id"], "properties": {
-                     "schedule_id": SID, "at": TIME, "date": DATE,
+                     "schedule_id": SID, "at": TIME, "date": EDIT_DATE,
                      "days": {"type": "array", "minItems": 1, "maxItems": 7,
                               "items": {"type": "string", "enum": list(DAYS)}},
                      "action": {"type": "string", "enum": ["on", "off", "set"]},

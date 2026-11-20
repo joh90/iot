@@ -141,6 +141,7 @@ Design: PLAN.md "Phase 8 decisions". No 24h test; offers on from the start (user
 | 9.7e | [x]    | Eval of 9.7: 8/9 "now" ran; 2 of 4 orders without "now" also ran without a card; user decides           |
 | 9.8  | [~]    | Logging: polling errors one line, build in startup line, 6 h heartbeat                                    |
 | 9.9  | [x]    | Philips TV on/off added to Later                                                                          |
+| 9.10 | [~]    | Timer dates: stamp dates as YYYY-MM-DD with "today"; date only for a later day; "on Sunday" is one-off    |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 

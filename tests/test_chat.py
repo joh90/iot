@@ -48,9 +48,10 @@ async def test_prompt_is_stable_and_the_new_message_says_who_and_when():
     first, second = srv.requests[0]["messages"], srv.requests[1]["messages"]
     assert first[0] == second[0]                                  # cacheable prefix
     assert first[0]["content"].startswith(asst.RULES) and "- bed_ac: aircon in room 'bedroom'" in first[0]["content"]
-    week = "Sat 16 Jan, Sun 17 Jan, Mon 18 Jan, Tue 19 Jan, Wed 20 Jan, Thu 21 Jan, Fri 22 Jan"
-    assert first[-1]["content"] == f"[From Alice, Fri 15 Jan 2027 16:00; next days: {week}]\nhello"
-    assert second[-1]["content"] == f"[From Bob, Fri 15 Jan 2027 17:00; next days: {week}]\nhey"
+    week = ("Sat 2027-01-16, Sun 2027-01-17, Mon 2027-01-18, Tue 2027-01-19, Wed 2027-01-20, Thu 2027-01-21, "
+            "Fri 2027-01-22")
+    assert first[-1]["content"] == f"[From Alice, today Fri 2027-01-15 16:00; next days: {week}]\nhello"
+    assert second[-1]["content"] == f"[From Bob, today Fri 2027-01-15 17:00; next days: {week}]\nhey"
     assert srv.requests[0]["tools"][0]["function"]["name"] == "get_home_state"
 
 
@@ -354,6 +355,9 @@ def test_answers_lose_echoed_stamps_and_markdown():
     assert asst.clean_answer("[From Alice, Wed 14 Oct 2026 20:00]\nWhich room?") == "Which room?"
     assert asst.clean_answer("[From Alice, Wed 14 Oct 2026 20:00; next days: Thu 15 Oct, Fri 16 Oct]\n"
                              "[Alice's notes: x]\nWhich room?") == "Which room?"
+    week = ", ".join(f"{d} 2027-02-0{i} (PH list for 2028 not known yet)" for i, d in enumerate("Wed Thu Fri".split(), 3))
+    echo = f"[From Alexandra-Johnson, today Tue 2027-02-02 08:00; next days: {week}, {week}]\n[Alexandra's notes: x]\nOk."
+    assert len(echo) > 300 and asst.clean_answer(echo) == "Ok."         # current format, past the old 300 cap
     assert asst.clean_answer("Two:\n* **Office**: off\n  - bed on") == "Two:\n- Office: off\n- bed on"
     assert asst.clean_answer("Two:\n\n- a") == "Two:\n\n- a"                   # blank lines stay
     assert asst.clean_answer("[08:47] The office aircon is off.") == "The office aircon is off."
