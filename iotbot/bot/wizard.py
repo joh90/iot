@@ -267,8 +267,8 @@ class Wizard:
                         _btn("Change temp", d.id, "act", "adj")]
                 return Screen(f"{h(d.device)}: do what?", InlineKeyboardMarkup([opts, nav]))
             dev = self.ctx.devices.get(d.device)
-            feats = [_btn(f.label, d.id, "cap", f.key) for f in list(dev.features.values())[:40]
-                     if schedulable_key(dev, f.key)]
+            feats = [_btn(f.label, d.id, "cap", f.key) for f in dev.features.values()
+                     if schedulable_key(dev, f.key)][:40]
             return Screen(f"{h(d.device)}: which button?", InlineKeyboardMarkup(_rows(feats, 2) + [nav]))
         if step == "pick":
             st = AcState.from_dict(d.action["state"]) if d.action and d.action.get("kind") == "on" \

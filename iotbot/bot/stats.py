@@ -122,10 +122,10 @@ def summary(turns: Iterable[dict[str, Any]], events: Iterable[dict[str, Any]], r
         for e in gen:
             by_dev[e["device"]].append(e)
         for dev, es in sorted(by_dev.items()):
-            how = Counter({"button": "buttons", "slash": "buttons", "llm": "chat", "scheduler": "timers"}.get(
+            how = Counter({"button": "buttons", "slash": "buttons", "llm": "chat", "scheduler": "schedules"}.get(
                 str(e.get("surface")), "other") for e in es)
             bad = sum(e.get("ok") is False for e in es)
-            lines.append(f"- {h(dev)}: {len(es)} ({', '.join(f'{n} {w}' for w, n in how.most_common())})"
+            lines.append(f"- {h(dev)}: {len(es)} ({', '.join(f'{w} {n}' for w, n in how.most_common())})"
                          + (f", {bad} failed" if bad else ""))
 
     lines += ["", b("Chat assistant")] + chat_lines(turns)

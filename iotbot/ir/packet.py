@@ -31,7 +31,7 @@ def to_packet(pulses: list[int] | list[float], tick_us: float = TICK_US, repeat:
         raise PacketError(f"repeat {repeat} is out of range")
     body = bytearray()
     for us in pulses:
-        if not math.isfinite(us):
+        if not math.isfinite(us) or us < 0:
             raise PacketError(f"pulse {us} is not a duration")
         ticks = max(1, round(us / tick_us))
         if ticks > 0xFFFF:

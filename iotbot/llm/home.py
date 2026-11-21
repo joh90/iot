@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from iotbot.ac.state import FANS, TEMP_MAX, TEMP_MIN, VANES, AcStateError
 from iotbot.devices.model import chat_tv
 from iotbot.llm.cards import Done, Prepared
-from iotbot.llm.tools import AlreadyError, ArgError, Tool, message_text
+from iotbot.llm.tools import ORDER_ALL_RE, AlreadyError, ArgError, Tool, message_text, note_defines
 from iotbot.result import Actor, Result
 from iotbot.schedule import text as tx
 from iotbot.schedule.model import DAYS, Schedule
@@ -47,9 +47,7 @@ STATE_NOTE = "This is what the bot last sent. Someone may have used the physical
 # A TV is only pressed when the message names one, everything/all, or a note maps the words to it
 # (decided 2026-11-22: "off bedroom" must never switch the TV off by guess)
 TV_WORD_RE = re.compile(r"\b(tvs?|television|telly)\b", re.IGNORECASE)
-# "everything" / "all" in an order ("all off", "turn all off"); never "all the aircons" or "that's all"
-ALL_RE = re.compile(r"\beverything\b|\b(turn|switch|off|on)\s+(it\s+)?all\b(?!\s+(the\s+)?(aircons?|air[- ]?cons?|"
-                    r"acs?|a/?c)\b)|\ball\s+(off|on)\b", re.IGNORECASE)
+ALL_RE = ORDER_ALL_RE
 KIND_WORDS = {"tv", "tvs", "television", "telly", "aircon", "aircons", "air", "con", "cons", "acs"}
 
 
@@ -234,7 +232,21 @@ class HomeTools:
             d + " " + self.ctx.registry.devices[d].room).lower()) if len(w) > 2} - KIND_WORDS
         words = set(re.findall(r"[a-z0-9]+", text.lower())) & names
         notes = [f["text"] for f in memory.facts(actor.user_id)] + [f["text"] for f in memory.house()]
-        return any(TV_WORD_RE.search(n) and words & set(re.findall(r"[a-z0-9]+", n.lower())) for n in notes)
+        return any(note_defines(w, [n for n in notes if TV_WORD_RE.search(n)]) for w in words)
+
+    def _right_tv(self, d: str, text: str) -> bool:
+        """With a room named for a TV ("off bedroom and office tv"), the TV is in a named room; with
+        2+ TVs, a bare "the tv" is not enough (the model must ask which)."""
+        tvs = self.tvs()
+        said = set(re.findall(r"[a-z0-9]+", text.lower()))
+
+        def rooms(t: str) -> set[str]:
+            return {w for w in re.findall(r"[a-z0-9]+", (t + " " + self.ctx.registry.devices[t].room).lower())
+                    if len(w) > 2} - KIND_WORDS
+        named = [t for t in tvs if rooms(t) & said]
+        if named:
+            return d in named
+        return len(tvs) == 1 or bool(ALL_RE.search(text))
 
     async def prepare_button(self, actor: Actor, args: dict[str, Any], named: bool = False) -> Prepared:
         """A TV (generated IR, discrete power codes): power on or off, nothing else. `named`: the
@@ -245,9 +257,12 @@ class HomeTools:
             raise ArgError(f"{d} can only be switched on or off; it has no {', '.join(extra)}")
         if "power" not in args:
             raise ArgError("say power true (on) or false (off)")
-        if not named and not self._tv_named(actor, message_text.get()):
-            raise ArgError(f"the message does not name the TV, so {d} is not changed; if it means the room's "
-                           "aircon, change that, else ask which device they mean")
+        said = message_text.get()
+        if not named and not self._tv_named(actor, said):
+            raise ArgError(f"the message does not name the TV, so {d} is not changed; if it means another "
+                           "device listed for that room, use that one, else ask which device they mean")
+        if not named and TV_WORD_RE.search(said) and not self._right_tv(d, said):
+            raise ArgError(f"the message does not say which TV; {d} is not changed: ask which TV they mean")
         power = bool(args["power"])
         key = "power_on" if power else "power_off"
         last = self.ctx.devices.last_power.get(d)
@@ -376,7 +391,7 @@ class HomeTools:
                 raise ArgError(f"{device} has no settings: use action on or off")
             if kind is not None and actor is not None and not self._tv_named(actor, message_text.get()):
                 raise ArgError(f"the message does not name the TV, so no {device} timer is made; if it means "
-                               "the room's aircon, use that, else ask which device they mean")
+                               "another device listed for that room, use that one, else ask which device they mean")
             return None if kind is None else {"kind": "off"} if kind == "off" else {"kind": "capture", "key": "power_on"}
         kind = args.get("action")
         cur_kind = cur.action.kind if cur else None

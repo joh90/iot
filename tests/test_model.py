@@ -171,6 +171,16 @@ def test_malformed_devices_never_raise(cfg):
 
 # ---- Phase 10: generated IR from a codeset ------------------------------------------------------
 
+def _unverified():
+    from iotbot.ir.codesets import CODESETS
+    if CODESETS["philips-rc6"].verified:
+        return []
+    return ["device 'bed_tv': codeset philips-rc6 is not yet checked on a real device; its power codes are a guess"]
+
+
+UNVERIFIED = _unverified()
+
+
 def _tv_cfg(**entry):
     return {"bed": {"mac_address": "78:0f:77:1a:bc:de", "broadlink_type": "rmmini", "devices": [
         {"type": 2, "id": "bed_tv", "brand": "philips", **entry}]}}
@@ -180,7 +190,7 @@ def test_codeset_tv_builds_without_commands_json_and_without_warnings():
     from iotbot.ir import codesets, packet, rc6
 
     reg = load_registry(_tv_cfg(codeset="philips-rc6"), {})
-    assert reg.warnings == []
+    assert reg.warnings == UNVERIFIED                       # until the real-TV test sets verified
     tv = reg.devices["bed_tv"]
     assert tv.codeset == "philips-rc6" and tv.type_name == "tv" and tv.kind == "ir"
     assert list(tv.features) == ["power_on", "power_off"]
@@ -205,7 +215,15 @@ def test_codeset_entries_that_are_skipped_with_a_warning():
 
 def test_codeset_name_is_case_insensitive_and_brand_is_free_text():
     reg = load_registry(_tv_cfg(codeset="Philips-RC6", brand="whatever"), {})
-    assert reg.warnings == [] and reg.devices["bed_tv"].codeset == "philips-rc6"
+    assert reg.warnings == UNVERIFIED and reg.devices["bed_tv"].codeset == "philips-rc6"
+
+
+def test_a_verified_codeset_loads_without_warnings(monkeypatch):
+    from dataclasses import replace
+    from iotbot.ir.codesets import CODESETS
+
+    monkeypatch.setitem(CODESETS, "philips-rc6", replace(CODESETS["philips-rc6"], verified=True))
+    assert load_registry(_tv_cfg(codeset="philips-rc6"), {}).warnings == []
 
 
 def test_a_toggle_is_never_power_on_or_off_and_is_not_discrete():

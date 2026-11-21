@@ -7,9 +7,10 @@ without a tap. Offers live in memory: after a restart their buttons say so.
 - Arrival: to the person who got home after 30+ min away, only if nobody else paired is
   home and an aircon is off: a button per aircon that is off, [Both], [No thanks]. On
   uses the last state the bot sent to that aircon, powered on (room preset if none).
-- Departure: once everyone paired is away and an aircon is on, to everyone paired who
-  wants it (silent at night): [Turn off all], one per aircon, [Leave on]. The first tap
-  wins; every copy is redrawn. Someone coming back closes it.
+- Departure: once everyone paired is away and an aircon is on, or a TV (discrete power codes)
+  the bot sent on in the last TV_ON_HOURS, to everyone paired who wants it (silent at night):
+  [Turn off all], one per device, [Leave on]. The first tap wins; every copy is redrawn.
+  Someone coming back closes it.
 Presence text never names who is home (counts only); a tap result names the tapper.
 """
 
@@ -41,6 +42,8 @@ DEPARTURE_TTL_S = 2 * 3600
 UNDO_S = 10 * 60
 NIGHT = (23, 7)              # departure offers are silent from 23:00 to 07:00
 MAX_OFFERS = 50
+# A TV is mostly switched off with its own remote: an old "on" from the bot is not evidence it is on
+TV_ON_HOURS = 12
 
 Rows = list[list[tuple[str, str]]]
 Send = Callable[[int, str, Rows, bool], Awaitable[int | None]]     # -> message id
@@ -62,8 +65,9 @@ class Offer:
     # What taps did, one line each: (tapper id, tapper name, text with {who})
     done: list[tuple[int, str, str]] = field(default_factory=list)
     closed_why: str = ""
-    # device -> (seq of our send, state before it or None if the bot never sent one)
-    undo: dict[str, tuple[int | None, AcState | None]] = field(default_factory=dict)
+    # device -> (seq of our send, aircon state before it or None if the bot never sent one, or
+    # "tv": Undo sends the TV's power on)
+    undo: dict[str, tuple[int | None, AcState | str | None]] = field(default_factory=dict)
     undo_until: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -98,7 +102,8 @@ class Offers:
     def is_on(self, device: str) -> bool:
         if device in self.tvs():
             last = self.devices.last_power.get(device)
-            return bool(last and last.ok and last.feature == "power_on")
+            return bool(last and last.ok and last.feature == "power_on"
+                        and self._clock() - last.at < TV_ON_HOURS * 3600)
         last = self.ac.last(device)
         return bool(last and last.state.power)
 
@@ -106,10 +111,13 @@ class Offers:
         """'Bedroom' (its room), or the device id when two aircons share a room; 'Bedroom TV'."""
         room = self.registry.devices[device].room
         title = room.replace("_", " ").replace("-", " ").title()
-        if device in self.tvs():
-            return f"{title} TV"
+        tvs = [d for d in self.tvs() if self.registry.devices[d].room == room]
+        if device in tvs:
+            return f"{title} TV" if len(tvs) == 1 else device
         same = [d for d in self.aircons() if self.registry.devices[d].room == room]
-        return title if len(same) == 1 else device
+        if len(same) != 1:
+            return device
+        return f"{title} aircon" if tvs else title           # "Bedroom off" would read as the whole room
 
     def _pool(self, kind: str) -> list[str]:
         """What an offer can switch: arrival turns aircons on; departure turns aircons and TVs off."""

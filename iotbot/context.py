@@ -13,7 +13,7 @@ from iotbot.ac.service import AcService
 from iotbot.ac.state import AcStateStore
 from iotbot.config import Settings
 from iotbot.devices.hub import BroadlinkHub, Expected, Transport
-from iotbot.devices.model import Registry, chat_tv, load_registry
+from iotbot.devices.model import DeviceType, Registry, chat_tv, load_registry
 from iotbot.llm.assistant import Assistant
 from iotbot.llm.client import LlmClient
 from iotbot.llm.diary import DiaryTools
@@ -81,7 +81,7 @@ def assistant_devices(reg: Registry, ac: AcService | None) -> list[str]:
             out.append(f"{d.id}: aircon in room '{d.room}'")
         elif chat_tv(d):
             out.append(f"{d.id}: TV in room '{d.room}' (power on/off only)")
-        elif d.codeset and d.features:
+        elif d.codeset and d.features and d.device_type is DeviceType.TV:
             out.append(f"{d.id}: TV in room '{d.room}', power toggle only: chat cannot switch it; tell the "
                        "person to use its Power button in /keyboard")
     return out

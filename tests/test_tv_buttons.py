@@ -22,7 +22,7 @@ def wizard(ctx):
 
 def test_discrete_tv_has_timers_and_schedules(tmp_path):
     ctx = make_ctx(tmp_path, tv="philips-rc6")
-    assert ctx.registry.warnings == [] or all("bed_tv" not in w for w in ctx.registry.warnings)
+    assert all("bed_tv" not in w or "not yet checked" in w for w in ctx.registry.warnings)
     w = wizard(ctx)
     assert "bed_tv" in w.schedulable() and w.can_timer("bed_tv")
     tv = ctx.devices.get("bed_tv")

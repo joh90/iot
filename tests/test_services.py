@@ -357,3 +357,27 @@ async def test_seed_without_codeset_devices_reads_nothing(tmp_path):
     from datetime import datetime
 
     assert service(tmp_path).seed(datetime.now().astimezone()) == 0
+
+
+async def test_a_definite_failure_does_not_use_up_the_toggle(tmp_path):
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "button")
+    assert (await svc.run("bed_tv", "power_off", a)).ok                       # t0
+    hub.fail = HubError("RM offline", maybe_delivered=False)
+    assert not (await svc.run("bed_tv", "power_on", a)).ok                    # would be t1, nothing went out
+    hub.fail = None
+    assert (await svc.run("bed_tv", "power_on", a)).ok
+    assert _sent_toggles(hub) == [0, 1]                                        # the retry is the new press
+    assert [e.get("toggle") for e in events(tmp_path)] == [0, 1, 1]
+
+
+async def test_expect_seq_is_honoured_for_a_managed_aircon_too(tmp_path):
+    from tests.test_ac_service import make_ctx
+
+    ctx = make_ctx(tmp_path)
+    a = Actor(1, "Alice", "button")
+    r = await ctx.devices.run("bed_ac", "power_on", a)
+    await ctx.devices.run("bed_ac", "power_off", a)
+    stale = await ctx.devices.run("bed_ac", "power_on", a, expect_seq=r.data["seq"])
+    assert stale.error == "changed_since"

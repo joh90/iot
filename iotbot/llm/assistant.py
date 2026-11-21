@@ -31,7 +31,7 @@ from iotbot.llm.cards import Cards
 from iotbot.llm.client import LlmClient
 from iotbot.llm.memory import Memory
 from iotbot.llm.replay import ReplayLog
-from iotbot.llm.tools import device_kinds, Tool, message_text
+from iotbot.llm.tools import ORDER_ALL_RE, Tool, device_kinds, message_text, note_defines
 from iotbot.result import Actor
 
 CONTEXT_EXCHANGES = 3
@@ -114,8 +114,9 @@ TV_RULES = """
   TV ("tv", "television", "telly"), says everything or all, or a note ties the words to it. A room
   alone ("off bedroom") is its aircon only if a note says so; otherwise ask which one.
 - Never say a TV is on or off as a fact: say what the bot last sent ("last sent: off at 22:10").
-- "Everything" or "all" includes the TVs: "turn everything off" = call set_device for each device.
 - "Both" with more than two devices: ask which ones, unless a note says what both means.
+- A TV listed as "power toggle only" cannot be switched from chat: say so and point to /keyboard."""
+TOGGLE_RULE = """
 - A TV listed as "power toggle only" cannot be switched from chat: say so and point to /keyboard."""
 
 
@@ -128,9 +129,9 @@ class Ask:
     word: str                                   # what was unclear ("bedroom", "both", "my aircon")
     id: str = field(default_factory=lambda: secrets.token_hex(3))   # in the buttons: an old tap is refused
     forwarded: bool = False                     # the order was forwarded: a tap never auto-runs it
+    at: float = field(default_factory=time.time)     # an answer after CONTEXT_IDLE_S is not taken
 
 
-TV_RE = re.compile(r"\b(tvs?|television|telly)\b", re.IGNORECASE)
 KIND_RE = re.compile(r"\b(tvs?|television|telly|aircons?|air[- ]?cons?|a/?c|acs)\b", re.IGNORECASE)
 # Only an aircon has these: no question when one is said ("bedroom 24", "bedroom fan quiet")
 SETTING_RE = re.compile(r"(?<![:.\d])(?<!at )(?<!in )\b(1[6-9]|2\d|3[01])\s*(c|deg|degrees)?\b(?![:.]\d)"
@@ -149,15 +150,20 @@ def which_one(text: str, devices: list[tuple[str, str, str]], notes: list[str]) 
     when one of the person's notes (or a house note) mentions the unclear word: the model reads
     the note and decides."""
     if STATE_QUESTION_RE.match(text) or ASKS_RE.search(_polite(text)) or NOT_A_CHANGE_RE.search(text) \
-            or not CHANGE_RE.search(text) or KIND_RE.search(text) or re.search(r"\b(all|every|everything)\b", text, re.I):
+            or not CHANGE_RE.search(text) or KIND_RE.search(text) or ORDER_ALL_RE.search(text):
         return None
-    said = set(re.findall(r"[a-z0-9]+", text.lower()))
-    noted = " ".join(notes).lower()
-    now = " (now)" if "now" in said else ""
+    now = " (now)" if "now" in set(re.findall(r"[a-z0-9]+", text.lower())) else ""
+    # Only the clauses that give an order: "off office, bedroom stays on" asks nothing about bedroom
+    said = set().union(set(), *(set(re.findall(r"[a-z0-9]+", c.lower()))
+                                for c in re.split(r"[,;.!\n]|\band\b|\bbut\b|\bthen\b", text)
+                                if re.search(r"\b(on|off)\b|\b(at|by|in)\s+\d|\b\d{3,4}\b", c, re.I)
+                                and not re.search(r"\b(not|stays?|keep|fine|leave|except)\b", c, re.I)))
     if "both" in said:
-        if len(devices) < 3 or re.search(r"\bboth\b", noted):
+        if len(devices) < 3 or note_defines("both", notes):
             return None
-        options = [("both aircons", f"{text} (I mean both aircons)", "When I say 'both', I mean both aircons.")]
+        options = []
+        if sum(k == "ac" for _, _, k in devices) == 2:
+            options.append(("both aircons", f"{text} (I mean both aircons)", "When I say 'both', I mean both aircons."))
         rooms: dict[str, list[tuple[str, str, str]]] = {}
         for dev in devices:
             rooms.setdefault(dev[1], []).append(dev)
@@ -167,6 +173,8 @@ def which_one(text: str, devices: list[tuple[str, str, str]], notes: list[str]) 
                 options.append((f"{w} aircon and TV", f"{text} (I mean the {w} aircon and the {w} TV)",
                                 f"When I say 'both', I mean the {w} aircon and the {w} TV."))
         return Ask(f"{_verb(said)} both{now}: which ones?", options, "both") if len(options) > 1 else None
+    if not said:
+        return None
     if SETTING_RE.search(text):
         return None
     rooms = {}
@@ -176,12 +184,13 @@ def which_one(text: str, devices: list[tuple[str, str, str]], notes: list[str]) 
         kinds = [k for _, _, k in devs]
         if set(kinds) != {"ac", "tv"} or len(kinds) != 2:
             continue                                  # two aircons (or two TVs) in a room: the model's job
-        words = set().union(*(_words(d) for d, _, _ in devs)) | _words(room)
+        # The room's words: its name and what the two ids share ("bedroom"), never a brand ("samsung")
+        words = (_words(devs[0][0]) & _words(devs[1][0])) | _words(room)
         hit = sorted(words & said, key=len, reverse=True)
         if not hit:
             continue
         w = hit[0]
-        if re.search(rf"\b{re.escape(w)}\b", noted):
+        if note_defines(w, notes):
             return None
         options = []
         for d, _, k in devs:
@@ -197,7 +206,7 @@ def which_one(text: str, devices: list[tuple[str, str, str]], notes: list[str]) 
 def _typed_answer(text: str, ask: Ask | None) -> str | None:
     """A typed reply to the last code question that is one of its answers ("both", "bedroom tv"):
     the order again with that answer, as a tap would send it."""
-    if ask is None:
+    if ask is None or time.time() - ask.at > CONTEXT_IDLE_S:
         return None
     said = " ".join(re.findall(r"[a-z0-9]+", text.lower()))
     for label, message, _ in ask.options:
@@ -309,7 +318,7 @@ class Chat:
     asked: float = 0.0                          # when the message being answered was sent: its history time
     questions: list[list[dict[str, Any]]] = field(default_factory=list)   # exchanges asked in code ("Which aircon?")
     ask: Ask | None = None                      # the last code question, for its tap buttons
-    offer: tuple[str, str] | None = None        # (note, screen) offered after a tap, for [Remember]
+    offer: tuple[str, str, str] | None = None   # (question id, note, screen) offered after a tap
 
 
 @dataclass(slots=True)
@@ -357,7 +366,13 @@ class Assistant:
         lines = self.devices()
         devices = "\n".join(f"- {d}" for d in lines) or "- (none)"
         house = self.memory.house_prompt() if self.memory else ""
-        rules = RULES + (TV_RULES if any(": TV in room" in d for d in lines) else "")
+        rules = RULES
+        if self.chat_devices and any(k == "tv" for _, _, k in self.chat_devices()):
+            # A TV home: a room alone may be the TV, and "everything" includes it (no contradiction)
+            rules = (RULES.replace('"off bedroom pls", ', "").replace("for each aircon right away", "for each device "
+                                                                     "right away") + TV_RULES)
+        elif any("power toggle only" in d for d in lines):
+            rules = RULES + TOGGLE_RULE
         return f"{rules}\n\nDevices:\n{devices}\n\nTime zone: {self.tz.key}." + (f"\n\n{house}" if house else "")
 
     def now(self) -> datetime:
@@ -486,6 +501,7 @@ class Assistant:
         pending = self.chats[uid].ask if uid in self.chats else None
         if uid in self.chats:
             self.chats[uid].ask = None                # an answer or a new message: old buttons are dead
+            self.chats[uid].offer = None
         typed = _typed_answer(text, pending)
         if typed is not None:
             text = typed                              # "both" typed instead of tapped: the order with it
@@ -497,7 +513,7 @@ class Assistant:
         if ask is None and typed is None and self.aircons and (q := which_device(text, self.aircons(), before)):
             ask = aircon_options(text, self.aircons())
             ask.text = q
-            if re.search(rf"\b{re.escape(ask.word)}\b", " ".join(notes).lower()):
+            if note_defines(ask.word, notes):
                 ask = None                            # a note says what "my aircon" means: the model decides
         if ask:
             # Asked in code: the model picked one at random (live 2026-10-15). A tap sends the order

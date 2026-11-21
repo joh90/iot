@@ -513,3 +513,16 @@ async def test_execute_without_retries_for_people(env):
     s = sched()
     o = await env.sch.execute(s, FIRE, "k", actor=ALICE, retries=False)
     assert o.result == "failed" and o.attempts == 1 and env.sleeps == []
+
+
+async def test_a_toggle_schedule_never_fires(tmp_path, monkeypatch):
+    # review 2026-11-22: problem() called it broken, but execute() still sent it every night
+    from iotbot.ir.codesets import CODESETS, Button, Codeset
+
+    monkeypatch.setitem(CODESETS, "test-toggle", Codeset("test-toggle", "rc6", 0, {"power": Button(12, False)}))
+    ctx = make_ctx(tmp_path, tv="test-toggle")
+    store = ScheduleStore(tmp_path / "state" / "schedules.json")
+    store.load()
+    sch = Scheduler(store, ctx.devices, SGT, clock=lambda: T0.timestamp(), synced=lambda: None)
+    o = await sch.execute(sched(device="bed_tv", action=sm.Capture("power")), FIRE, "k", actor=ALICE, retries=False)
+    assert o.result == "failed" and "toggle" in o.reason and ctx.sent == []

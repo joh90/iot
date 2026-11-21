@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 NS = "ph"
 OFF = "Presence is switched off on this bot (PRESENCE=off, or the aircon encoder is off)."
-INTRO = ("The bot can offer to turn aircons on when you get home and off when everyone has left. "
+INTRO = ("The bot can offer to turn aircons on when you get home, and aircons (and a TV it turned on) off "
+         "when everyone has left. "
          "It checks whether your phone is on the home Wi-Fi; only home or away is kept, on the Pi, "
          "plus your arrive/leave times for weekly patterns (you can delete them).")
 # Per person: devices found by the last setup, and the running watch (in memory)

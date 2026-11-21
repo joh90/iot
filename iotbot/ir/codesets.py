@@ -32,6 +32,9 @@ class Codeset:
     address: int
     buttons: dict[str, Button] = field(default_factory=dict)
     frames: int = 1
+    # Checked on a real device: until then the registry warns at every start (the codes are treated
+    # as discrete, so a wrong guess could be resent, scheduled or used by chat)
+    verified: bool = False
 
     def packets(self, key: str) -> tuple[bytes, bytes]:
         """Both toggle variants of one press of `key`: (toggle 0, toggle 1). Raises ValueError for

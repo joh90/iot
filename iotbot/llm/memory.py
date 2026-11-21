@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from iotbot.ac.state import AcStateError
 from iotbot.llm.cards import Done, Prepared
 from iotbot.llm.home import SETTINGS, AlreadyError, _setting
-from iotbot.llm.tools import ArgError, Tool
+from iotbot.llm.tools import message_text, ArgError, Tool
 from iotbot.result import Actor
 from iotbot.store import JsonStore, StoreError
 
@@ -508,6 +508,8 @@ class MemoryTools:
                 extra = sorted(k for k in st if k not in ("device", "power"))
                 if extra or "power" not in st:
                     raise ArgError(f"{st['device']}: a TV step is power true or false only")
+                if not self.home._tv_named(actor, message_text.get()):
+                    raise ArgError(f"the message does not name the TV: leave {st['device']} out of the recipe")
                 continue
             try:
                 self.home.ctx.ac.state_for(st["device"], "power_on").with_changes(

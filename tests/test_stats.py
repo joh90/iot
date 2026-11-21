@@ -222,5 +222,5 @@ def test_tv_sends_by_surface_and_failures(tmp_path):
            event(device="bed_tv", ir="rc6:0:61:t0", surface="scheduler", ok=False),
            event(device="bed_ac")]
     out = text(stats.summary([], evs, reg, 7, names))
-    assert "TV sends</b>\n- bed_tv: 3 (1 buttons, 1 chat, 1 timers), 1 failed" in out
+    assert "TV sends</b>\n- bed_tv: 3 (buttons 1, chat 1, schedules 1), 1 failed" in out
     assert "TV sends" not in text(stats.summary([], [event(device="bed_ac")], reg, 7, names))

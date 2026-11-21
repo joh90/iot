@@ -21,6 +21,20 @@ SUPPORTED = ("object", "array", "string", "integer", "boolean")
 
 # The person's message this turn, for checks a tool makes against what they actually said
 message_text: ContextVar[str] = ContextVar("message_text", default="")
+# "everything" / "all" as the object of an order ("turn everything off", "all off", "off all"); never
+# "all the aircons", "everything else", "that's all"
+ORDER_ALL_RE = re.compile(r"\b(turn|switch|off|on)\s+(it\s+)?(all|everything)\b(?!\s+(else|the\s+aircons?|"
+                          r"aircons?|air[- ]?cons?|acs?|a/?c)\b)|\b(all|everything)\s+(off|on)\b", re.IGNORECASE)
+
+
+def note_defines(word: str, notes: list[str]) -> bool:
+    """A note that says what a word means ("When I say bedroom I mean the aircon", "'both' means
+    the two aircons"), not one that only mentions it ("No TV in the bedroom after 10pm")."""
+    w = re.escape(word.lower())
+    return any(re.search(rf"\b{w}\b", n.lower()) and re.search(r"\b(mean|means|meant|refers? to)\b", n.lower())
+               for n in notes)
+
+
 # Kind of each device chat may change ({"bedroom-tv": "tv", "office-aircon": "ac"}), from the registry:
 # the loop counts ordered devices by room and kind without guessing from the id
 device_kinds: ContextVar[dict[str, str]] = ContextVar("device_kinds", default={})

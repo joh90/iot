@@ -195,7 +195,9 @@ async def test_tap_an_answer_sends_the_order_with_it_and_offers_a_note_once(ctx)
     card_text = t.effective_message.reply_text.call_args[0][0]
     assert "bed_ac" in card_text and "Do this?" in card_text
 
-    r = make_update(ME, data="wh:r")
+    remember = kw["reply_markup"].inline_keyboard[0][0].callback_data
+    assert remember.startswith("wh:r:")
+    r = make_update(ME, data=remember)
     r.callback_query.message = SimpleNamespace(chat_id=ME, message_id=9)
     await hd.on_button(r, context)
     assert [f["text"] for f in ctx.memory.facts(ME)] == ["When I say just 'bedroom', I mean the bedroom aircon."]
@@ -250,8 +252,8 @@ async def test_notes_open_the_gate_only_through_a_room_or_device_word(ctx):
     h = HomeTools(ctx)
     assert h._tv_named(ALICE, "turn off my aircon now") is False          # "aircon" is a kind word
     assert h._tv_named(ALICE, "off bedroom") is True                      # the first note ties bedroom to a TV
-    # a house note that only mentions a TV and a room is still a tie: the review's office case
-    assert h._tv_named(ALICE, "off office") is True
+    # a note that only mentions a TV and a room does not define anything (review 2026-11-22)
+    assert h._tv_named(ALICE, "off office") is False
 
 
 async def test_send_anyway_has_no_undo(ctx):
@@ -322,11 +324,147 @@ async def test_a_tap_while_busy_keeps_the_question(ctx):
     assert ctx.assistant.chats[ME].ask is not None
 
 
-def test_a_note_about_my_aircon_skips_the_aircon_question(tmp_path):
-    import asyncio
-    c = make_ctx(tmp_path)
-    asyncio.run(c.memory.add_fact(ALICE, "When I say 'my aircon', I mean the bedroom aircon.", False))
+async def test_a_note_about_my_aircon_skips_the_aircon_question(tmp_path):
     from tests.test_llm import FakeServer, completion
-    c.assistant.llm = FakeServer([completion("ok")]).client()
-    out = asyncio.run(c.assistant.handle(ALICE, "turn off my aircon"))
-    assert out.kind != "asked"
+
+    c = make_ctx(tmp_path)
+    c.assistant.llm = FakeServer([completion("ok"), completion("ok")]).client()
+    await c.memory.add_fact(ALICE, "I like the aircon at 24", False)                 # mentions, defines nothing
+    assert (await c.assistant.handle(ALICE, "turn off my aircon")).kind == "asked"
+    await c.memory.add_fact(ALICE, "When I say 'my aircon', I mean the bedroom aircon.", False)
+    assert (await c.assistant.handle(ALICE, "turn off my aircon")).kind != "asked"
+
+
+
+# ---- full review fixes (2026-11-22, round 2) ---------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["off office, bedroom stays on", "off office not bedroom", "on office. bedroom is fine",
+                                  "off bedroom, everything else stays on"])
+def test_which_one_only_looks_at_clauses_that_order(text):
+    ask = asst.which_one(text, DEVS, [])
+    assert ask is None or ask.word != "bedroom" or "everything" in text
+
+
+def test_everything_else_does_not_open_the_gate_or_order_every_device(ctx):
+    from iotbot.llm import loop as lp
+    from iotbot.llm.tools import ORDER_ALL_RE
+    assert not ORDER_ALL_RE.search("off bedroom, everything else stays on")
+    assert not ORDER_ALL_RE.search("turn off all the aircons") and not ORDER_ALL_RE.search("off bedroom that's all")
+    assert ORDER_ALL_RE.search("turn everything off") and ORDER_ALL_RE.search("all off")
+    assert HomeTools(ctx)._tv_named(ALICE, "off bedroom, everything else stays on") is False
+
+
+def test_both_aircons_is_offered_only_with_two_aircons():
+    devs = [("bed_ac", "bedroom", "ac"), ("bed_tv", "bedroom", "tv"), ("living_tv", "living", "tv")]
+    ask = asst.which_one("both off", devs, [])
+    assert ask is None or "both aircons" not in [o[0] for o in ask.options]
+
+
+def test_brand_words_in_an_id_are_not_a_room():
+    devs = [("study-aircon", "study", "ac"), ("study-samsung-tv", "study", "tv")]
+    assert asst.which_one("off samsung", devs, []) is None
+    assert asst.which_one("off study", devs, []).word == "study"
+
+
+def test_a_note_must_define_the_word_to_skip_the_question():
+    assert asst.which_one("off bedroom", DEVS, ["No TV in the bedroom after 10pm"]).word == "bedroom"
+    assert asst.which_one("off bedroom", DEVS, ["bedroom means the bedroom aircon"]) is None
+
+
+def test_an_old_question_is_not_answered_by_typing():
+    import time
+    ask = asst.which_one("off bedroom now", DEVS, [])
+    ask.at = time.time() - asst.CONTEXT_IDLE_S - 1
+    assert asst._typed_answer("both", ask) is None
+
+
+async def test_with_two_tvs_the_tv_must_be_the_named_one(tmp_path):
+    from tests.test_ac_service import make_ctx as mk
+    c = mk(tmp_path, tv="philips-rc6")
+    h = HomeTools(c)
+    assert h._right_tv("bed_tv", "off bedroom tv") and h._right_tv("bed_tv", "off the tv")   # the only TV
+    h.tvs = lambda: ["bed_tv", "bed_ac"]                                 # stand-in for a second TV
+    assert not h._right_tv("bed_tv", "off the tv")                       # 2+ TVs: "the tv" is not enough
+
+
+def test_tv_prompt_has_no_contradiction_and_toggle_homes_get_only_the_toggle_rule(ctx, tmp_path, monkeypatch):
+    p = ctx.assistant.system_prompt()
+    assert '"off bedroom pls"' not in p and "for each device right away" in p and "for each aircon right away" not in p
+    monkeypatch.setitem(CODESETS, "test-toggle", Codeset("test-toggle", "rc6", 0, {"power": Button(12, False)}))
+    (tmp_path / "t").mkdir()
+    c = make_ctx(tmp_path / "t", tv="test-toggle")
+    tp = c.assistant.system_prompt()
+    assert "yours to switch" not in tp and "power toggle only" in tp
+
+
+async def test_a_typed_answer_to_a_forwarded_order_never_auto_runs(ctx):
+    from types import SimpleNamespace
+    from iotbot.bot import handlers as hd
+    from tests.test_chat import say, tg_context
+    from tests.test_llm import FakeServer, call, completion
+
+    await ctx.memory.add_fact(ALICE, "When I say 'now', immediately do the action without asking", False, skip_card=True)
+    ctx.assistant.llm = FakeServer([completion(calls=[call("set_device_now", {"device": "bed_ac", "power": False})])]).client()
+    context = tg_context(ctx)
+    u = say("off bedroom now")
+    u.effective_message.forward_origin = SimpleNamespace(type="user")
+    await hd.on_text(u, context)
+    assert "which one" in u.effective_message.reply_text.call_args[0][0]
+    u2 = say("bedroom aircon")
+    await hd.on_text(u2, context)
+    assert ctx.sent == [] and "Do this?" in u2.effective_message.reply_text.call_args[0][0]
+
+
+async def test_an_old_remember_button_saves_nothing(ctx):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from iotbot.bot import handlers as hd
+    from tests.test_bot import make_update
+    from tests.test_chat import say, tg_context
+    from tests.test_llm import FakeServer, completion
+
+    ctx.assistant.llm = FakeServer([completion("ok"), completion("ok")]).client()
+    context = tg_context(ctx)
+    u = say("off bedroom")
+    await hd.on_text(u, context)
+    t = make_update(ME, data=u.effective_message.reply_text.call_args[1]["reply_markup"].inline_keyboard[0][0].callback_data)
+    t.callback_query.message = SimpleNamespace(chat_id=ME, message_id=9)
+    t.effective_message.reply_text = AsyncMock(return_value=SimpleNamespace(chat_id=ME, message_id=10))
+    await hd.on_button(t, context)
+    remember = t.callback_query.edit_message_text.call_args[1]["reply_markup"].inline_keyboard[0][0].callback_data
+    await hd.on_text(say("what is the office set to?"), context)         # a new message kills the offer
+    r = make_update(ME, data=remember)
+    r.callback_query.message = SimpleNamespace(chat_id=ME, message_id=9)
+    await hd.on_button(r, context)
+    assert ctx.memory.facts(ME) == []
+
+
+async def test_send_anyway_side_card_shows_next_to_the_answer(ctx):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from iotbot.bot import handlers as hd
+    from tests.test_chat import say, tg_context
+    from tests.test_llm import FakeServer, call, completion
+
+    await (await prep(ctx, "set_device", {"device": "bed_tv", "power": False}, "tv off")).run(ALICE)
+    ctx.assistant.llm = FakeServer([completion(calls=[call("set_device", {"device": "bed_tv", "power": False})]),
+                                    completion("The bedroom TV is already off as last sent.")]).client()
+    context = tg_context(ctx)
+    u = say("tv off")
+    u.effective_message.reply_text = AsyncMock(return_value=SimpleNamespace(chat_id=ME, message_id=11))
+    await hd.on_text(u, context)
+    texts = [c[0][0] for c in u.effective_message.reply_text.call_args_list]
+    assert texts[-1] == "bed_tv: already OFF."
+    kb = u.effective_message.reply_text.call_args_list[-1][1]["reply_markup"].inline_keyboard
+    assert [b.text for b in kb[0]] == ["Send anyway"]
+
+
+def test_aircon_only_prompt_and_tool_specs_are_pinned(tmp_path):
+    # Phase 9 tuned these (evals); a TV home adds its text only when a TV is configured. Identical to
+    # 4069dcd apart from set_ac -> set_device (checked 2026-11-22). A deliberate change updates the hash.
+    import hashlib
+
+    c = make_ctx(tmp_path)
+    blob = json.dumps({"system": c.assistant.system_prompt(),
+                       "tools": [t.spec() for t in c.assistant.tools_for(Actor(111, "Alice", "llm"))]}, sort_keys=True)
+    assert hashlib.sha256(blob.encode()).hexdigest() == "3b06a1d2e11fa6349508d2c5e751c750cdedd741574ee326a28879eb979797b4"

@@ -36,6 +36,7 @@ from iotbot.schedule.model import Adjust, LastFired, Off, On, Once, Schedule
 from iotbot.schedule.store import ScheduleStore
 from iotbot.services.devices import DeviceService
 from iotbot.telemetry import Tracker, Turn
+from iotbot.devices.model import schedulable_key
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +372,10 @@ class Scheduler:
             feature = "power_off" if isinstance(a, Off) else a.key
             if feature not in dev.features:
                 return FireOutcome(s, at, key, "failed", f"{s.device} has no '{feature}' any more")
+            if not schedulable_key(dev, feature):
+                # A generated toggle sent unattended may do the opposite (the TV was already off)
+                return FireOutcome(s, at, key, "failed", f"{s.device} {feature.replace('_', ' ')} is a toggle "
+                                   "and cannot run on a schedule")
             def send(): return self.devices.run(s.device, feature, actor, source=key)
             retry_any = dev.features[feature].idempotent
 

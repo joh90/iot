@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
@@ -20,7 +21,7 @@ from iotbot import telemetry
 from iotbot.bot import wizard as wz
 from iotbot.bot.callbacks import encode
 from iotbot.bot.text import b, h, popup, reply, safe_edit
-from iotbot.llm.assistant import MAX_INPUT_CHARS, Assistant, Outcome
+from iotbot.llm.assistant import CONTEXT_IDLE_S, MAX_INPUT_CHARS, Assistant, Outcome, _typed_answer
 from iotbot.llm.cards import CARD_TTL_S, Card, CardError, Done, Prepared
 from iotbot.llm.loop import MAX_WRITES
 from iotbot.llm.memory import Memory, card_rules, step_text
@@ -77,6 +78,9 @@ async def on_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant:
         await reply(update, OFF)
         return
     chat_id = update.effective_chat.id
+    pending = getattr(assistant.chats.get(actor.user_id), "ask", None)
+    if forwarded is None and pending is not None and pending.forwarded and _typed_answer(text, pending) is not None:
+        forwarded = True                                  # a typed answer to a forwarded order: no auto-run
     typing = asyncio.create_task(_keep_typing(context, chat_id))
     try:
         o = await assistant.handle(actor, text)
@@ -140,11 +144,11 @@ async def which_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query
     chat = assistant.chats.get(actor.user_id) if assistant else None
     if op == "r":
         offer = getattr(chat, "offer", None)
-        if not offer or assistant.memory is None:
-            await query.answer("This button is no longer active.")
+        if not offer or assistant.memory is None or not args or args[0] != offer[0]:
+            await query.answer("This button is no longer active.")      # an older offer, or a new message since
             return
         chat.offer = None
-        note, shown = offer
+        _, note, shown = offer
         try:
             await assistant.memory.add_fact(actor, note, False)
         except ValueError as e:
@@ -165,18 +169,23 @@ async def which_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query
     chat.ask = None                                       # one answer per question
     label, message, note = ask.options[int(args[1])]
     if len(message) > MAX_INPUT_CHARS:
-        message = message[-MAX_INPUT_CHARS:]
+        message = "(I mean the " + label + ")"         # the order itself is in the question just above
+    if time.time() - ask.at > CONTEXT_IDLE_S:
+        await query.answer("That question is too old now; please ask again.", show_alert=True)
+        return
     await query.answer()
     shown = f"{h(ask.text)}\n-> {h(label)}"
-    markup = None
+    markup = offer = None
     if assistant.memory is not None and (actor.user_id, ask.word) not in assistant.offered:
         assistant.offered.add((actor.user_id, ask.word))
-        chat.offer = (note, shown)
+        offer = (ask.id, note, shown)
         markup = InlineKeyboardMarkup([[InlineKeyboardButton(_cut(f"Remember: '{ask.word}' means {label}", 60),
-                                                             callback_data=encode(WHICH, "r"))]])
+                                                             callback_data=encode(WHICH, "r", ask.id))]])
     telemetry.note(intent="which:tap")
     await safe_edit(query, shown, markup)
     await on_chat(update, context, assistant, actor, message, forwarded=ask.forwarded)
+    if offer:
+        chat.offer = offer                                # after the turn it started: a later message kills it
 
 
 # ---- confirm cards (4.3) -----------------------------------------------------------------

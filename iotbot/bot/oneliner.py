@@ -93,7 +93,7 @@ def resolve_device(w: Wizard, word: str, action: str) -> str:
             return w.managed(d) or schedulable_key(dev, "power_on")
         if action == "off":
             return w.can_timer(d)
-        return action in feats and schedulable_key(dev, action)
+        return schedulable_key(dev, action)
 
     fits = [d for d in room.devices if d in w.schedulable() and can(d)]
     managed = [d for d in fits if w.managed(d)]

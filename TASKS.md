@@ -153,17 +153,17 @@ the real-TV test.
 | #     | Status | Task                                                                                                      |
 |-------|--------|-----------------------------------------------------------------------------------------------------------|
 | 10.0  | [x]    | Evidence: real remote's Mute capture as a test fixture; eval harness rebuilt on the real bot; baseline    |
-| 10.1  | [x]    | iotbot/ir/packet.py (Broadlink packets, 30.45 us tick); Mitsubishi moved onto it, byte-identical        |
+| 10.1  | [x]    | iotbot/ir/packet.py (Broadlink packets, 30.45 us tick); Mitsubishi moved onto it, byte-identical          |
 | 10.2  | [x]    | iotbot/ir/rc6.py: RC6 mode 0 frames + decode; golden test vs the real capture                             |
 | 10.3  | [x]    | iotbot/ir/codesets.py: philips-rc6 power on/off (numbers checked in 10.12), discrete vs toggle            |
-| 10.4  | [x]    | devices.json "codeset" entries build generated buttons; toggle never named power_on/off                  |
+| 10.4  | [x]    | devices.json "codeset" entries build generated buttons; toggle never named power_on/off                   |
 | 10.5  | [x]    | Toggle bit per press, expect_seq + lock, last send seeded after a restart                                 |
 | 10.6  | [x]    | Timers / schedules / one-liner only use discrete keys                                                     |
-| 10.7  | [x]    | Chat: set_device (+ now twin) for aircons and TVs; TV only when named; Send anyway; Undo as aircon      |
-| 10.8  | [x]    | "Which one?" taps + offer a note; TV timers / recipes / status / diary / away offer / stats; TV rules  |
+| 10.7  | [x]    | Chat: set_device (+ now twin) for aircons and TVs; TV only when named; Send anyway; Undo as aircon        |
+| 10.8  | [x]    | "Which one?" taps + offer a note; TV timers / recipes / status / diary / away offer / stats; TV rules     |
 | 10.9  | [x]    | Tests (fake hub, scripted LLM)                                                                            |
-| 10.10 | [ ]    | Eval: baseline 4069dcd vs new without TV vs new with TV; no harm, no aircon regression                    |
-| 10.11 | [~]    | Docs, final review, secret scan                                                                           |
+| 10.10 | [x]    | Eval: baseline 4069dcd vs new without/with TV: aircon 72/93 -> 81/93, no harm, TV all pass                |
+| 10.11 | [x]    | Docs, two reviews + full 3-area review, all fixed; secret scan                                            |
 | 10.12 | [ ]    | Real-TV test (each send on the user's go): power codes, 1 frame from standby; fill the codeset            |
 | 10.13 | [ ]    | Ship on OK: rollback tag, devices.json backup, add bedroom-tv, check, restart                             |
 

@@ -18,8 +18,8 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 - `/ping` works for anyone and shows their Telegram user id (needed to approve them)
 - The bot works in private chats only: in a group it answers nothing, so nothing shows there
 - `/stats [days]` shows how fast the bot answers (p50/p95 per surface, share under 300 ms), the slowest
-  remotes, failed sends and who or what sent them, strangers, chat assistant use, and whether the LLM PC
-  answers (default 7 days)
+  remotes, failed sends and who or what sent them, TV sends (buttons, chat, schedules), strangers, chat
+  assistant use, and whether the LLM PC answers (default 7 days)
 - `/phone` sets up your phone for welcome-home and everyone-out offers (see "Presence" below)
 - Plain messages in a private chat go to the chat assistant (see below), e.g. "a bit cooler in the
   bedroom", "off the office aircon at 7am weekdays", "is the bedroom aircon on?"
@@ -362,10 +362,11 @@ itself stops answering, rounds are skipped, so a network outage never looks like
 - **Welcome home**: after 30+ minutes away, if nobody else with a phone was home and an aircon is off,
   you get a button per aircon that is off, Both, and No thanks. On uses the last state the bot sent to
   that aircon (the room preset if none). Undo for 10 minutes; the offer expires after 30 minutes.
-- **Everyone is out**: once every phone set up is away and an aircon is on, everyone set up gets
-  Turn off all, one button per aircon, and Leave on. The first tap wins and every copy is redrawn;
-  someone coming back closes it. Between 23:00 and 07:00 it arrives silently.
-- Nothing is sent to an aircon without a tap. Presence shows counts only ("Home: 1 of 2 phones" in
+- **Everyone is out**: once every phone set up is away and an aircon is on (or a TV the bot sent on in
+  the last 12 hours, discrete power codes only), everyone set up gets Turn off all, one button per
+  device, and Leave on. The first tap wins and every copy is redrawn; someone coming back closes it.
+  Between 23:00 and 07:00 it arrives silently. Welcome home stays aircon-only.
+- Nothing is sent to an aircon or TV without a tap. Presence shows counts only ("Home: 1 of 2 phones" in
   `/status`), never who is home. Arrive/leave times go to `logs/presence_events-YYYY-MM.jsonl` for weekly
   patterns; `/phone` > Delete my history removes yours. Each person can switch either offer off in `/phone`.
 - `PRESENCE=off` in `.env` stops all probing; `PRESENCE_SUBNET` sets the Wi-Fi network (default: the

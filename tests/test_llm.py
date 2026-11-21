@@ -701,3 +701,12 @@ def test_device_order_review_cases():
     a = lp.Action(SET_AC, {"schedule_id": "t1"})
     a.prepared = Prepared("schedule Office off", "x", None, lambda: 0)
     assert lp._uncovered({"office-aircon"}, [a]) == set()
+
+
+
+def test_multi_word_room_ids_still_count_as_ordered():
+    t = Tool("set_device", "Change", {"type": "object", "properties": {
+        "device": {"type": "string", "enum": ["master-bedroom-aircon", "kids-bedroom-aircon", "living-room-aircon",
+                                              "study-aircon"]}}}, write=True)
+    assert lp._devices_ordered("off master and on kids", [t]) == {"master-bedroom-aircon", "kids-bedroom-aircon"}
+    assert lp._devices_ordered("off living at 2:30 and on study", [t]) == {"living-room-aircon", "study-aircon"}

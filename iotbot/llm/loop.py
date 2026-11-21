@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from iotbot.llm.client import LlmClient, LlmError, Reply
-from iotbot.llm.tools import AlreadyError, ArgError, Tool, device_kinds, message_text, parse_args
+from iotbot.llm.tools import ORDER_ALL_RE, AlreadyError, ArgError, Tool, device_kinds, message_text, parse_args
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +389,8 @@ def _kind(d: str) -> str:
 
 
 def _rooms(d: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in GENERIC | TV_WORDS | AC_WORDS and len(w) > 2}
+    return {w for w in re.findall(r"[a-z0-9]+", d.lower())
+            if w not in GENERIC | TV_WORDS | AC_WORDS | {"room"} and len(w) > 2}
 
 
 def _uncovered(ordered: set[str], actions: list[Action]) -> set[str]:
@@ -412,7 +413,7 @@ def _named(said: set[str], ids: set[str]) -> set[str]:
     out = set()
     for k in wants:
         same = [d for d in ids if kind(d) == k]
-        by_room = {d for d in same if rooms(d) and rooms(d) <= said}
+        by_room = {d for d in same if rooms(d) & said}       # any word, as in Phase 9 ("off master")
         if by_room:
             out |= by_room
         elif len(same) == 1 and (k == "tv" or AC_WORDS & said):
@@ -440,7 +441,7 @@ def _devices_ordered(text: str, tools: list[Tool]) -> set[str]:
             said |= room_said
         if {"on", "off"} & said or re.search(r"\b(at|by)\s+\d|\b\d{3,4}\b", clause):
             ordering = True
-            out |= ids if {"everything", "all"} & said else _named(said, ids)   # "turn everything off"
+            out |= ids if ORDER_ALL_RE.search(clause) else _named(said, ids)   # "turn everything off"
         elif ordering and not said - FILLER - TV_WORDS - AC_WORDS - GENERIC - {
                 w for d in ids for w in re.findall(r"[a-z0-9]+", d.lower())}:
             out |= _named(said, ids)                      # only device words: "... and (the) tv"

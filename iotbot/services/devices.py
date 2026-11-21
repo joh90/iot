@@ -68,7 +68,6 @@ class DeviceService:
         # counter per device, like a real remote), chosen before the first await so presses that
         # overlap still alternate; the hub's own resend repeats the same bytes
         self._toggle: dict[str, int] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
         # Last power on / off sent to a generated-IR device (a mute press must not hide it)
         self.last_power: dict[str, LastAction] = {}
 
@@ -81,7 +80,7 @@ class DeviceService:
         latest: dict[str, dict] = {}
         power: dict[str, dict] = {}
         try:
-            for rec in read_since(self.events, now - timedelta(days=days), now):
+            for rec in read_since(self.events, now - timedelta(days=days), now, contains=('"ir"',)):
                 if rec.get("device") in want and rec.get("ir"):
                     latest[rec["device"]] = rec
                     if rec.get("feature") in ("power_on", "power_off"):
@@ -90,7 +89,8 @@ class DeviceService:
             logger.warning("Could not read device events to seed last sends: %s", e)
             return 0
         for dev_id, rec in latest.items():
-            self._toggle[dev_id] = 1 if str(rec["ir"]).endswith(":t1") else 0
+            t = rec.get("toggle")
+            self._toggle[dev_id] = t if t in (0, 1) else (1 if str(rec["ir"]).endswith(":t1") else 0)
             try:
                 at = datetime.fromisoformat(rec["ts"]).timestamp()
             except (KeyError, TypeError, ValueError):
@@ -109,8 +109,6 @@ class DeviceService:
                                                  rec.get("ok"), None)
         return len(latest)
 
-    def _lock(self, device_id: str) -> asyncio.Lock:
-        return self._locks.setdefault(device_id, asyncio.Lock())
 
     def get(self, device_id: str) -> Device | None:
         return self.registry.devices.get(device_id)
@@ -134,8 +132,9 @@ class DeviceService:
                   expect_seq: int | None | object = ANY_SEQ) -> Result:
         """Run one feature. `request_id` correlates surfaces (e.g. a Telegram update);
         `source` links to what triggered it (e.g. a schedule event id). Both are logged.
-        `expect_seq` (non-aircon devices): send only if the device's latest action is still that
-        one (None: none yet), checked under a per-device lock; else `changed_since`, nothing sent."""
+        `expect_seq`: send only if the device's latest action is still that one (None: none yet);
+        else `changed_since`, nothing sent. The check and _run's claim of the next seq have no await
+        between them, so no lock is needed (the aircon path checks under its AC lock)."""
         device = self.get(device_id)
         if device is None:
             return Result.fail("device_not_found", f"Device '{device_id}' not found.")
@@ -145,18 +144,22 @@ class DeviceService:
             return Result.fail("feature_not_found", f"{device.id} has no '{feature}'.")
         if device.kind == "ir" and self.ac and self.ac.manages(device.id, feature):
             async with self.ac.lock(device.id):
+                if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
+                    return stale
                 prev = self.ac.last(device.id)
                 state = self.ac.state_for(device.id, feature)
                 r = await self._run(device, f, actor, request_id, source, state)
                 return _with_prev(r, prev)
-        if expect_seq is ANY_SEQ:
-            return await self._run(device, f, actor, request_id, source)
-        async with self._lock(device.id):
-            latest = self.last.get(device.id)
-            if (latest.seq if latest else None) != expect_seq:
-                who = f" by {latest.actor}" if latest else ""
-                return Result.fail("changed_since", f"{device.id} was changed since{who}.")
-            return await self._run(device, f, actor, request_id, source)
+        if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
+            return stale
+        return await self._run(device, f, actor, request_id, source)
+
+    def _stale(self, device_id: str, expect_seq: int | None | object) -> Result | None:
+        latest = self.last.get(device_id)
+        if (latest.seq if latest else None) != expect_seq:
+            who = f" by {latest.actor}" if latest else ""
+            return Result.fail("changed_since", f"{device_id} was changed since{who}.")
+        return None
 
     @_tracked
     async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
@@ -220,6 +223,7 @@ class DeviceService:
         state = None
         maybe = False
         ir = None
+        toggle = 0
         codes = f.codes
         if f.alt_codes:
             # Flip now, before any await: a new press must differ from the last one even if that
@@ -244,6 +248,8 @@ class DeviceService:
             ok, error = True, ""
         except HubError as e:
             ok, error, maybe = False, str(e), e.maybe_delivered
+            if ir and not maybe and self._toggle.get(device.id) == toggle:
+                self._toggle[device.id] = 1 - toggle      # nothing went out: the next press reuses this bit
         except asyncio.CancelledError:
             ok, error, maybe = False, "cancelled", True
             raise
@@ -255,7 +261,8 @@ class DeviceService:
             cur = self.last.get(device.id)
             if cur and cur.seq == seq:
                 self.last[device.id] = LastAction(seq, feature, cur.at, actor.name, ok, cur.prev_feature)
-            if ir and feature in ("power_on", "power_off"):
+            lp = self.last_power.get(device.id)
+            if ir and feature in ("power_on", "power_off") and (lp is None or lp.seq <= seq):
                 done_at = cur.at if cur and cur.seq == seq else time.time()
                 self.last_power[device.id] = LastAction(seq, feature, done_at, actor.name, ok, None)
             record = {
@@ -266,7 +273,7 @@ class DeviceService:
                 "state": state, "ms": ms,
             }
             if ir:
-                record["ir"], record["actor"] = ir, actor.name
+                record["ir"], record["toggle"], record["actor"] = ir, toggle, actor.name
             if ac_state is not None:
                 record["ac_state"] = ac_state.to_dict()
 

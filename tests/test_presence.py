@@ -597,3 +597,42 @@ async def test_no_departure_offer_for_a_tv_last_sent_off(env_tv):
     await env.ctx.devices.run("bed_tv", "power_off", ALICE)
     await env.o.all_away(env.clock.t)
     assert env.sent == []
+
+
+
+async def test_arrival_stays_aircon_only_with_a_tv(env_tv):
+    env = env_tv
+    await pair(env)
+    await env.o.arrive(ME)
+    assert all("TV" not in t for t in labels(env.sent[-1].rows))
+
+
+async def test_departure_with_aircon_and_tv_turn_off_all_and_undo(env_tv):
+    env = env_tv
+    await pair(env)
+    await env.ctx.ac.store.put("bed_ac", AcState(power=True, temp=24), "Bob", at=env.clock.t)
+    await env.ctx.devices.run("bed_tv", "power_on", ALICE)
+    await env.o.all_away(env.clock.t)
+    a = env.sent[-1]
+    assert labels(a.rows) == ["Turn off all", "Bedroom aircon off", "Bedroom TV off", "Leave on"]
+    assert (await tap(env, ALICE, data_for(a.rows, "Turn off all"))).ok
+    assert not env.ctx.ac.last("bed_ac").state.power and env.ctx.devices.last_power["bed_tv"].feature == "power_off"
+    assert (await tap(env, ALICE, data_for(env.edits[-1].rows, "Undo"))).ok
+    assert env.ctx.ac.last("bed_ac").state.power and env.ctx.devices.last_power["bed_tv"].feature == "power_on"
+
+
+async def test_a_failed_or_old_tv_on_is_not_offered(env_tv):
+    env = env_tv
+    await pair(env)
+    from iotbot.devices.hub import HubError
+    env.ctx.fail = HubError("offline")
+    await env.ctx.devices.run("bed_tv", "power_on", ALICE)
+    env.ctx.fail = None
+    await env.o.all_away(env.clock.t)
+    assert env.sent[-1:] == [] or "TV" not in env.sent[-1].text
+    import dataclasses
+    await env.ctx.devices.run("bed_tv", "power_on", ALICE)
+    lp = env.ctx.devices.last_power["bed_tv"]
+    env.ctx.devices.last_power["bed_tv"] = dataclasses.replace(lp, at=env.clock.t - 13 * 3600)   # > TV_ON_HOURS
+    await env.o.all_away(env.clock.t)
+    assert not env.sent or "TV" not in env.sent[-1].text

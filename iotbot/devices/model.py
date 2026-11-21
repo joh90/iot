@@ -325,6 +325,9 @@ def _add_codeset_device(reg: Registry, room: Room, entry: dict, dev_id: str, dty
     except ValueError as e:
         reg.warnings.append(f"device '{dev_id}': codeset {cs.name} could not be built ({e}), skipped")
         return
+    if not cs.verified:
+        reg.warnings.append(f"device '{dev_id}': codeset {cs.name} is not yet checked on a real device; "
+                            "its power codes are a guess")
     reg.devices[dev_id] = Device(
         id=dev_id, room=room.name, kind="ir", type_name=dtype.name.lower(), features=features,
         brand=brand, model=model, device_type=dtype, codeset=cs.name,
