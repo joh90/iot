@@ -1,9 +1,10 @@
 """Rooms and devices loaded from devices.json + commands.json.
 
 Features are data-driven: an IR device has exactly the features whose codes were
-captured in commands.json (plus a few known macros). Nothing else can be called,
-which replaces the old getattr-on-anything dispatch (B2) and keeps buttons in
-sync with real codes (B17).
+captured in commands.json (plus a few known macros), or, when its devices.json entry
+names a "codeset", the buttons of that codeset with codes generated in iotbot/ir
+(commands.json is then not used). Nothing else can be called, which replaces the old
+getattr-on-anything dispatch (B2) and keeps buttons in sync with real codes (B17).
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Literal
+
+from iotbot.ir.codesets import CODESETS, Codeset
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 FEATURE_RE = re.compile(r"^[a-z0-9_]{1,24}$")
 
 # Shown first, in this order; everything else follows commands.json order
-FEATURE_ORDER = ("power_on", "power_off")
+FEATURE_ORDER = ("power_on", "power_off", "power")
 
 # Words the old bot accepted that map onto another captured key when the exact
 # one was never captured (mute is a toggle on most remotes)
@@ -54,6 +57,13 @@ class Feature:
     idempotent: bool = False
     # Plug operations are not IR codes
     plug_op: str | None = None
+    # Generated IR (devices.json "codeset"): `alt_codes` is the same press with the other toggle
+    # bit, chosen per press by DeviceService; `frame_ids` name both for the device log. `discrete`:
+    # the code means the same thing whatever the device is doing (power on/off), so it may be
+    # resent, scheduled and used by chat; a toggle may not
+    alt_codes: tuple[bytes, ...] = ()
+    frame_ids: tuple[str, ...] = ()
+    discrete: bool = False
 
 
 @dataclass(slots=True)
@@ -68,6 +78,7 @@ class Device:
     device_type: DeviceType | None = None
     mac: str = ""                # plugs only, normalized
     bl_type: str = ""            # plugs only, e.g. "SP2"
+    codeset: str = ""            # generated IR (iotbot/ir/codesets.py); "" = learned captures
 
     @property
     def label(self) -> str:
@@ -98,6 +109,13 @@ def normalize_mac(mac: str) -> str:
     """'78:0F:77:1A:BC:DE' / '780f771abcde' -> '780f771abcde'; '' if invalid."""
     hexed = re.sub(r"[^0-9A-Fa-f]", "", mac or "").lower()
     return hexed if len(hexed) == 12 else ""
+
+
+def schedulable_key(device: Device, key: str) -> bool:
+    """May `key` run unattended (timers, schedules, later chat)? A generated toggle may not: sent
+    twice it undoes itself. Learned captures keep their old behaviour."""
+    f = device.features.get(key)
+    return f is not None and (f.discrete or not device.codeset)
 
 
 def feature_label(key: str) -> str:
@@ -172,6 +190,20 @@ def build_ir_features(device_type: DeviceType, brand: str, codes: dict[str, Any]
     if brand.lower() == "epsoneb" and "power_off" not in features and "standby" in decoded:
         features["power_off"] = Feature("power_off", "power off", (decoded["standby"],) * 2, gap_s=2.0)
 
+    ordered = {k: features[k] for k in FEATURE_ORDER if k in features}
+    ordered.update((k, f) for k, f in features.items() if k not in ordered)
+    return ordered
+
+
+def build_codeset_features(cs: Codeset) -> dict[str, Feature]:
+    """Buttons generated from a codeset, both toggle variants built now (so `--check` catches an
+    encoder error at startup and a press never builds anything)."""
+    features = {}
+    for key, b in cs.buttons.items():
+        p0, p1 = cs.packets(key)
+        label = feature_label(key) + ("" if b.discrete else " (toggle)")
+        features[key] = Feature(key, label, (p0,), idempotent=b.discrete, alt_codes=(p1,),
+                                frame_ids=(cs.frame_id(key, 0), cs.frame_id(key, 1)), discrete=b.discrete)
     ordered = {k: features[k] for k in FEATURE_ORDER if k in features}
     ordered.update((k, f) for k, f in features.items() if k not in ordered)
     return ordered
@@ -254,6 +286,9 @@ def _add_ir_device(reg: Registry, room: Room, entry: Any, commands: dict[str, An
         return
     brand = str(entry.get("brand", ""))
     model = str(entry.get("model", ""))
+    if "codeset" in entry:
+        _add_codeset_device(reg, room, entry, dev_id, dtype, brand, model)
+        return
     codes = _dig(commands, str(int(dtype)), brand, model)
     if not isinstance(codes, dict):
         reg.warnings.append(f"device '{dev_id}': no IR codes for {int(dtype)}/{brand}/{model} in commands.json")
@@ -262,6 +297,30 @@ def _add_ir_device(reg: Registry, room: Room, entry: Any, commands: dict[str, An
     reg.devices[dev_id] = Device(
         id=dev_id, room=room.name, kind="ir", type_name=dtype.name.lower(),
         features=features, brand=brand, model=model, device_type=dtype,
+    )
+    room.devices.append(dev_id)
+
+
+def _add_codeset_device(reg: Registry, room: Room, entry: dict, dev_id: str, dtype: DeviceType,
+                        brand: str, model: str) -> None:
+    """A device whose IR is generated from a codeset; commands.json is not looked at."""
+    name = entry.get("codeset")
+    cs = CODESETS.get(name.lower()) if isinstance(name, str) else None
+    if cs is None:
+        known = ", ".join(sorted(CODESETS))
+        reg.warnings.append(f"device '{dev_id}': unknown codeset {name!r} (known: {known}), skipped")
+        return
+    if dtype is DeviceType.AIRCON:
+        reg.warnings.append(f"device '{dev_id}': aircons use their encoder, not a codeset; skipped")
+        return
+    try:
+        features = build_codeset_features(cs)
+    except ValueError as e:
+        reg.warnings.append(f"device '{dev_id}': codeset {cs.name} could not be built ({e}), skipped")
+        return
+    reg.devices[dev_id] = Device(
+        id=dev_id, room=room.name, kind="ir", type_name=dtype.name.lower(), features=features,
+        brand=brand, model=model, device_type=dtype, codeset=cs.name,
     )
     room.devices.append(dev_id)
 

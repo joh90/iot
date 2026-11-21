@@ -20,6 +20,7 @@ from iotbot.ac.state import AcState, AcStateError
 from iotbot.bot.wizard import Draft, Wizard, parse_time
 from iotbot.schedule import timing as tm
 from iotbot.schedule.model import DAYS
+from iotbot.devices.model import schedulable_key
 
 USAGE = ("Usage: /schedule add <device or room> <on|off|set TEMP|button> <time> [days] [settings] "
          "[name=Label]\n"
@@ -70,6 +71,13 @@ def resolve_device(w: Wizard, word: str, action: str) -> str:
     by_lower = {d.lower(): d for d in w.schedulable()}
     if word.lower() in by_lower:
         return by_lower[word.lower()]
+    known = {d.lower(): d for d in reg.devices}
+    if word.lower() in known:
+        dev = reg.devices[known[word.lower()]]
+        if dev.features and all(not f.discrete for f in dev.features.values()) and dev.codeset:
+            raise LineError(f"{dev.id} has only toggle buttons: they cannot run on a timer "
+                            "(sent when the device is already off, a toggle would turn it on).")
+        raise LineError(f"{dev.id} has no buttons that can run on a timer.")
     room = reg.rooms.get(word)
     if room is None:
         lower = {k.lower(): k for k in reg.rooms}
@@ -80,11 +88,12 @@ def resolve_device(w: Wizard, word: str, action: str) -> str:
         feats = w.ctx.devices.get(d).features
         if action == "set":
             return w.managed(d)
+        dev = w.ctx.devices.get(d)
         if action == "on":
-            return w.managed(d) or "power_on" in feats
+            return w.managed(d) or schedulable_key(dev, "power_on")
         if action == "off":
             return w.can_timer(d)
-        return action in feats
+        return action in feats and schedulable_key(dev, action)
 
     fits = [d for d in room.devices if d in w.schedulable() and can(d)]
     managed = [d for d in fits if w.managed(d)]
@@ -165,6 +174,9 @@ def parse_add(w: Wizard, user_id: int, text: str) -> Draft:
         key = {"on": "power_on"}.get(verb, verb)
         if key not in dev.features:
             raise LineError(f"{device} has no '{verb}'. Its buttons: {', '.join(dev.features)}.")
+        if not schedulable_key(dev, key):
+            raise LineError(f"{device} {dev.features[key].label} is a toggle: it cannot run on a timer "
+                            "(sent when the device is already off, it would turn it on).")
         action = {"kind": "capture", "key": key}
 
     # When: "in 2h" | time [days|once|today|tomorrow]

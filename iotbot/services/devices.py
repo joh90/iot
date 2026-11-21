@@ -8,6 +8,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,7 @@ from iotbot.ac.state import AcState
 from iotbot.devices.hub import BroadlinkHub, HubError
 from iotbot.devices.model import Device, Feature, Registry, resolve_feature
 from iotbot.result import Actor, Result
-from iotbot.store import JsonlLog
+from iotbot.store import JsonlLog, read_since
 
 if TYPE_CHECKING:
     from iotbot.ac.service import AcService
@@ -63,6 +64,39 @@ class DeviceService:
         self.ac = ac
         self.last: dict[str, LastAction] = {}
         self._seq = itertools.count(1)
+        # Generated IR: the RC6 toggle bit last sent per device. It flips on every press (one
+        # counter per device, like a real remote), chosen before the first await so presses that
+        # overlap still alternate; the hub's own resend repeats the same bytes
+        self._toggle: dict[str, int] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def seed(self, now: datetime, days: int = 62) -> int:
+        """After a restart: the last send to each codeset device (for "last sent", Undo checks)
+        and its toggle bit, from device_events. Returns how many devices were seeded."""
+        want = {d.id for d in self.registry.devices.values() if d.codeset}
+        if not want:
+            return 0
+        latest: dict[str, dict] = {}
+        try:
+            for rec in read_since(self.events, now - timedelta(days=days), now):
+                if rec.get("device") in want and rec.get("ir"):
+                    latest[rec["device"]] = rec
+        except OSError as e:
+            logger.warning("Could not read device events to seed last sends: %s", e)
+            return 0
+        for dev_id, rec in latest.items():
+            self._toggle[dev_id] = 1 if str(rec["ir"]).endswith(":t1") else 0
+            try:
+                at = datetime.fromisoformat(rec["ts"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if rec.get("feature") in self.registry.devices[dev_id].features:
+                self.last[dev_id] = LastAction(next(self._seq), rec["feature"], at,
+                                               rec.get("actor") or "someone", rec.get("ok"), None)
+        return len(latest)
+
+    def _lock(self, device_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(device_id, asyncio.Lock())
 
     def get(self, device_id: str) -> Device | None:
         return self.registry.devices.get(device_id)
@@ -82,9 +116,12 @@ class DeviceService:
 
     @_tracked
     async def run(self, device_id: str, feature: str, actor: Actor,
-                  request_id: str | None = None, source: str | None = None) -> Result:
+                  request_id: str | None = None, source: str | None = None,
+                  expect_seq: int | None | object = ANY_SEQ) -> Result:
         """Run one feature. `request_id` correlates surfaces (e.g. a Telegram update);
-        `source` links to what triggered it (e.g. a schedule event id). Both are logged."""
+        `source` links to what triggered it (e.g. a schedule event id). Both are logged.
+        `expect_seq` (non-aircon devices): send only if the device's latest action is still that
+        one (None: none yet), checked under a per-device lock; else `changed_since`, nothing sent."""
         device = self.get(device_id)
         if device is None:
             return Result.fail("device_not_found", f"Device '{device_id}' not found.")
@@ -98,7 +135,14 @@ class DeviceService:
                 state = self.ac.state_for(device.id, feature)
                 r = await self._run(device, f, actor, request_id, source, state)
                 return _with_prev(r, prev)
-        return await self._run(device, f, actor, request_id, source)
+        if expect_seq is ANY_SEQ:
+            return await self._run(device, f, actor, request_id, source)
+        async with self._lock(device.id):
+            latest = self.last.get(device.id)
+            if (latest.seq if latest else None) != expect_seq:
+                who = f" by {latest.actor}" if latest else ""
+                return Result.fail("changed_since", f"{device.id} was changed since{who}.")
+            return await self._run(device, f, actor, request_id, source)
 
     @_tracked
     async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
@@ -161,6 +205,14 @@ class DeviceService:
         started = time.perf_counter()
         state = None
         maybe = False
+        ir = None
+        codes = f.codes
+        if f.alt_codes:
+            # Flip now, before any await: a new press must differ from the last one even if that
+            # one failed (the TV may have seen it)
+            toggle = self._toggle[device.id] = 1 - self._toggle.get(device.id, 1)
+            codes = f.alt_codes if toggle else f.codes
+            ir = f.frame_ids[toggle] if f.frame_ids else None
         ok, error = False, "cancelled"
         try:
             if device.kind == "plug":
@@ -169,7 +221,6 @@ class DeviceService:
                 room = self.registry.rooms.get(device.room)
                 if room is None or not room.rm_mac:
                     raise HubError(f"room '{device.room}' has no RM remote configured")
-                codes = f.codes
                 if ac_state is not None:
                     try:
                         codes = (self.ac.packet(ac_state),)
@@ -197,6 +248,8 @@ class DeviceService:
                 "ok": ok, "error": error or None, "maybe_delivered": maybe if not ok else None,
                 "state": state, "ms": ms,
             }
+            if ir:
+                record["ir"], record["actor"] = ir, actor.name
             if ac_state is not None:
                 record["ac_state"] = ac_state.to_dict()
 

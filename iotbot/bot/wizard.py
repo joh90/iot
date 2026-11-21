@@ -28,6 +28,7 @@ from iotbot.result import Actor, Result
 from iotbot.schedule import text as tx
 from iotbot.schedule import timing as tm
 from iotbot.schedule.model import DAYS, ID_RE, On, Schedule, Weekly
+from iotbot.devices.model import schedulable_key
 
 NS = "sw"
 DRAFT_TTL_S = 15 * 60
@@ -156,11 +157,11 @@ class Wizard:
         return bool(ac and ac.manages(device))
 
     def schedulable(self) -> list[str]:
-        return [d.id for d in self.ctx.registry.devices.values() if d.features]
+        return [d.id for d in self.ctx.registry.devices.values() if any(schedulable_key(d, k) for k in d.features)]
 
     def can_timer(self, device: str) -> bool:
         dev = self.ctx.devices.get(device)
-        return dev is not None and (self.managed(device) or "power_off" in dev.features)
+        return dev is not None and (self.managed(device) or schedulable_key(dev, "power_off"))
 
     def preset(self, device: str) -> AcState:
         ac = self.ctx.devices.ac
@@ -266,7 +267,8 @@ class Wizard:
                         _btn("Change temp", d.id, "act", "adj")]
                 return Screen(f"{h(d.device)}: do what?", InlineKeyboardMarkup([opts, nav]))
             dev = self.ctx.devices.get(d.device)
-            feats = [_btn(f.label, d.id, "cap", f.key) for f in list(dev.features.values())[:40]]
+            feats = [_btn(f.label, d.id, "cap", f.key) for f in list(dev.features.values())[:40]
+                     if schedulable_key(dev, f.key)]
             return Screen(f"{h(d.device)}: which button?", InlineKeyboardMarkup(_rows(feats, 2) + [nav]))
         if step == "pick":
             st = AcState.from_dict(d.action["state"]) if d.action and d.action.get("kind") == "on" \
@@ -387,7 +389,8 @@ class Wizard:
                 return self.go(d, self.after_action(d)), ""
             if args[0] == "adj":
                 return self.go(d, "adj"), ""
-        if op == "cap" and args and d.device:
+        if op == "cap" and args and d.device and (dv := self.ctx.devices.get(d.device)) \
+                and schedulable_key(dv, args[0]):
             d.action = {"kind": "capture", "key": args[0]}
             return self.go(d, self.after_action(d)), ""
         if op == "adj" and args and args[0].isdecimal():

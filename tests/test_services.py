@@ -273,3 +273,87 @@ def test_admin_ids_setting():
     for bad in ("abc", "12,x", "²", "012"):
         with pytest.raises(ConfigError, match="ADMIN_IDS"):
             load_settings(env_file=None, environ=env | {"ADMIN_IDS": bad})
+
+
+# ---- Phase 10.5: generated IR (codeset devices) ---------------------------------------------------
+
+def tv_service(tmp_path, hub=None):
+    cfg = {"bedroom": {"mac_address": "780f771abcde", "broadlink_type": "RMMINI", "devices": [
+        {"type": 2, "id": "bed_tv", "brand": "philips", "codeset": "philips-rc6"}]}}
+    return DeviceService(load_registry(cfg, {}), hub or FakeHub(), JsonlLog(tmp_path, "device_events"))
+
+
+def _sent_toggles(hub):
+    from iotbot.ir import packet, rc6
+
+    return [rc6.decode(packet.to_pulses(pkts[0]))[0][2] for _, pkts, _, _ in hub.sent]
+
+
+async def test_toggle_bit_flips_on_every_press_across_keys_and_is_logged(tmp_path):
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "button")
+    for key in ("power_on", "power_on", "power_off", "power_on"):
+        assert (await svc.run("bed_tv", key, a)).ok
+    assert _sent_toggles(hub) == [0, 1, 0, 1]
+    assert all(idem for *_, idem in hub.sent)                     # discrete codes may be resent
+    ev = events(tmp_path)
+    assert [e["ir"][-2:] for e in ev] == ["t0", "t1", "t0", "t1"] and ev[0]["actor"] == "Alice"
+    assert ev[2]["ir"].startswith("rc6:0:") and ev[2]["feature"] == "power_off"
+
+
+async def test_concurrent_presses_still_alternate(tmp_path):
+    import asyncio
+
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "button")
+    await asyncio.gather(*(svc.run("bed_tv", "power_off", a) for _ in range(4)))
+    assert sorted(_sent_toggles(hub)) == [0, 0, 1, 1]
+
+
+async def test_a_failed_press_still_flips_the_next_one(tmp_path):
+    hub = FakeHub(fail=HubError("offline", maybe_delivered=True))
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "button")
+    r = await svc.run("bed_tv", "power_off", a)
+    assert not r.ok and r.data["maybe_delivered"]
+    hub.fail = None
+    assert (await svc.run("bed_tv", "power_off", a)).ok
+    assert _sent_toggles(hub) == [1]                               # the failed one was t0
+    assert events(tmp_path)[0]["ir"].endswith(":t0") and events(tmp_path)[0]["ok"] is False
+
+
+async def test_expect_seq_refuses_when_something_was_sent_since(tmp_path):
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a, b = Actor(1, "Alice", "llm"), Actor(2, "Bob", "button")
+    r = await svc.run("bed_tv", "power_off", a, expect_seq=None)      # nothing sent yet: fine
+    assert r.ok
+    seq = r.data["seq"]
+    await svc.run("bed_tv", "power_on", b)
+    stale = await svc.run("bed_tv", "power_on", a, expect_seq=seq)
+    assert not stale.ok and stale.error == "changed_since" and "by Bob" in stale.message
+    assert len(hub.sent) == 2
+
+
+async def test_seed_restores_last_send_and_toggle_after_a_restart(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    await svc.run("bed_tv", "power_on", Actor(1, "Alice", "button"))      # t0
+    await svc.run("bed_tv", "power_off", Actor(1, "Alice", "llm"))        # t1
+    again = tv_service(tmp_path, hub)
+    assert again.seed(datetime.now(ZoneInfo("Asia/Singapore"))) == 1
+    last = again.last["bed_tv"]
+    assert (last.feature, last.actor, last.ok) == ("power_off", "Alice", True)
+    await again.run("bed_tv", "power_on", Actor(1, "Alice", "button"))
+    assert _sent_toggles(hub) == [0, 1, 0]                               # continues after t1
+
+
+async def test_seed_without_codeset_devices_reads_nothing(tmp_path):
+    from datetime import datetime
+
+    assert service(tmp_path).seed(datetime.now().astimezone()) == 0

@@ -26,10 +26,13 @@ def frames_of(packet):
     return m.pulses_to_frames(m.packet_to_pulses(packet))
 
 
-def make_ctx(tmp_path, env=None, commands=None):
+def make_ctx(tmp_path, env=None, commands=None, tv=None):
+    """`tv`: a codeset name to add "bed_tv" (generated IR) to the bedroom, next to bed_ac."""
+    bedroom = [{"type": 1, "id": "bed_ac", "brand": "mitsubishi", "model": "fn18ve-22"}]
+    if tv:
+        bedroom.append({"type": 2, "id": "bed_tv", "brand": "philips", "codeset": tv})
     (tmp_path / "devices.json").write_text(json.dumps({
-        "bedroom": {"mac_address": "780f771abcde", "broadlink_type": "RMMINI",
-                    "devices": [{"type": 1, "id": "bed_ac", "brand": "mitsubishi", "model": "fn18ve-22"}]},
+        "bedroom": {"mac_address": "780f771abcde", "broadlink_type": "RMMINI", "devices": bedroom},
         "office": {"mac_address": "780f771abcdf", "broadlink_type": "RMMINI",
                    "devices": [{"type": 1, "id": "office_ac", "brand": "mitsubishi", "model": "fn18ve-23"},
                                {"type": 1, "id": "old_ac", "brand": "daikin", "model": "nx"}]},

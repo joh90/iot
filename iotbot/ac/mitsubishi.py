@@ -22,6 +22,7 @@ Bits go out LSB first; the remote sends the frame twice.
 from __future__ import annotations
 
 from iotbot.ac.state import AcState
+from iotbot.ir import packet
 
 HEADER = bytes.fromhex("23cb260100")
 FRAME_LEN = 18
@@ -47,9 +48,10 @@ FRAME_GAP = 13700
 END_GAP = 109455
 COPIES = 2
 
-# Broadlink IR packet: 0x26, repeat count, little-endian payload length, then
-# durations in ticks of 269/8192 ms (32.84 us); one byte, or 0x00 + 2 bytes big-endian
-IR_PACKET = 0x26
+# Broadlink packets are built by iotbot/ir/packet.py. This encoder's durations are in the 32.84 us
+# unit python-broadlink documents (the hardware tick is 30.45 us, see packet.py); the aircons accept
+# them as they are and tests/test_ac_golden.py pins the bytes, so keep this unit
+IR_PACKET = packet.IR_PACKET
 TICK_US = 32.84
 
 
@@ -113,38 +115,19 @@ def frame_to_pulses(frame: bytes, copies: int = COPIES) -> list[int]:
 
 
 def pulses_to_packet(pulses: list[int]) -> bytes:
-    """Broadlink IR packet for `pulses` (us). Rounds to ticks; broadlink's own
-    pulses_to_data truncates, which shortens every duration by up to one tick."""
-    body = bytearray()
-    for us in pulses:
-        ticks = max(1, round(us / TICK_US))
-        if ticks > 0xFFFF:
-            raise AcFrameError(f"pulse {us} us is too long for a Broadlink packet")
-        if ticks > 0xFF:
-            body += bytes((0, ticks >> 8, ticks & 0xFF))
-        else:
-            body.append(ticks)
-    return bytes((IR_PACKET, 0, len(body) & 0xFF, len(body) >> 8)) + bytes(body)
+    """Broadlink IR packet for `pulses` (us), in this encoder's 32.84 us ticks."""
+    try:
+        return packet.to_packet(pulses, TICK_US)
+    except packet.PacketError as e:
+        raise AcFrameError(str(e)) from None
 
 
-def packet_to_pulses(packet: bytes) -> list[int]:
+def packet_to_pulses(pkt: bytes) -> list[int]:
     """Durations (us) in a Broadlink IR packet. Raises AcFrameError if malformed."""
-    if len(packet) < 4 or packet[0] != IR_PACKET:
-        raise AcFrameError("not a Broadlink IR packet")
-    end = 4 + (packet[2] | packet[3] << 8)
-    if end > len(packet):
-        raise AcFrameError("Broadlink packet is shorter than its length field")
-    out, i = [], 4
-    while i < end:
-        ticks = packet[i]
-        i += 1
-        if ticks == 0:
-            if i + 2 > end:
-                raise AcFrameError("Broadlink packet ends inside a long pulse")
-            ticks = packet[i] << 8 | packet[i + 1]
-            i += 2
-        out.append(round(ticks * TICK_US))
-    return out
+    try:
+        return packet.to_pulses(pkt, TICK_US)
+    except packet.PacketError as e:
+        raise AcFrameError(str(e)) from None
 
 
 def pulses_to_frames(pulses: list[int]) -> list[bytes]:

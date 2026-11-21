@@ -167,3 +167,56 @@ def test_malformed_devices_never_raise(cfg):
     reg = load_registry(cfg, cmds(power_on=["2600", 5]))
     assert set(reg.devices) <= {"ok"}
     assert len([w for w in reg.warnings if "characters" in w]) == 0
+
+
+# ---- Phase 10: generated IR from a codeset ------------------------------------------------------
+
+def _tv_cfg(**entry):
+    return {"bed": {"mac_address": "78:0f:77:1a:bc:de", "broadlink_type": "rmmini", "devices": [
+        {"type": 2, "id": "bed_tv", "brand": "philips", **entry}]}}
+
+
+def test_codeset_tv_builds_without_commands_json_and_without_warnings():
+    from iotbot.ir import codesets, packet, rc6
+
+    reg = load_registry(_tv_cfg(codeset="philips-rc6"), {})
+    assert reg.warnings == []
+    tv = reg.devices["bed_tv"]
+    assert tv.codeset == "philips-rc6" and tv.type_name == "tv" and tv.kind == "ir"
+    assert list(tv.features) == ["power_on", "power_off"]
+    on = tv.features["power_on"]
+    cmd = codesets.CODESETS["philips-rc6"].buttons["power_on"].command
+    assert rc6.decode(packet.to_pulses(on.codes[0])) == [(0, cmd, 0)]
+    assert rc6.decode(packet.to_pulses(on.alt_codes[0])) == [(0, cmd, 1)]
+    assert on.discrete and on.idempotent and on.frame_ids == (f"rc6:0:{cmd}:t0", f"rc6:0:{cmd}:t1")
+    assert resolve_feature(tv, ["off"]) == "power_off"
+
+
+def test_codeset_entries_that_are_skipped_with_a_warning():
+    reg = load_registry(_tv_cfg(codeset="sony-sirc"), {})
+    assert "bed_tv" not in reg.devices and "unknown codeset 'sony-sirc'" in reg.warnings[0]
+    reg = load_registry(_tv_cfg(codeset=7), {})
+    assert "bed_tv" not in reg.devices and "unknown codeset 7" in reg.warnings[0]
+    cfg = {"bed": {"mac_address": "780f771abcde", "devices": [
+        {"type": 1, "id": "bed_ac", "brand": "mitsubishi", "codeset": "philips-rc6"}]}}
+    reg = load_registry(cfg, {})
+    assert "bed_ac" not in reg.devices and "aircons use their encoder" in reg.warnings[0]
+
+
+def test_codeset_name_is_case_insensitive_and_brand_is_free_text():
+    reg = load_registry(_tv_cfg(codeset="Philips-RC6", brand="whatever"), {})
+    assert reg.warnings == [] and reg.devices["bed_tv"].codeset == "philips-rc6"
+
+
+def test_a_toggle_is_never_power_on_or_off_and_is_not_discrete():
+    from iotbot.devices.model import build_codeset_features
+    from iotbot.ir.codesets import CODESETS, Button, Codeset, problems
+
+    assert all(problems(cs) == [] for cs in CODESETS.values())
+    toggle_only = Codeset("t", "rc6", 0, {"power": Button(12, False)})
+    f = build_codeset_features(toggle_only)["power"]
+    assert not f.discrete and not f.idempotent and f.label == "power (toggle)"
+    assert problems(Codeset("bad", "rc6", 0, {"power_off": Button(12, False)})) == [
+        "bad: power_off must be a discrete code (a toggle is called 'power')"]
+    assert problems(Codeset("x", "nec", 300, {"a": Button(999, True)})) == [
+        "x: unknown protocol 'nec'", "x: address 300 out of range", "x: a command 999 out of range"]

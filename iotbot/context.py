@@ -6,6 +6,8 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from iotbot.ac.service import AcService
 from iotbot.ac.state import AcStateStore
@@ -120,6 +122,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
         logger.info("AC_ENCODER=off: aircons send their captured codes")
 
     devices = DeviceService(registry, hub, events, ac)
+    devices.seed(datetime.now(ZoneInfo(settings.timezone)))
     users = UserService(users_store, audit, settings.admin_ids)
     if settings.admin_ids and not any(users.is_allowed(a) for a in settings.admin_ids):
         warnings.append("ADMIN_IDS lists no approved user: nobody can approve or remove users")

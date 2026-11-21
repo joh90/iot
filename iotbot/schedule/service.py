@@ -27,6 +27,7 @@ from iotbot.schedule.model import (DAYS, Adjust, Capture, Off, On, Once, Schedul
 from iotbot.schedule.store import ScheduleStore
 from iotbot.services.devices import DeviceService
 from iotbot.store import JsonlLog, StoreError
+from iotbot.devices.model import schedulable_key
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,9 @@ class ScheduleService:
             return f"{s.device} has no power off"
         if isinstance(a, Capture) and a.key not in dev.features:
             return f"{s.device} has no '{a.key}'"
+        if isinstance(a, (Off, Capture)) and not managed \
+                and not schedulable_key(dev, "power_off" if isinstance(a, Off) else a.key):
+            return f"{s.device} {'power off' if isinstance(a, Off) else a.key} is a toggle and cannot be scheduled"
         return None
 
     def agenda(self, start: datetime, end: datetime) -> list[tuple[datetime, Schedule, str | None]]:

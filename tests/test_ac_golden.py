@@ -4,6 +4,7 @@ There is no hardware check before deploy, so these are what stands between a
 wrong bit and an AC that ignores the bot.
 """
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -90,3 +91,21 @@ def test_upstream_real_remote_vectors(frame_hex):
     frame = bytes.fromhex(frame_hex)
     assert m.decode(frame) == UPSTREAM[frame_hex]
     assert m.encode(UPSTREAM[frame_hex]) == frame
+
+
+# Byte snapshot of the packets the bot sends today (Phase 10.1): moving the Broadlink packet code to
+# iotbot/ir/packet.py must not change a single aircon byte
+PACKET_SHA256 = {
+    ("fn18ve-22", "power_on"): "9ddb0dfbb01844441b7e2e3214f2bbe844fd943b4876b3b28313c1ee7e9ea6d1",
+    ("fn18ve-22", "power_off"): "ec3655d4c3ac40e0feb9975c153757b351e509e5f8bed59d64f886ba10d28d79",
+    ("fn18ve-22", "powerful"): "d84b5b8c6281926cdda9c4ea18b109836ec82cc859c71830952db729051f7703",
+    ("fn18ve-23", "power_on"): "e9eed4d476940952965c01f580a087428bdbace951eb1978ad1c647445c1c3e0",
+    ("fn18ve-23", "power_off"): "ba0239854f2917b2d6c23eff3850c6b5cc94b62fb17ef79692c0287d0d5d0c43",
+    ("fn18ve-23", "powerful"): "ce8fb3a81788fd8b37fc2df321644612a2ee48bf4894eeed4d9872e0f665d900",
+}
+
+
+@pytest.mark.parametrize("key", list(GOLDEN))
+def test_sent_packets_are_byte_identical_to_the_snapshot(key):
+    pkt = m.build_packet(GOLDEN[key][1])
+    assert len(pkt) == 592 and hashlib.sha256(pkt).hexdigest() == PACKET_SHA256[key]
