@@ -61,7 +61,16 @@ class FakeLan:
 
 @pytest.fixture
 def env(tmp_path):
-    ctx = make_ctx(tmp_path)
+    return _env(tmp_path)
+
+
+@pytest.fixture
+def env_tv(tmp_path):
+    return _env(tmp_path, tv="philips-rc6")
+
+
+def _env(tmp_path, **kw):
+    ctx = make_ctx(tmp_path, **kw)
     clock = Clock()
     lan = FakeLan({"192.168.1.20": PHONE, "192.168.1.30": TV})
     p = ctx.presence
@@ -304,24 +313,24 @@ async def test_pairing_skips_phones_already_set_up_and_one_at_a_time(env):
 
 # ---- offers ----------------------------------------------------------------------------
 
-async def set_ac(env, device, **state):
+async def set_device(env, device, **state):
     r = await env.ctx.devices.send_ac_state(device, AcState(**{"power": True, "temp": 24, **state}), BOB)
     assert r.ok
 
 
 async def test_on_since_survives_changes_and_resets_on_off(env):
     ac = env.ctx.ac
-    await set_ac(env, "bed_ac")
+    await set_device(env, "bed_ac")
     first = ac.last("bed_ac").on_since
-    await set_ac(env, "bed_ac", temp=25)
+    await set_device(env, "bed_ac", temp=25)
     assert ac.last("bed_ac").on_since == first
-    await set_ac(env, "bed_ac", power=False)
+    await set_device(env, "bed_ac", power=False)
     assert ac.last("bed_ac").on_since is None
 
 
 async def test_arrival_offer_turns_on_with_the_last_state_and_undo(env):
     await pair(env)
-    await set_ac(env, "office_ac", temp=26, power=False)
+    await set_device(env, "office_ac", temp=26, power=False)
     await env.o.arrive(ME)
     (m,) = env.sent
     assert m.uid == ME and not m.silent and m.text == "Welcome home (18:00).\nBoth aircons are off."
@@ -344,8 +353,8 @@ async def test_arrival_rules(env):
     await env.o.arrive(ME)
     assert env.sent == []                                      # switched off in /phone
     await env.p.set_pref(ME, "arrival", True)
-    await set_ac(env, "bed_ac")
-    await set_ac(env, "office_ac")
+    await set_device(env, "bed_ac")
+    await set_device(env, "office_ac")
     await env.o.arrive(ME)
     assert env.sent == []                                      # everything is already on
 
@@ -432,7 +441,7 @@ async def test_expiry_runs_even_when_a_round_fails(env):
 
 async def test_pairing_a_phone_closes_an_open_departure(env):
     await pair(env)
-    await set_ac(env, "bed_ac")
+    await set_device(env, "bed_ac")
     await env.o.all_away(env.clock.t)
     await env.ctx.users.add(ALICE, OTHER, "Bob")
     await pair(env, OTHER, PHONE2, "192.168.1.21")
@@ -474,7 +483,7 @@ async def test_departure_goes_to_everyone_and_the_first_tap_wins(env):
 
 async def test_departure_is_silent_at_night_and_closes_when_someone_is_back(env):
     await pair(env)
-    await set_ac(env, "bed_ac")
+    await set_device(env, "bed_ac")
     env.clock.t = datetime(2026, 10, 24, 2, 0, tzinfo=SGT).timestamp()
     await env.o.all_away(env.clock.t)
     assert env.sent[0].silent
@@ -487,7 +496,7 @@ async def test_departure_needs_an_aircon_on_and_someone_who_wants_it(env):
     await pair(env)
     await env.o.all_away(env.clock.t)
     assert env.sent == []
-    await set_ac(env, "bed_ac")
+    await set_device(env, "bed_ac")
     await env.p.set_pref(ME, "departure", False)
     await env.o.all_away(env.clock.t)
     assert env.sent == []
@@ -560,3 +569,31 @@ async def test_chat_home_state_has_counts_and_on_since(env):
     out = await tools["get_home_state"].run({})
     assert out["people_home"] == "1 of 1 phones set up are on the home Wi-Fi"
     assert out["aircons"][0]["on_since"] == "Fri 18:00" and "Alice" not in json.dumps(out)
+
+
+async def test_departure_lists_a_tv_the_bot_last_sent_on_and_undo_turns_it_back_on(env_tv):
+    env = env_tv
+    from iotbot.ir import packet, rc6
+    from iotbot.ir.codesets import CODESETS
+
+    on, off = (CODESETS["philips-rc6"].buttons[k].command for k in ("power_on", "power_off"))
+    await pair(env)
+    await env.ctx.devices.run("bed_tv", "power_on", ALICE)
+    await env.o.all_away(env.clock.t)
+    a = env.sent[-1]
+    assert "Still on: Bedroom TV (sent on " in a.text and labels(a.rows) == ["Bedroom TV off", "Leave on"]
+    r = await tap(env, ALICE, data_for(a.rows, "Bedroom TV off"))
+    assert r.ok and env.ctx.devices.last["bed_tv"].feature == "power_off"
+    assert "Bedroom TV off (by you" in env.edits[-1].text
+    r = await tap(env, ALICE, data_for(env.edits[-1].rows, "Undo"))
+    assert r.ok and env.ctx.devices.last["bed_tv"].feature == "power_on"
+    cmds = [rc6.decode(packet.to_pulses(p[0]))[0][1] for _, p, _ in env.ctx.sent]
+    assert cmds == [on, off, on]
+
+
+async def test_no_departure_offer_for_a_tv_last_sent_off(env_tv):
+    env = env_tv
+    await pair(env)
+    await env.ctx.devices.run("bed_tv", "power_off", ALICE)
+    await env.o.all_away(env.clock.t)
+    assert env.sent == []

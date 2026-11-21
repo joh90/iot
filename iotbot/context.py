@@ -13,7 +13,7 @@ from iotbot.ac.service import AcService
 from iotbot.ac.state import AcStateStore
 from iotbot.config import Settings
 from iotbot.devices.hub import BroadlinkHub, Expected, Transport
-from iotbot.devices.model import Registry, load_registry
+from iotbot.devices.model import Registry, chat_tv, load_registry
 from iotbot.llm.assistant import Assistant
 from iotbot.llm.client import LlmClient
 from iotbot.llm.diary import DiaryTools
@@ -73,8 +73,24 @@ def expected_devices(reg: Registry) -> list[Expected]:
 
 
 def assistant_devices(reg: Registry, ac: AcService | None) -> list[str]:
-    """The devices the assistant may use: managed aircons only (toggle IR stays button-only)."""
-    return [f"{d.id}: aircon in room '{d.room}'" for d in reg.devices.values() if ac and ac.manages(d.id)]
+    """One prompt line per device: managed aircons, TVs chat may switch, and a toggle-only TV
+    (named so the assistant can say why it cannot, instead of guessing)."""
+    out = []
+    for d in reg.devices.values():
+        if ac and ac.manages(d.id):
+            out.append(f"{d.id}: aircon in room '{d.room}'")
+        elif chat_tv(d):
+            out.append(f"{d.id}: TV in room '{d.room}' (power on/off only)")
+        elif d.codeset and d.features:
+            out.append(f"{d.id}: TV in room '{d.room}', power toggle only: chat cannot switch it; tell the "
+                       "person to use its Power button in /keyboard")
+    return out
+
+
+def chat_devices(reg: Registry, ac: AcService | None) -> list[tuple[str, str, str]]:
+    """(id, room, kind) of every device chat may change: kind "ac" or "tv"."""
+    return [(d.id, d.room, "ac" if ac and ac.manages(d.id) else "tv") for d in reg.devices.values()
+            if (ac and ac.manages(d.id)) or chat_tv(d)]
 
 
 def build_context(settings: Settings, transport: Transport | None = None) -> AppContext:
@@ -183,7 +199,8 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
                               replay=ReplayLog(settings.log_dir / "llm", settings.timezone), memory=memory,
                               day_label=holidays.label,
                               aircons=lambda: [(d.id, d.room) for d in registry.devices.values()
-                                               if ac and ac.manages(d.id)])
+                                               if ac and ac.manages(d.id)],
+                              chat_devices=lambda: chat_devices(registry, ac))
     else:
         logger.info("LLM_ENABLED=off: the chat assistant is switched off")
 

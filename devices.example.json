@@ -31,8 +31,8 @@
 			{
 				"type": 2,
 				"id": "living-tv",
-				"brand": "sony",
-				"model": "vega"
+				"brand": "philips",
+				"codeset": "philips-rc6"
 			}
 		],
 		"broadlink_devices": [

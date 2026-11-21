@@ -356,6 +356,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _ac_card_button(update, context, query, action[len(AC_CARD):], args)
     elif ns == chat.NS:
         await _card_button(update, context, query, action, args)
+    elif ns == chat.WHICH:
+        ctx = app_ctx(context)
+        await chat.which_button(update, context, query, ctx.assistant, actor_of(update, ctx, "llm"), action, args)
     elif ns == ph.NS:
         ctx = app_ctx(context)
         await ph.phone_button(context, query, ctx, actor_of(update, ctx, "button"), action, args)

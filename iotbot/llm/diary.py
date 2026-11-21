@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from iotbot.ac.state import AcState, AcStateError
+from iotbot.devices.model import chat_tv
 from iotbot.llm.memory import Memory, mentions_forgotten
 from iotbot.llm.tools import Tool
 from iotbot.result import Actor
@@ -43,10 +44,12 @@ class DiaryTools:
         return ZoneInfo(self.ctx.settings.timezone)
 
     def tools(self, actor: Actor) -> list[Tool]:
-        acs = [d for d in self.ctx.registry.devices if self.ctx.ac and self.ctx.ac.manages(d)]
+        acs = [d.id for d in self.ctx.registry.devices.values()
+               if (self.ctx.ac and self.ctx.ac.manages(d.id)) or chat_tv(d)]
+        tv = any(chat_tv(d) for d in self.ctx.registry.devices.values())
         props: dict[str, Any] = {
             "what": {"type": "string", "enum": ["all", "devices", "schedules", "my_messages"],
-                     "description": "devices = what was sent to aircons and by whom; my_messages = what "
+                     "description": f"devices = what was sent to {'aircons and TVs' if tv else 'aircons'} and by whom; my_messages = what "
                                     "this person typed to you before"},
             "days": {"type": "integer", "minimum": 1, "maximum": MAX_DAYS, "description": "how far back (7)"},
             "words": {"type": "string", "maxLength": 60,
@@ -56,7 +59,7 @@ class DiaryTools:
         }
         if acs:
             props["device"] = {"type": "string", "enum": acs}
-        return [Tool("diary", f"Search what happened at home: aircon changes and who made them, schedule "
+        return [Tool("diary", f"Search what happened at home: {'device' if tv else 'aircon'} changes and who made them, schedule "
                               f"changes, and this person's own earlier messages. Newest first, at most "
                               f"{MAX_LINES} lines.",
                      {"type": "object", "properties": props}, run=lambda a: self._search(actor, a))]

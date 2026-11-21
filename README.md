@@ -24,7 +24,8 @@ Design decisions and the roadmap (AC state engine, scheduling, prompts, telemetr
 - Plain messages in a private chat go to the chat assistant (see below), e.g. "a bit cooler in the
   bedroom", "off the office aircon at 7am weekdays", "is the bedroom aircon on?"
 
-A device only gets the actions whose IR codes were captured in `commands.json`, so every button works.
+A device only gets the actions whose IR codes were captured in `commands.json`, or, for a device that
+names a codeset (see "Generated IR (TVs)"), the buttons of that codeset, so every button works.
 Only approved Telegram user ids can use the bot; usernames are not checked.
 
 ## Files
@@ -143,6 +144,8 @@ server off the open network.
 - `broadlink_type` for the RM is informational; any Broadlink remote that can send IR works.
 - Device `type`: 1 aircon, 2 TV, 3 set-top box, 4 projector, 5 amplifier.
 - `brand` + `model` pick the codes in `commands.json` (`commands["<type>"]["<brand>"]["<model>"]`).
+- Or `"codeset": "philips-rc6"`: the codes are generated (see "Generated IR (TVs)") and
+  `commands.json` is not used for that device; `brand` and `model` are then free text.
 - Plugs: `SP2` (power) or `SP4` (power + nightlight).
 
 One bad entry only produces a warning; the rest of the room still loads.
@@ -168,6 +171,30 @@ about 2 seconds. Learning over Telegram (`/learn`) is on the deferred list in PL
 
 Aircon remotes send the whole state with every press (mode, temperature, fan, swing), so a captured
 "power on" always means one specific setting. See the IR decode table in PLAN.md.
+
+## Generated IR (TVs)
+
+Like the aircon frames, TV codes can be generated instead of learned: a device names its codeset,
+the family of codes its remote sends, and gets that codeset's buttons.
+
+```json
+{"type": 2, "id": "bedroom-tv", "brand": "philips", "codeset": "philips-rc6"}
+```
+
+- Codesets live in `iotbot/ir/codesets.py` (format, address, and a command number per button name).
+  Only RC6 is built so far (`iotbot/ir/rc6.py`, Philips TVs); `iotbot/ir/packet.py` turns any pulse
+  timings into the Broadlink packet. A new codeset is a code change and an image rebuild.
+- A button is discrete (power on, power off: same meaning whatever the TV is doing) or a toggle (one
+  power key). Only discrete buttons may be resent after an unclear reply, run on timers and schedules,
+  or be used by the chat assistant. A toggle is always called `power`, never `power_on` / `power_off`,
+  and a TV with only a toggle stays on the Telegram buttons.
+- The RC6 toggle bit flips on every press (per TV, kept across restarts from the device log), so the
+  TV sees each press as new.
+- The bot cannot see the TV: what it reports is what it last sent. A sticker or a bad angle in front of
+  the TV's sensor blocks everything; the RM mini sends at about 38 kHz while RC6 is 36 kHz, which works
+  at room distances.
+- The Philips power numbers in the codeset are checked on the real TV before the TV is added to the
+  live `devices.json`.
 
 ## Aircon state (Mitsubishi)
 
@@ -238,17 +265,25 @@ Rules worth knowing:
   them for a day): the sender is told to send again. Messages older than 2 minutes count as offline.
 - The bot token is scrubbed from the logs.
 - A failed send rediscovers the device by MAC and retries once, but only when a repeat is harmless:
-  aircon frames (full state) are safe to resend, while toggles like TV power are never resent after an
-  unclear reply, so the TV is not switched on and off again.
+  aircon frames (full state) and discrete TV codes (power on, power off) are safe to resend, while
+  toggles like a single TV power key are never resent after an unclear reply, so the TV is not
+  switched on and off again.
 
 ## Chat assistant
 
 Approved users can type to the bot in a private chat. A local model on the PC (whatever llama-server
 has loaded, thinking off) reads the message and picks tools; code does everything else.
 
-- It handles the managed aircons and their schedules: change settings ("a bit cooler" = 1C below what
-  the bot last sent), timers, repeating schedules, edit / pause / resume / delete, and questions such
-  as "is the bedroom aircon on?" or "what's scheduled tonight?". Anything else gets a polite no.
+- It handles the managed aircons, TVs with discrete power codes, and their schedules: change settings
+  ("a bit cooler" = 1C below what the bot last sent), TV on / off, timers, repeating schedules, edit /
+  pause / resume / delete, and questions such as "is the bedroom aircon on?" or "what's scheduled
+  tonight?". Anything else gets a polite no.
+- A TV is only switched when the message names it ("tv", "television", "telly"), says everything / all,
+  or one of your notes ties the words to it. "off bedroom" with an aircon and a TV in the bedroom asks
+  "Turn off in the bedroom: which one?" with a button per answer; after your tap the bot offers once to
+  save that answer as your note, so it stops asking. "Both" with more than two devices asks the same way.
+- If the bot's record says a device is already like that, nothing is sent and you get a [Send anyway]
+  button (for when someone used the remote).
 - Nothing changes until you tap. Every action shows a card drawn by code, "Do this?" with each line as
   before -> after, and [Do it] [Cancel] for 5 minutes. A newer request replaces your older card. If the
   device or schedule changed since the card was drawn, Do it refuses and you ask again.

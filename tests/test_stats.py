@@ -213,3 +213,14 @@ async def test_llm_never_raises_or_hangs():
         started = asyncio.get_running_loop().time()
         assert await stats.llm_health("http://llm", c) == "down (no answer in 2 s)"
         assert asyncio.get_running_loop().time() - started < 3
+
+
+def test_tv_sends_by_surface_and_failures(tmp_path):
+    reg = make_ctx(tmp_path, tv="philips-rc6").registry
+    evs = [event(device="bed_tv", ir="rc6:0:61:t0", surface="button"),
+           event(device="bed_tv", ir="rc6:0:63:t1", surface="llm"),
+           event(device="bed_tv", ir="rc6:0:61:t0", surface="scheduler", ok=False),
+           event(device="bed_ac")]
+    out = text(stats.summary([], evs, reg, 7, names))
+    assert "TV sends</b>\n- bed_tv: 3 (1 buttons, 1 chat, 1 timers), 1 failed" in out
+    assert "TV sends" not in text(stats.summary([], [event(device="bed_ac")], reg, 7, names))

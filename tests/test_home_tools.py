@@ -65,7 +65,7 @@ def test_only_managed_aircons_and_clean_schemas(home):
     assert home.h.acs() == ["bed_ac", "office_ac"]                  # old_ac (daikin) is not managed
     for t in home.tools.values():
         assert schema_problems(t.parameters) == [], t.name
-    assert home.tools["set_ac"].parameters["properties"]["device"]["enum"] == ["bed_ac", "office_ac"]
+    assert home.tools["set_device"].parameters["properties"]["device"]["enum"] == ["bed_ac", "office_ac"]
 
 
 async def test_state_says_unknown_then_what_who_when(home):
@@ -79,7 +79,7 @@ async def test_state_says_unknown_then_what_who_when(home):
 
 async def test_set_ac_line_run_and_undo(home):
     await send(home, "bed_ac")
-    p = await prep(home, "set_ac", {"device": "bed_ac", "temp": 23, "vane": "swing"})
+    p = await prep(home, "set_device", {"device": "bed_ac", "temp": 23, "vane": "swing"})
     assert p.line == "ON cool 24C fan auto vane auto -> ON cool 23C fan auto vane swing"
     sent = len(home.ctx.sent)
     done = await p.run(ALICE)
@@ -91,29 +91,29 @@ async def test_set_ac_line_run_and_undo(home):
 
 async def test_settings_on_an_off_aircon_turn_it_on(home):
     await send(home, "bed_ac", power=False)
-    p = await prep(home, "set_ac", {"device": "bed_ac", "temp": 23})
+    p = await prep(home, "set_device", {"device": "bed_ac", "temp": 23})
     assert p.line == "OFF (cool 24C fan auto vane auto) -> ON cool 23C fan auto vane auto"
     for args in ({"power": False}, {"power": False, "temp": 20}):      # off keeps the settings
         with pytest.raises(ArgError, match="already"):
-            await prep(home, "set_ac", {"device": "bed_ac", **args})
+            await prep(home, "set_device", {"device": "bed_ac", **args})
 
 
 async def test_temp_change_needs_a_record_and_stays_in_range(home):
     with pytest.raises(ArgError, match="does not know"):
-        await prep(home, "set_ac", {"device": "bed_ac", "temp_change": -1})
+        await prep(home, "set_device", {"device": "bed_ac", "temp_change": -1})
     await send(home, "bed_ac", temp=16)
     with pytest.raises(ArgError, match="temp must be"):
-        await prep(home, "set_ac", {"device": "bed_ac", "temp_change": -1})
-    p = await prep(home, "set_ac", {"device": "bed_ac", "temp_change": 2})
+        await prep(home, "set_device", {"device": "bed_ac", "temp_change": -1})
+    p = await prep(home, "set_device", {"device": "bed_ac", "temp_change": 2})
     assert p.line.endswith("-> ON cool 18C fan auto vane auto")
     with pytest.raises(ArgError, match="not both"):
-        await prep(home, "set_ac", {"device": "bed_ac", "temp_change": 2, "temp": 20})
+        await prep(home, "set_device", {"device": "bed_ac", "temp_change": 2, "temp": 20})
     with pytest.raises(ArgError, match="say what to change"):
-        await prep(home, "set_ac", {"device": "bed_ac"})
+        await prep(home, "set_device", {"device": "bed_ac"})
 
 
 async def test_unknown_state_uses_the_room_preset_and_cannot_undo(home):
-    p = await prep(home, "set_ac", {"device": "office_ac", "power": True})
+    p = await prep(home, "set_device", {"device": "office_ac", "power": True})
     assert p.line.startswith("unknown -> ON ")
     done = await p.run(ALICE)
     assert done.ok and (await done.undo(ALICE)).text == "no earlier state known"
@@ -121,10 +121,10 @@ async def test_unknown_state_uses_the_room_preset_and_cannot_undo(home):
 
 async def test_card_goes_stale_and_undo_refuses_after_a_newer_send(home):
     await send(home, "bed_ac")
-    p = await prep(home, "set_ac", {"device": "bed_ac", "temp": 22})
+    p = await prep(home, "set_device", {"device": "bed_ac", "temp": 22})
     await send(home, "bed_ac", temp=26)                              # /keyboard meanwhile
     assert p.changed()
-    p = await prep(home, "set_ac", {"device": "bed_ac", "temp": 22})
+    p = await prep(home, "set_device", {"device": "bed_ac", "temp": 22})
     done = await p.run(ALICE)
     await send(home, "bed_ac", temp=27)
     u = await done.undo(ALICE)
@@ -135,7 +135,7 @@ async def test_failed_send_says_why(home):
     from iotbot.devices.hub import HubError
 
     home.ctx.fail = HubError("no reply")
-    p = await prep(home, "set_ac", {"device": "bed_ac", "power": True})
+    p = await prep(home, "set_device", {"device": "bed_ac", "power": True})
     done = await p.run(ALICE)
     assert not done.ok and "no reply" in done.text
 
@@ -268,7 +268,7 @@ async def test_chat_to_card_to_ir_and_undo(tmp_path):
     await ctx.devices.send_ac_state("bed_ac", AcState(power=True, temp=24), BOB)
     ctx.assistant.llm = FakeServer([
         completion(calls=[call("get_home_state", {})]),
-        completion("Done, cooler now!", [call("set_ac", {"device": "bed_ac", "temp_change": -1}, "c2")]),
+        completion("Done, cooler now!", [call("set_device", {"device": "bed_ac", "temp_change": -1}, "c2")]),
     ]).client()
     context = tg_context(ctx)
     u = say("a bit cooler in the bedroom")
@@ -365,7 +365,7 @@ async def test_expired_pause_reads_as_on(home):
 
 async def test_a_send_between_check_and_lock_is_never_overwritten(home):
     await send(home, "bed_ac")
-    p = await prep(home, "set_ac", {"device": "bed_ac", "temp": 22})
+    p = await prep(home, "set_device", {"device": "bed_ac", "temp": 22})
     # A schedule fires after the card's begin() check, before the send takes the AC lock
     await send(home, "bed_ac", temp=27)
     done = await p.run(ALICE)
@@ -378,7 +378,7 @@ async def test_retry_after_a_failed_send_still_works(home):
 
     await send(home, "bed_ac")
     cards = Cards()
-    card, _ = cards.new(ME, [await prep(home, "set_ac", {"device": "bed_ac", "temp": 22})])
+    card, _ = cards.new(ME, [await prep(home, "set_device", {"device": "bed_ac", "temp": 22})])
     home.ctx.fail = HubError("no reply")
     cards.begin(card, "do")
     await cards.run(card, "do", ALICE)

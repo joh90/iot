@@ -143,6 +143,30 @@ Design: PLAN.md "Phase 8 decisions". No 24h test; offers on from the start (user
 | 9.9  | [x]    | Philips TV on/off added to Later                                                                          |
 | 9.10 | [~]    | Timer dates: stamp dates as YYYY-MM-DD with "today"; date only for a later day; "on Sunday" is one-off    |
 
+## Phase 10 -- Generated IR + device-agnostic chat; first device: bedroom Philips TV (planned 2026-11-22)
+
+Decisions: 40 rounds of user answers (U1-U40), kept with the private plan. Main ones: TV codes generated
+from a codeset (RC6), never learned; one chat tool `set_device` for every device (eval-gated); a TV only
+switched when named; "off bedroom" asks with tap buttons unless a note says; Send anyway; one ship after
+the real-TV test.
+
+| #     | Status | Task                                                                                                      |
+|-------|--------|-----------------------------------------------------------------------------------------------------------|
+| 10.0  | [x]    | Evidence: real remote's Mute capture as a test fixture; eval harness rebuilt on the real bot; baseline    |
+| 10.1  | [x]    | iotbot/ir/packet.py (Broadlink packets, 30.45 us tick); Mitsubishi moved onto it, byte-identical        |
+| 10.2  | [x]    | iotbot/ir/rc6.py: RC6 mode 0 frames + decode; golden test vs the real capture                             |
+| 10.3  | [x]    | iotbot/ir/codesets.py: philips-rc6 power on/off (numbers checked in 10.12), discrete vs toggle            |
+| 10.4  | [x]    | devices.json "codeset" entries build generated buttons; toggle never named power_on/off                  |
+| 10.5  | [x]    | Toggle bit per press, expect_seq + lock, last send seeded after a restart                                 |
+| 10.6  | [x]    | Timers / schedules / one-liner only use discrete keys                                                     |
+| 10.7  | [x]    | Chat: set_device (+ now twin) for aircons and TVs; TV only when named; Send anyway; Undo as aircon      |
+| 10.8  | [x]    | "Which one?" taps + offer a note; TV timers / recipes / status / diary / away offer / stats; TV rules  |
+| 10.9  | [x]    | Tests (fake hub, scripted LLM)                                                                            |
+| 10.10 | [ ]    | Eval: baseline 4069dcd vs new without TV vs new with TV; no harm, no aircon regression                    |
+| 10.11 | [~]    | Docs, final review, secret scan                                                                           |
+| 10.12 | [ ]    | Real-TV test (each send on the user's go): power codes, 1 frame from standby; fill the codeset            |
+| 10.13 | [ ]    | Ship on OK: rollback tag, devices.json backup, add bedroom-tv, check, restart                             |
+
 ## Later phases (coarse; split into numbered subtasks when started)
 
 | # | Status | Task                                                                                          |
@@ -155,4 +179,4 @@ Design: PLAN.md "Phase 8 decisions". No 24h test; offers on from the start (user
 | 5 | [-]    | Dropped 2026-10-20 by the user: run-time nudges and pre-schedule heads-ups (too noisy)        |
 | 8 | [x]    | Presence: shipped 2026-10-26 (see Phase 8 table above)                                        |
 | 9 | [~]    | Fixes from live use: built 2026-11-17 (see Phase 9 table above); ship on user OK              |
-| T | [ ]    | Philips TV on/off (asked 2026-11-17): check network API vs IR; aircon-only paths stay so       |
+| T | [~]    | Philips TV on/off: became Phase 10 (generated IR, no network on this TV)                      |

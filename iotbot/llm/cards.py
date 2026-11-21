@@ -50,7 +50,7 @@ class Prepared:
     # What this line changes ("" = its name): a card holds one line per key, because a second
     # line for the same device or schedule would always fail as stale. None = no limit (notes).
     key: str | None = ""
-    # Runs without the confirm card (set_ac_now: the person's own note says when): result + Undo
+    # Runs without the confirm card (set_device_now: the person's own note says when): result + Undo
     auto: bool = False
 
     def __post_init__(self) -> None:
@@ -91,9 +91,10 @@ class Cards:
         self._clock = clock
         self.cards: dict[str, Card] = {}
 
-    def new(self, user_id: int, items: list[Prepared], note: str = "") -> tuple[Card, list[Card]]:
-        """A new pending card; returns it and the person's older pending cards, now replaced."""
-        replaced = [c for c in self.cards.values() if c.user_id == user_id and c.status == "pending"]
+    def new(self, user_id: int, items: list[Prepared], note: str = "", replace: bool = True) -> tuple[Card, list[Card]]:
+        """A new pending card; returns it and the person's older pending cards, now replaced.
+        `replace` False: a side card ([Send anyway]) that leaves the card just shown alone."""
+        replaced = [c for c in self.cards.values() if replace and c.user_id == user_id and c.status == "pending"]
         for c in replaced:
             c.status = "replaced"
         cid = secrets.token_hex(4)

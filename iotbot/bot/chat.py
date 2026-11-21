@@ -69,7 +69,9 @@ async def _keep_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
 
 
 async def on_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant: Assistant | None,
-                  actor: Actor, text: str) -> None:
+                  actor: Actor, text: str, forwarded: bool | None = None) -> None:
+    """`forwarded`: set by a which-one tap (its update is the bot's own question, so the original
+    message's forward mark is carried here); None = look at the message."""
     if assistant is None:
         telemetry.note(outcome="llm_off")
         await reply(update, OFF)
@@ -86,16 +88,95 @@ async def on_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant:
     if o.turn and o.turn.rounds:
         telemetry.note(llm_ms=o.turn.llm_ms, tokens=o.turn.prompt_tokens + o.turn.completion_tokens,
                        model=o.turn.model, tool_calls=o.turn.tool_calls, llm_rounds=o.turn.rounds)
+    if forwarded is None:
+        forwarded = getattr(update.effective_message, "forward_origin", None) is not None
     if o.kind == "actions":
-        await show_actions(update, context, assistant, actor, text, o)
+        await show_actions(update, context, assistant, actor, text, o, forwarded)
+    elif o.kind == "asked" and o.ask:
+        o.ask.forwarded = forwarded
+        rows = [[InlineKeyboardButton(label, callback_data=encode(WHICH, "o", o.ask.id, str(i)))]
+                for i, (label, _, _) in enumerate(o.ask.options)]
+        await update.effective_message.reply_text(h(o.ask.text), parse_mode=ParseMode.HTML,
+                                                  reply_markup=InlineKeyboardMarkup(rows))
+    else:
+        await reply(update, outcome_text(o))
+    if o.kind in ("actions", "answer") and o.turn and o.turn.forced:
+        await show_anyway(update, assistant, actor, o)
+
+
+async def show_anyway(update: Update, assistant: Assistant, actor: Actor, o: Outcome) -> None:
+    """'office-aircon: already OFF.' [Send anyway]: nothing was sent because the bot's record says it
+    is already so; one tap sends it (someone may have used the remote). Its own small card, next to
+    the main one, with the usual staleness check on the tap."""
+    on_card = {p.key for a in (o.turn.actions if o.kind == "actions" else [])
+               for p in (a.prepared if isinstance(a.prepared, list) else [a.prepared]) if isinstance(p, Prepared)}
+    items = [p for p in o.turn.forced if isinstance(p, Prepared) and p.key not in on_card]
+    if not items:
         return
-    await reply(update, outcome_text(o))
+    card, _ = assistant.cards.new(actor.user_id, items, replace=False)
+    telemetry.note(card="anyway", card_id=card.id)
+    text = " ".join(h(p.ask) for p in items)
+    sent = await update.effective_message.reply_text(
+        text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[_btn("Send anyway", "do", card)]]))
+    card.chat_id, card.message_id = getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
 
 
 def _outcome(o: Outcome) -> str:
     if o.kind in ("answer", "asked", "actions"):
         return "ok"
     return o.turn.error if o.kind == "failed" and o.turn and o.turn.error else o.kind
+
+
+# ---- "Which one?" taps (Phase 10) -------------------------------------------------------------
+
+WHICH = "wh"
+
+
+async def which_button(update: Update, context: ContextTypes.DEFAULT_TYPE, query: CallbackQuery,
+                       assistant: Assistant | None, actor: Actor, op: str, args: list[str]) -> None:
+    """A tap on a which-one answer sends the order again with the answer in it, so a "now" order
+    runs as its own message would. Once per unclear word, the bot offers to save the answer as the
+    person's own note, so it stops asking."""
+    chat = assistant.chats.get(actor.user_id) if assistant else None
+    if op == "r":
+        offer = getattr(chat, "offer", None)
+        if not offer or assistant.memory is None:
+            await query.answer("This button is no longer active.")
+            return
+        chat.offer = None
+        note, shown = offer
+        try:
+            await assistant.memory.add_fact(actor, note, False)
+        except ValueError as e:
+            await query.answer(popup(str(e)), show_alert=True)
+            return
+        telemetry.note(outcome="ok", intent="which:remember")
+        await query.answer("Saved.")
+        await safe_edit(query, shown + "\n<i>Saved as your note (see /memory).</i>")
+        return
+    ask = getattr(chat, "ask", None)
+    if op != "o" or ask is None or len(args) != 2 or args[0] != ask.id or not args[1].isdecimal() \
+            or int(args[1]) >= len(ask.options):
+        await query.answer("This button is no longer active.")       # an older question, or answered
+        return
+    if actor.user_id in assistant.in_flight:
+        await query.answer("Still working on your last message; tap again in a moment.")
+        return
+    chat.ask = None                                       # one answer per question
+    label, message, note = ask.options[int(args[1])]
+    if len(message) > MAX_INPUT_CHARS:
+        message = message[-MAX_INPUT_CHARS:]
+    await query.answer()
+    shown = f"{h(ask.text)}\n-> {h(label)}"
+    markup = None
+    if assistant.memory is not None and (actor.user_id, ask.word) not in assistant.offered:
+        assistant.offered.add((actor.user_id, ask.word))
+        chat.offer = (note, shown)
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton(_cut(f"Remember: '{ask.word}' means {label}", 60),
+                                                             callback_data=encode(WHICH, "r"))]])
+    telemetry.note(intent="which:tap")
+    await safe_edit(query, shown, markup)
+    await on_chat(update, context, assistant, actor, message, forwarded=ask.forwarded)
 
 
 # ---- confirm cards (4.3) -----------------------------------------------------------------
@@ -167,7 +248,7 @@ def _context_note(card: Card, status: str, marks: list[str] | None = None) -> No
 
 
 async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assistant: Assistant,
-                       actor: Actor, text: str, o: Outcome) -> None:
+                       actor: Actor, text: str, o: Outcome, forwarded: bool | None = None) -> None:
     # One call may give several lines (a recipe); a card shows at most MAX_WRITES of them
     items = [p for a in (o.turn.actions if o.turn else [])
              for p in (a.prepared if isinstance(a.prepared, list) else [a.prepared])]
@@ -183,12 +264,14 @@ async def show_actions(update: Update, context: ContextTypes.DEFAULT_TYPE, assis
     note = o.text if o.turn else ""
     card, replaced = assistant.cards.new(actor.user_id, items, note)
     sizes = [len(a.prepared) if isinstance(a.prepared, list) else 1 for a in o.turn.actions]
-    # set_ac_now (the person's own no-card note): runs now, shows the result with Undo. Only when
+    # set_device_now (the person's own no-card note): runs now, shows the result with Undo. Only when
     # every line is one, the note is still there (it can be forgotten mid-turn) and the message is
     # the person's own words (not forwarded); anything else shows the usual card
     msg = update.effective_message
+    if forwarded is None:
+        forwarded = getattr(msg, "forward_origin", None) is not None
     auto = all(p.auto for p in items) and bool(assistant.memory and card_rules(assistant.memory.facts(actor.user_id))) \
-        and getattr(msg, "forward_origin", None) is None
+        and not forwarded
     stale = None
     if auto:
         try:

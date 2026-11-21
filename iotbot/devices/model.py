@@ -118,6 +118,13 @@ def schedulable_key(device: Device, key: str) -> bool:
     return f is not None and (f.discrete or not device.codeset)
 
 
+def chat_tv(device: Device) -> bool:
+    """A generated-IR device chat may switch: power on AND off are discrete codes (a toggle stays
+    button-only)."""
+    return bool(device.codeset) and device.device_type is DeviceType.TV and all(
+        k in device.features and device.features[k].discrete for k in ("power_on", "power_off"))
+
+
 def feature_label(key: str) -> str:
     return key.replace("_", " ")
 

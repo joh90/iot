@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from iotbot.llm.client import LlmClient, LlmError, Reply
-from iotbot.llm.tools import AlreadyError, ArgError, Tool, message_text, parse_args
+from iotbot.llm.tools import AlreadyError, ArgError, Tool, device_kinds, message_text, parse_args
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,8 @@ STATE_CLAIM_RE = re.compile(r"\b(is|are) now (on|off|running|cooling|set to)\b|"
 # 2026-11-17 20:30, twice). Checked only when the message asks to remember and no write ran
 MEMORY_ASK_RE = re.compile(r"^\W*(pls |please |can you |could you )?(remember|note|save|keep in mind)\b", re.IGNORECASE)
 ACK_RE = re.compile(r"\b(got it|noted|understood|will do|i'll|i will|i've|i have|from now on)\b", re.IGNORECASE)
-DEVICE_WORD_RE = re.compile(r"\b(aircons?|air[- ]?cons?|a/?c|acs|it|they|both)\b", re.IGNORECASE)
+DEVICE_WORD_RE = re.compile(r"\b(aircons?|air[- ]?cons?|a/?c|acs|tvs?|television|telly|it|they|both)\b",
+                            re.IGNORECASE)
 # A sentence that is only a result: "Bedroom set to 23." / "Okay, both rooms turned off." A diary
 # line goes on ("... at 23:00 by the schedule") and a state answer says "is set to": neither matches
 _WORD = r"(?!(is|was|are|were|be|been|being|still|already|stays|remains)\b)[\w-]+"   # not "is set to"
@@ -84,7 +85,7 @@ SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 MISSING_RE = re.compile(r"\b(no|not|none|isn't|aren't|doesn't|don't|cannot|can't|couldn't|nothing)\b", re.IGNORECASE)
 # A write after the card is ready joins it only when the message asks for that kind of change
 # (live 2026-11-14/16: "turn off X and remove the timer" lost the delete: it needs list_schedules
-# first, so it always comes a round after the set_ac). Never another set_ac
+# first, so it always comes a round after the set_device). Never another set_device
 LATER_WRITES = {
     "delete_schedule": re.compile(r"\b(delete|remove|cancel|clear|get rid)\b", re.IGNORECASE),
     "pause_schedule": re.compile(r"\bpause\b", re.IGNORECASE),
@@ -124,6 +125,7 @@ class TurnResult:
     completion_tokens: int = 0
     model: str | None = None
     tool_calls: list[str] = field(default_factory=list)   # "name" or "name!" when refused
+    forced: list[Any] = field(default_factory=list)        # already-set lines, for [Send anyway]
     reads: list[tuple[str, dict[str, Any]]] = field(default_factory=list)   # read tools run: kept in history
     exchanges: list[dict[str, Any]] = field(default_factory=list)
 
@@ -269,12 +271,11 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             # The card is ready: its lines never change. A write the message asked for joins it
             # (prepared on its own, so a line already promised is never re-planned or swapped)
             said = message_text.get()
-            ordered = _devices_ordered(said, tools) - _subjects(pending) - {
-                w for a in pending for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())}
+            ordered = _uncovered(_devices_ordered(said, tools), pending)
             for c in writes:
                 gate = LATER_WRITES.get(c.tool.name)               # type: ignore[union-attr]
-                dev = set(re.findall(r"[a-z0-9]+", str((c.args or {}).get("device", "")).lower()))
-                if c.tool.name == "set_ac" and dev & ordered:      # type: ignore[union-attr]
+                if c.tool.name in ("set_device", "set_device_now") \
+                        and (c.args or {}).get("device") in ordered:  # type: ignore[union-attr]
                     continue                                       # "off bedroom and on office": ordered, not on the card
                 if gate is None or not gate.search(said):
                     c.error = "the card is already made; do not call write tools again, answer in text"
@@ -288,7 +289,8 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
                         new.append(a)                              # a repeat of a card line just gets "ready"
                 no_op: set[tuple[str, str]] = set()
                 refused = await _prepare(new, already, {k for a in pending for p in _lines(a)
-                                                        if (k := getattr(p, "key", None)) is not None}, no_op)
+                                                        if (k := getattr(p, "key", None)) is not None}, no_op,
+                                         out.forced)
                 hard = {k: v for k, v in refused.items() if k not in no_op}   # "already paused" is on Left out
                 lines = sum(len(_lines(a)) for a in pending + new if (a.tool.name, _key(a.args)) not in refused)
                 if not hard and lines > MAX_WRITES:
@@ -320,7 +322,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             if len(actions) > MAX_WRITES:
                 out.kind, out.error = "failed", "too_many"
                 return
-            refused = await _prepare(actions, already)
+            refused = await _prepare(actions, already, forced=out.forced)
             told = told or bool(refused)
             # A card with nothing else asked (or no rounds left) is the reply now
             # The message also asks for another kind of change ("... and remove the timer"): that one
@@ -329,8 +331,7 @@ async def _loop(llm: LlmClient, messages: list[dict[str, Any]], tools: list[Tool
             said = message_text.get()
             more = any(g.search(said) for name, g in LATER_WRITES.items()
                        if name in by_name and name not in {a.tool.name for a in actions}) \
-                or bool(_devices_ordered(said, tools) - _subjects(actions)
-                        - {w for a in actions for w in re.findall(r"[a-z0-9]+", str(a.args.get("device", "")).lower())})
+                or bool(_uncovered(_devices_ordered(said, tools), actions))
             asked = reads or more or ((had_reads or ask_rest) and not _note(reply.content, _subjects(actions)))
             if not refused and (not asked or out.rounds > MAX_TOOL_ROUNDS):
                 card(actions, reply.content)
@@ -377,18 +378,74 @@ QUESTION_CLAUSE_RE = re.compile(r"^\s*(and |but )?(is|are|was|were|what|what's|w
                                 r"has|have)\b", re.IGNORECASE)
 
 
-def _devices_ordered(text: str, tools: list[Tool]) -> set[str]:
-    """Device words ("office" of "office-aircon") that a clause orders on, off or at a time:
-    "and on office at 1330" counts; "bedroom is fine" and "is bedroom on?" do not."""
-    ids = {d for t in tools for d in t.parameters.get("properties", {}).get("device", {}).get("enum", [])}
-    words = {w for d in ids for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in GENERIC and len(w) > 2}
+TV_WORDS = {"tv", "tvs", "television", "telly"}
+AC_WORDS = {"aircon", "aircons", "ac", "acs", "air"}
+FILLER = {"the", "my", "too", "also", "pls", "please", "plz", "con"}
+
+
+def _kind(d: str) -> str:
+    known = device_kinds.get().get(d)
+    return known or ("tv" if TV_WORDS & set(re.findall(r"[a-z0-9]+", d.lower())) else "ac")
+
+
+def _rooms(d: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", d.lower()) if w not in GENERIC | TV_WORDS | AC_WORDS and len(w) > 2}
+
+
+def _uncovered(ordered: set[str], actions: list[Action]) -> set[str]:
+    """Ordered devices the card does not change yet. A card line covers its device id, or a device
+    of the same kind and room ("office" covers office-aircon, never bedroom-tv for bedroom-aircon)."""
+    on_card = [str(a.args.get("device", "")) for a in actions if a.args.get("device")]
+    # Lines with no device argument (edit/pause/delete a schedule, a recipe) cover the devices their
+    # names mention ("schedule Office off" covers office-aircon), as before Phase 10
+    named = _subjects([a for a in actions if not a.args.get("device")])
+    return {d for d in ordered if d not in on_card and not any(
+        _kind(c) == _kind(d) and _rooms(c) and _rooms(c) <= _rooms(d) for c in on_card)
+        and not (_rooms(d) and _rooms(d) <= named and (_kind(d) == "tv") == bool(TV_WORDS & named))}
+
+
+def _named(said: set[str], ids: set[str]) -> set[str]:
+    """Device ids a clause names, by room and kind: "bedroom tv" is bedroom-tv, "bedroom aircon" and
+    a bare "bedroom" are bedroom-aircon (a TV only when named), "the tv" is the only TV."""
+    kind, rooms = _kind, _rooms
+    wants = {k for k, words in (("tv", TV_WORDS), ("ac", AC_WORDS)) if words & said} or {"ac"}
     out = set()
+    for k in wants:
+        same = [d for d in ids if kind(d) == k]
+        by_room = {d for d in same if rooms(d) and rooms(d) <= said}
+        if by_room:
+            out |= by_room
+        elif len(same) == 1 and (k == "tv" or AC_WORDS & said):
+            out |= set(same)                              # "the tv" / "the aircon": the only one
+    return out
+
+
+def _devices_ordered(text: str, tools: list[Tool]) -> set[str]:
+    """Device ids that a clause orders on, off or at a time: "and on office at 1330" counts;
+    "bedroom is fine" and "is bedroom on?" do not. A bare list after an order ("off bedroom
+    aircon and tv") belongs to it."""
+    ids = {d for t in tools for d in t.parameters.get("properties", {}).get("device", {}).get("enum", [])}
+    out: set[str] = set()
+    ordering = False
+    all_rooms = {w for d in ids for w in _rooms(d)}
+    room_said: set[str] = set()                       # "off bedroom tv and aircon": the aircon is the bedroom's
     for clause in re.split(r"[,;.?!\n]|\band\b|\bthen\b", text):
         if not clause.strip() or QUESTION_CLAUSE_RE.match(clause):
+            ordering = False
             continue
-        said = re.findall(r"[a-z0-9]+", clause.lower())
-        if {"on", "off"} & set(said) or re.search(r"\b(at|by)\s+\d|\b\d{3,4}\b", clause):
-            out |= words & set(said)
+        said = set(re.findall(r"[a-z0-9]+", clause.lower()))
+        if said & all_rooms:
+            room_said = said & all_rooms
+        elif ordering and (TV_WORDS | AC_WORDS) & said:
+            said |= room_said
+        if {"on", "off"} & said or re.search(r"\b(at|by)\s+\d|\b\d{3,4}\b", clause):
+            ordering = True
+            out |= ids if {"everything", "all"} & said else _named(said, ids)   # "turn everything off"
+        elif ordering and not said - FILLER - TV_WORDS - AC_WORDS - GENERIC - {
+                w for d in ids for w in re.findall(r"[a-z0-9]+", d.lower())}:
+            out |= _named(said, ids)                      # only device words: "... and (the) tv"
+        else:
+            ordering = False
     return out
 
 
@@ -397,7 +454,8 @@ def _lines(a: Action) -> list[Any]:
 
 
 async def _prepare(actions: list[Action], already: list[str] | None = None,
-                   taken: set[str] | None = None, no_op: set[tuple[str, str]] | None = None) -> dict[tuple[str, str], str]:
+                   taken: set[str] | None = None, no_op: set[tuple[str, str]] | None = None,
+                   forced: list[Any] | None = None) -> dict[tuple[str, str], str]:
     """Build every card line. Returns {(tool, args): reason} for the calls that cannot be done;
     the reasons for "nothing to change" also go into `already`. `taken`: what the card already
     changes (a later round joining it)."""
@@ -421,6 +479,9 @@ async def _prepare(actions: list[Action], already: list[str] | None = None,
                     already.append(e.short)                      # the short form: it goes on the card
                 if no_op is not None:
                     no_op.add((a.tool.name, _key(a.args)))
+                if forced is not None and e.force is not None and all(
+                        getattr(f, "key", None) != getattr(e.force, "key", None) for f in forced):
+                    forced.append(e.force)
         except Exception as e:  # noqa: BLE001 -- a prepare bug is a refused call, not a crashed turn
             logger.exception("Preparing %s failed", a.tool.name)
             refused[(a.tool.name, _key(a.args))] = f"could not prepare this ({e.__class__.__name__})"

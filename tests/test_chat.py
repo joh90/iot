@@ -122,7 +122,7 @@ async def test_history_time_is_when_the_message_came_in():
 
 async def test_a_made_up_claim_never_drops_a_card():
     from tests.test_llm import SET_AC
-    a, _ = make_assistant([completion(calls=[call("set_ac", {"device": "office-aircon", "power": True})]),
+    a, _ = make_assistant([completion(calls=[call("set_device", {"device": "office-aircon", "power": True})]),
                            completion("I have turned it on.")])
     a.add_tools(lambda actor: [SET_AC])
     o = await a.handle(ALICE, "on the office")
@@ -480,7 +480,7 @@ async def test_a_plain_change_shows_no_note_but_a_mixed_one_does():
                               "There is no timer at 10:41."),
                              ("pause the 7am one", "The 7am one has been paused.", "")):
         a, _ = make_assistant([completion(said,
-                                          [call("set_ac", {"device": "office-aircon", "power": False})])])
+                                          [call("set_device", {"device": "office-aircon", "power": False})])])
         a.add_tools(lambda actor: [SET_AC])
         o = await a.handle(ALICE, text)
         assert (o.kind, o.text) == ("actions", note), text

@@ -10,7 +10,7 @@ from iotbot.llm import loop as lp
 from iotbot.llm.client import LlmClient, LlmError, parse_reply
 from iotbot.llm.tools import ArgError, Tool, message_text, parse_args, schema_problems
 
-SET_AC = Tool("set_ac", "Set an aircon", {
+SET_AC = Tool("set_device", "Set an aircon", {
     "type": "object", "required": ["device"], "properties": {
         "device": {"type": "string", "enum": ["bedroom-aircon", "office-aircon"]},
         "power": {"type": "boolean"},
@@ -124,7 +124,7 @@ async def test_broken_server_replies(resp, code):
 
 def test_parse_strips_think_and_fixes_odd_calls():
     r = parse_reply(completion("<think>hmm</think> Done.", [
-        {"function": {"name": "set_ac", "arguments": {"device": "office-aircon"}}},
+        {"function": {"name": "set_device", "arguments": {"device": "office-aircon"}}},
         {"id": "", "function": {"name": "x", "arguments": None}}]), 5, {})
     assert r.content == "Done."
     assert r.tool_calls[0].arguments == '{"device": "office-aircon"}' and r.tool_calls[0].id.startswith("call_")
@@ -175,25 +175,25 @@ async def test_plain_answer():
 
 async def test_read_then_write_stops_at_the_write():
     srv = FakeServer([completion(calls=[call("get_home_state", {})]),
-                      completion("Bedroom is now 23!", calls=[call("set_ac", {"device": "bedroom-aircon", "temp": 23},
+                      completion("Bedroom is now 23!", calls=[call("set_device", {"device": "bedroom-aircon", "temp": 23},
                                                                        "c2")])])
     m = msgs("a bit cooler")
     out = await lp.run_turn(srv.client(), m, [STATE, SET_AC])
     assert out.kind == "actions" and out.text == ""          # model text after a write is never used
-    assert [(a.tool.name, a.args) for a in out.actions] == [("set_ac", {"device": "bedroom-aircon", "temp": 23})]
-    assert out.tool_calls == ["get_home_state", "set_ac"] and out.rounds == 2 and len(out.exchanges) == 2
+    assert [(a.tool.name, a.args) for a in out.actions] == [("set_device", {"device": "bedroom-aircon", "temp": 23})]
+    assert out.tool_calls == ["get_home_state", "set_device"] and out.rounds == 2 and len(out.exchanges) == 2
     tool_msg = srv.requests[1]["messages"][-1]
     assert tool_msg["role"] == "tool" and tool_msg["tool_call_id"] == "c1" and "cool 24" in tool_msg["content"]
 
 
 async def test_bad_call_goes_back_as_an_error_then_is_fixed():
-    srv = FakeServer([completion(calls=[call("set_ac", {"device": "bedroom-aircon", "temp": 23},  "a"),
-                                        call("set_ac", {"device": "office-aircon", "temp": "23"}, "b")]),
-                      completion(calls=[call("set_ac", {"device": "bedroom-aircon", "temp": 23}, "c"),
-                                        call("set_ac", {"device": "office-aircon", "temp": 23}, "d")])])
+    srv = FakeServer([completion(calls=[call("set_device", {"device": "bedroom-aircon", "temp": 23},  "a"),
+                                        call("set_device", {"device": "office-aircon", "temp": "23"}, "b")]),
+                      completion(calls=[call("set_device", {"device": "bedroom-aircon", "temp": 23}, "c"),
+                                        call("set_device", {"device": "office-aircon", "temp": 23}, "d")])])
     out = await lp.run_turn(srv.client(), msgs("both to 23"), [STATE, SET_AC])
     assert out.kind == "actions" and len(out.actions) == 2       # never a partial card
-    assert out.tool_calls == ["set_ac", "set_ac!", "set_ac", "set_ac"]
+    assert out.tool_calls == ["set_device", "set_device!", "set_device", "set_device"]
     results = [m for m in srv.requests[1]["messages"] if m["role"] == "tool"]
     assert "fix the other calls" in results[0]["content"] and "whole number" in results[1]["content"]
 
@@ -217,7 +217,7 @@ async def test_too_many_rounds():
 
 
 async def test_too_many_writes():
-    calls = [call("set_ac", {"device": "office-aircon", "temp": 16 + i}, f"c{i}") for i in range(11)]
+    calls = [call("set_device", {"device": "office-aircon", "temp": 16 + i}, f"c{i}") for i in range(11)]
     out = await lp.run_turn(FakeServer([completion(calls=calls)]).client(), msgs(), [SET_AC])
     assert (out.kind, out.error) == ("failed", "too_many")
 
@@ -246,7 +246,7 @@ async def test_whole_turn_is_capped():
 
 async def test_replay_log_has_what_each_round_really_sent_and_caller_list_is_untouched():
     srv = FakeServer([completion(calls=[call("get_home_state", {})]),
-                      completion(calls=[call("set_ac", {"device": "office-aircon"}, "c2")])])
+                      completion(calls=[call("set_device", {"device": "office-aircon"}, "c2")])])
     m = msgs()
     out = await lp.run_turn(srv.client(), m, [STATE, SET_AC])
     assert [len(e["request"]["messages"]) for e in out.exchanges] == [2, 4]
@@ -274,14 +274,14 @@ async def test_cut_off_reply_is_a_failure():
 
 async def test_write_on_the_last_call_is_accepted():
     srv = FakeServer([completion(calls=[call("get_home_state", {}, f"c{i}")]) for i in range(3)]
-                     + [completion(calls=[call("set_ac", {"device": "office-aircon"}, "w")])])
+                     + [completion(calls=[call("set_device", {"device": "office-aircon"}, "w")])])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert (out.kind, out.rounds) == ("actions", 4)
 
 
 async def test_reads_with_writes_read_first_then_card_with_note():
     w = {"device": "office-aircon", "power": False}
-    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a"), call("set_ac", w, "b"), call("set_ac", w, "c")]),
+    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a"), call("set_device", w, "b"), call("set_device", w, "c")]),
                       completion("The bedroom is on at 24C.")])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.kind == "actions" and [a.args for a in out.actions] == [w]     # duplicates merge
@@ -292,13 +292,13 @@ async def test_reads_with_writes_read_first_then_card_with_note():
 
 async def test_waiting_card_survives_reads_new_writes_timeouts_and_errors():
     w, w2 = {"device": "office-aircon", "power": False}, {"device": "office-aircon", "power": True}
-    first = completion(calls=[call("get_home_state", {}, "a"), call("set_ac", w, "b")])
+    first = completion(calls=[call("get_home_state", {}, "a"), call("set_device", w, "b")])
     srv = FakeServer([first, completion(calls=[call("get_home_state", {}, "c")]),
                       completion("Done, it is now off.")])                   # a claim: the note is dropped
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.kind == "actions" and [a.args for a in out.actions] == [w] and out.text == ""
     # A write after "ready" never swaps or drops the card's lines
-    srv = FakeServer([first, completion(calls=[call("set_ac", w2, "c")]), completion("The bedroom is on.")])
+    srv = FakeServer([first, completion(calls=[call("set_device", w2, "c")]), completion("The bedroom is on.")])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert [a.args for a in out.actions] == [w] and out.text == "The bedroom is on."
     assert "already made" in [m for m in srv.requests[2]["messages"] if m.get("role") == "tool"][-1]["content"]
@@ -313,7 +313,7 @@ async def test_waiting_card_survives_reads_new_writes_timeouts_and_errors():
 
 async def test_reads_in_an_earlier_round_still_get_their_answer():
     w = {"device": "office-aircon", "power": False}
-    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a")]), completion(calls=[call("set_ac", w, "b")]),
+    srv = FakeServer([completion(calls=[call("get_home_state", {}, "a")]), completion(calls=[call("set_device", w, "b")]),
                       completion("The bedroom is on at 24C.")])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.kind == "actions" and out.text == "The bedroom is on at 24C." and out.rounds == 3
@@ -322,7 +322,7 @@ async def test_reads_in_an_earlier_round_still_get_their_answer():
 async def test_reads_with_writes_in_the_last_round_make_the_card():
     w = {"device": "office-aircon", "power": False}
     srv = FakeServer([completion(calls=[call("get_home_state", {}, str(i))]) for i in range(lp.MAX_TOOL_ROUNDS)]
-                     + [completion(calls=[call("get_home_state", {}, "x"), call("set_ac", w, "y")])])
+                     + [completion(calls=[call("get_home_state", {}, "x"), call("set_device", w, "y")])])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.kind == "actions" and [a.args for a in out.actions] == [w]
 
@@ -330,13 +330,13 @@ async def test_reads_with_writes_in_the_last_round_make_the_card():
 @pytest.mark.parametrize("text", ["Done!", "Saved.", "The office aircon is now off.", "Turned it off for you.",
                                   "Sure", "I'll turn it off now.", "<tool_call>x"])
 async def test_card_note_never_claims_a_result(text):
-    srv = FakeServer([completion(text, [call("set_ac", {"device": "office-aircon", "power": False}, "a")])])
+    srv = FakeServer([completion(text, [call("set_device", {"device": "office-aircon", "power": False}, "a")])])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.kind == "actions" and out.text == ""
 
 
 async def test_card_note_is_capped():
-    srv = FakeServer([completion("word " * 400, [call("set_ac", {"device": "office-aircon", "power": False}, "a")])])
+    srv = FakeServer([completion("word " * 400, [call("set_device", {"device": "office-aircon", "power": False}, "a")])])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert out.text.endswith("...") and len(out.text) <= lp.MAX_NOTE_CHARS + 3
 
@@ -402,10 +402,10 @@ def test_card_note_keeps_only_sentences_that_claim_nothing(text, note):
 
 async def test_ask_rest_asks_once_more_when_the_card_came_without_reads():
     w = {"device": "office-aircon", "power": False}
-    srv = FakeServer([completion(calls=[call("set_ac", w, "a")]), completion("Bed time is on.")])
+    srv = FakeServer([completion(calls=[call("set_device", w, "a")]), completion("Bed time is on.")])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC], ask_rest=True)
     assert out.kind == "actions" and out.text == "Bed time is on." and out.rounds == 2
-    srv = FakeServer([completion(calls=[call("set_ac", w, "a")])])
+    srv = FakeServer([completion(calls=[call("set_device", w, "a")])])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])          # no question: one call
     assert out.kind == "actions" and out.rounds == 1
 
@@ -419,8 +419,8 @@ async def test_already_like_that_becomes_the_left_out_note():
             raise AlreadyError("office-aircon is already OFF (as last sent)")
         return Prepared(args["device"], "ON -> OFF", None, lambda: 0)
 
-    tool = Tool("set_ac", "Set", SET_AC.parameters, write=True, prepare=prep)
-    off = [call("set_ac", {"device": d, "power": False}, d) for d in ("bedroom-aircon", "office-aircon")]
+    tool = Tool("set_device", "Set", SET_AC.parameters, write=True, prepare=prep)
+    off = [call("set_device", {"device": d, "power": False}, d) for d in ("bedroom-aircon", "office-aircon")]
     srv = FakeServer([completion(calls=off), completion(calls=[off[0]])])
     out = await lp.run_turn(srv.client(), msgs(), [tool])
     assert out.kind == "actions" and len(out.actions) == 1
@@ -455,7 +455,7 @@ def test_more_claims_without_a_tool(text):
 
 async def test_a_failed_tool_call_does_not_excuse_a_state_claim():
     # A bad call reads nothing: "is now on" after it is the 11-15 failure again
-    srv = FakeServer([completion(calls=[call("set_ac", {"bogus": 1})]), completion("The office aircon is now on.")])
+    srv = FakeServer([completion(calls=[call("set_device", {"bogus": 1})]), completion("The office aircon is now on.")])
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert (out.kind, out.error) == ("failed", "fake_card")
 
@@ -481,59 +481,59 @@ def _sched_tools():
     async def listing(args):
         return {"schedules": [{"id": "t2905"}, {"id": "tcc65"}]}
 
-    set_ac = Tool("set_ac", "Set", SET_AC.parameters, write=True, prepare=prep_ac)
+    set_device = Tool("set_device", "Set", SET_AC.parameters, write=True, prepare=prep_ac)
     lst = Tool("list_schedules", "List", {"type": "object", "properties": {}}, run=listing)
     dele = Tool("delete_schedule", "Delete", {"type": "object", "properties": {"schedule_id": {"type": "string"}},
                                               "required": ["schedule_id"]}, write=True, prepare=prep_del)
-    return [set_ac, lst, dele]
+    return [set_device, lst, dele]
 
 
 async def test_later_writes_join_the_ready_card():
     off = {"device": "bedroom-aircon", "power": False}
-    srv = FakeServer([completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")]),
+    srv = FakeServer([completion(calls=[call("set_device", off, "a"), call("list_schedules", {}, "b")]),
                       completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c"),
                                         call("delete_schedule", {"schedule_id": "tcc65"}, "d")]),
                       completion("I've turned off the bedroom aircon. I also removed all your timers.")])
     message_text.set("Turn off bedroom aircon and remove all my timers")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert out.kind == "actions" and [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule", "delete_schedule"]
-    assert out.text == "" and out.tool_calls == ["set_ac", "list_schedules", "delete_schedule", "delete_schedule"]
+    assert out.kind == "actions" and [a.tool.name for a in out.actions] == ["set_device", "delete_schedule", "delete_schedule"]
+    assert out.text == "" and out.tool_calls == ["set_device", "list_schedules", "delete_schedule", "delete_schedule"]
     results = [m["content"] for m in srv.requests[2]["messages"] if m["role"] == "tool"]
     assert all("ready" in r for r in results[-2:])
 
 
 async def test_a_later_write_not_asked_for_or_refused_never_changes_the_card():
     off = {"device": "bedroom-aircon", "power": False}
-    first = completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")])
+    first = completion(calls=[call("set_device", off, "a"), call("list_schedules", {}, "b")])
     # No "remove" in the message: a delete the model adds on its own is refused
     srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]),
                       completion("-")])
     message_text.set("Turn off bedroom aircon, what timers do I have?")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.tool.name for a in out.actions] == ["set_ac"] and out.tool_calls[-1] == "delete_schedule!"
+    assert [a.tool.name for a in out.actions] == ["set_device"] and out.tool_calls[-1] == "delete_schedule!"
     # All or none: one bad id keeps both deletes off, and the card says so
     srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c"),
                                                call("delete_schedule", {"schedule_id": "tgone"}, "d")]),
                       completion("-")])
     message_text.set("off bedroom and remove the timers")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.tool.name for a in out.actions] == ["set_ac"]
+    assert [a.tool.name for a in out.actions] == ["set_device"]
     assert out.text == "Could not add: no schedule tgone. Ask for it again after this."
-    # A second set_ac only for a device the message names and the card leaves out
+    # A second set_device only for a device the message names and the card leaves out
     office = {"device": "office-aircon", "power": False}
-    srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
+    srv = FakeServer([first, completion(calls=[call("set_device", office, "c")]), completion("-")])
     message_text.set("off bedroom and remove the timer")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.args for a in out.actions] == [off]
-    srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
+    srv = FakeServer([first, completion(calls=[call("set_device", office, "c")]), completion("-")])
     message_text.set("off bedroom and remove the timer, off office too")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.args for a in out.actions] == [off, office]         # "off office too" orders it
-    srv = FakeServer([first, completion(calls=[call("set_ac", office, "c")]), completion("-")])
+    srv = FakeServer([first, completion(calls=[call("set_device", office, "c")]), completion("-")])
     message_text.set("off bedroom and remove the timer, office is fine")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.args for a in out.actions] == [off]                 # named, not ordered: never joins
-    srv = FakeServer([first, completion(calls=[call("set_ac", {"device": "bedroom-aircon", "power": True}, "c")]),
+    srv = FakeServer([first, completion(calls=[call("set_device", {"device": "bedroom-aircon", "power": True}, "c")]),
                       completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert [a.args for a in out.actions] == [off]                 # never a second line for the same aircon
@@ -560,33 +560,33 @@ def test_later_writes_need_the_verb_for_them(text):
 
 async def test_a_repeated_or_corrected_join_reads_right():
     off = {"device": "bedroom-aircon", "power": False}
-    first = completion(calls=[call("set_ac", off, "a"), call("list_schedules", {}, "b")])
+    first = completion(calls=[call("set_device", off, "a"), call("list_schedules", {}, "b")])
     message_text.set("off bedroom and remove the timers")
     # A refused id, then another one: the card has it, and still says what could not be added
     # (review: "remove the 7am and 9pm timers" with the 9pm one never found must not go quiet)
     srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "tgone"}, "c")]),
                       completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "d")]), completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"]
+    assert [a.tool.name for a in out.actions] == ["set_device", "delete_schedule"]
     assert out.text == "Could not add: no schedule tgone. Ask for it again after this."
     # The same delete twice: one line, and "ready" both times
     srv = FakeServer([first, completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]),
                       completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "d")]), completion("-")])
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"] and out.text == ""
+    assert [a.tool.name for a in out.actions] == ["set_device", "delete_schedule"] and out.text == ""
     assert "already on this card" in [m for m in srv.requests[3]["messages"] if m["role"] == "tool"][-1]["content"]
 
 
 async def test_a_card_waits_a_round_when_the_message_asks_for_another_kind_of_change():
-    # Eval 2026-11-17: round 1 was only set_ac, so the card closed before the delete
+    # Eval 2026-11-17: round 1 was only set_device, so the card closed before the delete
     off = {"device": "bedroom-aircon", "power": False}
-    srv = FakeServer([completion(calls=[call("set_ac", off, "a")]), completion(calls=[call("list_schedules", {}, "b")]),
+    srv = FakeServer([completion(calls=[call("set_device", off, "a")]), completion(calls=[call("list_schedules", {}, "b")]),
                       completion(calls=[call("delete_schedule", {"schedule_id": "t2905"}, "c")]), completion("-")])
     message_text.set("Turn off bedroom aircon and remove all my timers")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
-    assert [a.tool.name for a in out.actions] == ["set_ac", "delete_schedule"]
+    assert [a.tool.name for a in out.actions] == ["set_device", "delete_schedule"]
     # A plain order is still one call
-    srv = FakeServer([completion(calls=[call("set_ac", off, "a")])])
+    srv = FakeServer([completion(calls=[call("set_device", off, "a")])])
     message_text.set("off bedroom")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
     assert out.kind == "actions" and out.rounds == 1
@@ -596,12 +596,12 @@ async def test_a_card_waits_a_round_when_the_message_names_another_device():
     # Eval 2026-11-17: "off bedroom at 2:30pm and on office at 1330" got one timer
     off = {"device": "bedroom-aircon", "power": False}
     on = {"device": "office-aircon", "power": True}
-    srv = FakeServer([completion(calls=[call("set_ac", off, "a")]), completion(calls=[call("set_ac", on, "b")]),
+    srv = FakeServer([completion(calls=[call("set_device", off, "a")]), completion(calls=[call("set_device", on, "b")]),
                       completion("-")])
     message_text.set("off bedroom and on office")
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert [a.args for a in out.actions] == [off, on]             # office is ordered and not on the card
-    srv = FakeServer([completion(calls=[call("set_ac", off, "a"), call("set_ac", on, "b")])])
+    srv = FakeServer([completion(calls=[call("set_device", off, "a"), call("set_device", on, "b")])])
     message_text.set("off bedroom and on office")
     out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_AC])
     assert [a.args for a in out.actions] == [off, on] and out.rounds == 1
@@ -609,9 +609,10 @@ async def test_a_card_waits_a_round_when_the_message_names_another_device():
 
 
 @pytest.mark.parametrize("text,ordered", [
-    ("off office, bedroom is fine", {"office"}), ("off office, is bedroom on?", {"office"}),
-    ("remove the bedroom timer", set()), ("off bedroom at 2:30pm and on office at 1330", {"bedroom", "office"}),
-    ("off bedroom and on office", {"bedroom", "office"})])
+    ("off office, bedroom is fine", {"office-aircon"}), ("off office, is bedroom on?", {"office-aircon"}),
+    ("remove the bedroom timer", set()),
+    ("off bedroom at 2:30pm and on office at 1330", {"bedroom-aircon", "office-aircon"}),
+    ("off bedroom and on office", {"bedroom-aircon", "office-aircon"})])
 def test_only_a_device_given_an_order_keeps_the_card_open(text, ordered):
     # review 2026-11-17: a device named in a question or "is fine" added an unasked line
     assert lp._devices_ordered(text, [SET_AC]) == ordered
@@ -628,7 +629,7 @@ async def test_a_timed_second_change_joins_and_a_note_needs_a_read():
     out = await lp.run_turn(srv.client(), msgs(), [add])
     assert [a.args["device"] for a in out.actions] == ["bedroom-aircon", "office-aircon"]
     # A state stated above a card with nothing read is dropped
-    srv = FakeServer([completion(calls=[call("set_ac", {"device": "office-aircon", "power": False}, "a")]),
+    srv = FakeServer([completion(calls=[call("set_device", {"device": "office-aircon", "power": False}, "a")]),
                       completion("The bedroom aircon is not on.")])
     message_text.set("off office and on bedroom")
     out = await lp.run_turn(srv.client(), msgs(), _sched_tools())
@@ -640,3 +641,63 @@ async def test_a_timed_second_change_joins_and_a_note_needs_a_read():
                                   "I cannot tell if it is on without checking."])
 def test_hyphens_and_ifs_are_not_state_claims(text):
     assert not lp.claims(text, tools_ran=False)
+
+
+# ---- Phase 10: a TV next to an aircon in one room ------------------------------------------------
+
+SET_TV = Tool("set_device", "Change", {"type": "object", "properties": {
+    "device": {"type": "string", "enum": ["bedroom-aircon", "office-aircon", "bedroom-tv"]},
+    "power": {"type": "boolean"}}}, write=True, prepare=SET_AC.prepare)
+
+
+@pytest.mark.parametrize("text,ordered", [
+    ("off bedroom aircon and tv", {"bedroom-aircon", "bedroom-tv"}),
+    ("turn off the tv and the bedroom aircon", {"bedroom-tv", "bedroom-aircon"}),
+    ("off bedroom", {"bedroom-aircon"}),                 # a bare room is its aircon (the TV only when named)
+    ("off the tv", {"bedroom-tv"}), ("tv off, office is fine", {"bedroom-tv"}),
+    ("off office and tv", {"office-aircon", "bedroom-tv"}), ("is the tv on?", set()),
+    ("turn everything off", {"office-aircon", "bedroom-aircon", "bedroom-tv"}), ("remove all timers", set()),
+])
+def test_devices_ordered_by_room_and_kind(text, ordered):
+    assert lp._devices_ordered(text, [SET_TV]) == ordered
+
+
+@pytest.mark.parametrize("text,first,second", [
+    ("off bedroom aircon and tv", "bedroom-aircon", "bedroom-tv"),
+    ("turn off the tv and the bedroom aircon", "bedroom-tv", "bedroom-aircon"),
+])
+async def test_a_tv_in_the_same_room_joins_the_card_in_either_order(text, first, second):
+    a = {"device": first, "power": False}
+    b = {"device": second, "power": False}
+    srv = FakeServer([completion(calls=[call("set_device", a, "a")]),
+                      completion(calls=[call("set_device", b, "b")]), completion("-")])
+    message_text.set(text)
+    out = await lp.run_turn(srv.client(), msgs(), [STATE, SET_TV])
+    assert [x.args for x in out.actions] == [a, b]
+
+
+@pytest.mark.parametrize("text,claim", [
+    ("The TV is off.", True), ("The bedroom TV is now on.", True), ("I have turned off the TV.", True),
+    ("The TV was last sent off at 22:10.", False), ("Should I turn the TV off?", False),
+])
+def test_claim_guard_knows_tv_words(text, claim):
+    assert lp.claims(text, tools_ran=False) is claim
+
+
+
+def test_device_order_review_cases():
+    from iotbot.llm.tools import device_kinds
+    tools3 = [SET_TV]
+    assert lp._devices_ordered("off bedroom tv and aircon", tools3) == {"bedroom-tv", "bedroom-aircon"}
+    tok = device_kinds.set({"bedroom-philips": "tv", "bedroom-aircon": "ac"})
+    try:
+        t = Tool("set_device", "Change", {"type": "object", "properties": {
+            "device": {"type": "string", "enum": ["bedroom-aircon", "bedroom-philips"]}}}, write=True)
+        assert lp._devices_ordered("off the tv", [t]) == {"bedroom-philips"}
+    finally:
+        device_kinds.reset(tok)
+    # a schedule line with no device argument covers the room it names (as before Phase 10)
+    from iotbot.llm.cards import Prepared
+    a = lp.Action(SET_AC, {"schedule_id": "t1"})
+    a.prepared = Prepared("schedule Office off", "x", None, lambda: 0)
+    assert lp._uncovered({"office-aircon"}, [a]) == set()

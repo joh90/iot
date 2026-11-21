@@ -69,6 +69,8 @@ class DeviceService:
         # overlap still alternate; the hub's own resend repeats the same bytes
         self._toggle: dict[str, int] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # Last power on / off sent to a generated-IR device (a mute press must not hide it)
+        self.last_power: dict[str, LastAction] = {}
 
     def seed(self, now: datetime, days: int = 62) -> int:
         """After a restart: the last send to each codeset device (for "last sent", Undo checks)
@@ -77,10 +79,13 @@ class DeviceService:
         if not want:
             return 0
         latest: dict[str, dict] = {}
+        power: dict[str, dict] = {}
         try:
             for rec in read_since(self.events, now - timedelta(days=days), now):
                 if rec.get("device") in want and rec.get("ir"):
                     latest[rec["device"]] = rec
+                    if rec.get("feature") in ("power_on", "power_off"):
+                        power[rec["device"]] = rec
         except OSError as e:
             logger.warning("Could not read device events to seed last sends: %s", e)
             return 0
@@ -93,6 +98,15 @@ class DeviceService:
             if rec.get("feature") in self.registry.devices[dev_id].features:
                 self.last[dev_id] = LastAction(next(self._seq), rec["feature"], at,
                                                rec.get("actor") or "someone", rec.get("ok"), None)
+        for dev_id, rec in power.items():
+            try:
+                at = datetime.fromisoformat(rec["ts"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                continue
+            last = self.last.get(dev_id)
+            seq = last.seq if last and last.feature == rec["feature"] and last.at == at else next(self._seq)
+            self.last_power[dev_id] = LastAction(seq, rec["feature"], at, rec.get("actor") or "someone",
+                                                 rec.get("ok"), None)
         return len(latest)
 
     def _lock(self, device_id: str) -> asyncio.Lock:
@@ -241,6 +255,9 @@ class DeviceService:
             cur = self.last.get(device.id)
             if cur and cur.seq == seq:
                 self.last[device.id] = LastAction(seq, feature, cur.at, actor.name, ok, cur.prev_feature)
+            if ir and feature in ("power_on", "power_off"):
+                done_at = cur.at if cur and cur.seq == seq else time.time()
+                self.last_power[device.id] = LastAction(seq, feature, done_at, actor.name, ok, None)
             record = {
                 "device": device.id, "room": device.room, "feature": feature, "seq": seq,
                 "user_id": actor.user_id, "surface": actor.surface,

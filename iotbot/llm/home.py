@@ -5,7 +5,9 @@ mislabels raw numbers). WRITE tools only prepare a card line; nothing runs befor
 person taps Do it. AC lines carry the exact state to send, worked out here from the bot's
 record ("a bit cooler" = record - 1C), so the card shows precisely what Do it will send.
 
-Only managed aircons (full-state encoder) are offered: toggle IR stays button-only.
+Offered to chat: managed aircons (full-state encoder) and generated-IR devices whose power on
+and power off are both discrete codes (a TV with a codeset). A toggle stays button-only: sent
+twice it undoes itself, so chat could do the opposite of what was asked.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from iotbot.ac.state import FANS, TEMP_MAX, TEMP_MIN, VANES, AcStateError
+from iotbot.devices.model import chat_tv
 from iotbot.llm.cards import Done, Prepared
 from iotbot.llm.tools import AlreadyError, ArgError, Tool, message_text
 from iotbot.result import Actor, Result
@@ -41,6 +44,13 @@ SETTINGS = {
     "powerful": {"type": "boolean"},
 }
 STATE_NOTE = "This is what the bot last sent. Someone may have used the physical remote since."
+# A TV is only pressed when the message names one, everything/all, or a note maps the words to it
+# (decided 2026-11-22: "off bedroom" must never switch the TV off by guess)
+TV_WORD_RE = re.compile(r"\b(tvs?|television|telly)\b", re.IGNORECASE)
+# "everything" / "all" in an order ("all off", "turn all off"); never "all the aircons" or "that's all"
+ALL_RE = re.compile(r"\beverything\b|\b(turn|switch|off|on)\s+(it\s+)?all\b(?!\s+(the\s+)?(aircons?|air[- ]?cons?|"
+                    r"acs?|a/?c)\b)|\ball\s+(off|on)\b", re.IGNORECASE)
+KIND_WORDS = {"tv", "tvs", "television", "telly", "aircon", "aircons", "air", "con", "cons", "acs"}
 
 
 def _setting(key: str, raw: Any) -> Any:
@@ -71,8 +81,15 @@ class HomeTools:
         ac = self.ctx.ac
         return [d for d in self.ctx.registry.devices if ac and ac.manages(d)]
 
+    def tvs(self) -> list[str]:
+        """Generated-IR devices chat may switch: power on AND off are discrete codes."""
+        return [d.id for d in self.ctx.registry.devices.values() if chat_tv(d)]
+
+    def chat_devices(self) -> list[str]:
+        return self.acs() + self.tvs()
+
     def tools(self, actor: Actor) -> list[Tool]:
-        acs = self.acs()
+        acs = self.chat_devices()
         if not acs:
             return []
         device = {"type": "string", "enum": acs}
@@ -81,17 +98,16 @@ class HomeTools:
         # a card deleting the daily 12:00 schedule, the only id it had seen)
         listed: set[str] = set()
         return [
-            Tool("get_home_state", "What the bot last sent to each aircon, when, and by whom.",
+            Tool("get_home_state", f"What the bot last sent to each {'device' if self.tvs() else 'aircon'}, when, "
+                                   "and by whom.",
                  {"type": "object", "properties": {}}, run=self._state),
             Tool("list_schedules", "All schedules and timers with their ids, what they do, when, and the next run.",
                  {"type": "object", "properties": {"device": device}}, run=lambda a: self._list(a, listed)),
-            Tool("set_ac", "Change one aircon now. Give only what the person asked for; the rest keeps "
-                           "the bot's last settings. temp_change is relative (-1 = a bit cooler). Setting temp, fan or "
-                           "swing on an aircon that is off turns it on; power true alone resumes its last settings.",
+            Tool("set_device", self._set_device_text(),
                  {"type": "object", "required": ["device"], "properties": {
                      "device": device, "power": {"type": "boolean"},
                      "temp_change": {"type": "integer", "minimum": -5, "maximum": 5}, **SETTINGS}},
-                 write=True, prepare=lambda a: self.prepare_ac(actor, a)),
+                 write=True, prepare=lambda a: self.prepare_device(actor, a)),
             Tool("add_schedule", "New timer or repeating schedule. Timer (the default): in_minutes, or at "
                                  "(+ date only for a later day); a day name alone ('on Sunday', 'next Monday') "
                                  "is a timer on that date. Repeating: at + days, only when the person said a "
@@ -130,6 +146,16 @@ class HomeTools:
 
     # ---- reads -------------------------------------------------------------------------
 
+    def _set_device_text(self) -> str:
+        if not self.tvs():                            # an aircon-only home keeps the Phase 9 wording
+            return ("Change one aircon now. Give only what the person asked for; the rest keeps "
+                    "the bot's last settings. temp_change is relative (-1 = a bit cooler). Setting temp, fan or "
+                    "swing on an aircon that is off turns it on; power true alone resumes its last settings.")
+        return ("Change one device now. Aircon: give only what the person asked for; the rest keeps the bot's "
+                "last settings. temp_change is relative (-1 = a bit cooler). Setting temp, fan or swing on an "
+                "aircon that is off turns it on; power true alone resumes its last settings. TV: power only "
+                "(true = on, false = off), only when the message names the TV.")
+
     async def _state(self, args: dict[str, Any]) -> dict[str, Any]:
         now = self._clock()
         out = []
@@ -146,6 +172,21 @@ class HomeTools:
                     row["on_since"] = f"{datetime.fromtimestamp(last.on_since, self.tz):%a %H:%M}"
             out.append(row)
         result: dict[str, Any] = {"aircons": out, "note": STATE_NOTE}
+        tvs = []
+        for d in self.tvs():
+            last = self.ctx.devices.last_power.get(d)
+            row = {"device": d, "room": self.ctx.registry.devices[d].room}
+            if last is None:
+                row["bot_last_sent"] = "nothing yet: the bot has never switched this TV, so its state is unknown"
+            else:
+                at = datetime.fromtimestamp(last.at, self.tz)
+                row.update(bot_last_sent="on" if last.feature == "power_on" else "off",
+                           sent_at=f"{at:%a %H:%M} ({_ago(now - last.at)})", sent_via_bot_by=last.actor)
+                if last.ok is not True:
+                    row["send_result"] = "failed" if last.ok is False else "still sending"
+            tvs.append(row)
+        if tvs:
+            result["tvs"] = tvs
         presence = getattr(self.ctx, "presence", None)
         if presence is not None and (counts := presence.counts())[1]:
             # Counts only, never names (PLAN Phase 8: visibility)
@@ -156,10 +197,10 @@ class HomeTools:
         svc = self.ctx.schedules
         now = svc.now()
         rows = []
-        acs = self.acs()
+        acs = self.chat_devices()
         for s in svc.list(args.get("device")):
             if s.device not in acs:
-                continue                                 # chat handles managed aircons only
+                continue                                 # chat handles what it can switch only
             paused = s.paused_until is not None and s.paused_until > now
             status = "paused" if not s.enabled else (
                 f"paused until {tx.fmt_at(s.paused_until, now, self.tz)}" if paused else "active")
@@ -172,6 +213,71 @@ class HomeTools:
 
     def _version(self, device: str):
         return lambda: getattr(self.ctx.devices.last.get(device), "seq", None)
+
+    async def prepare_device(self, actor: Actor, args: dict[str, Any]) -> Prepared:
+        if args["device"] in self.acs():
+            return await self.prepare_ac(actor, args)
+        return await self.prepare_button(actor, args)
+
+    def _tv_named(self, actor: Actor, text: str) -> bool:
+        """The message names a TV, says everything/all in an order, says "both" in a home of just
+        two chat devices, or one of the person's notes (or a house note) ties a room or device
+        word of the message to a TV ("When I say bedroom I mean the TV")."""
+        if TV_WORD_RE.search(text) or ALL_RE.search(text):
+            return True
+        if re.search(r"\bboth\b", text, re.IGNORECASE) and len(self.chat_devices()) == 2:
+            return True
+        memory = getattr(self.ctx, "memory", None)
+        if memory is None:
+            return False
+        names = {w for d in self.chat_devices() for w in re.findall(r"[a-z0-9]+", (
+            d + " " + self.ctx.registry.devices[d].room).lower()) if len(w) > 2} - KIND_WORDS
+        words = set(re.findall(r"[a-z0-9]+", text.lower())) & names
+        notes = [f["text"] for f in memory.facts(actor.user_id)] + [f["text"] for f in memory.house()]
+        return any(TV_WORD_RE.search(n) and words & set(re.findall(r"[a-z0-9]+", n.lower())) for n in notes)
+
+    async def prepare_button(self, actor: Actor, args: dict[str, Any], named: bool = False) -> Prepared:
+        """A TV (generated IR, discrete power codes): power on or off, nothing else. `named`: the
+        caller already knows the TV is meant (a recipe saved with it)."""
+        d = args["device"]
+        extra = sorted(k for k in args if k not in ("device", "power"))
+        if extra:
+            raise ArgError(f"{d} can only be switched on or off; it has no {', '.join(extra)}")
+        if "power" not in args:
+            raise ArgError("say power true (on) or false (off)")
+        if not named and not self._tv_named(actor, message_text.get()):
+            raise ArgError(f"the message does not name the TV, so {d} is not changed; if it means the room's "
+                           "aircon, change that, else ask which device they mean")
+        power = bool(args["power"])
+        key = "power_on" if power else "power_off"
+        last = self.ctx.devices.last_power.get(d)
+        before = None
+        if last is not None and last.ok:
+            before = last.feature == "power_on"
+        word = "ON" if power else "OFF"
+        line = f"{'unknown' if before is None else ('ON' if before else 'OFF')} -> {word}"
+
+        async def run(who: Actor) -> Done:
+            r = await self.ctx.devices.run(d, key, who, source="chat", expect_seq=item.seen)
+            if not r.ok:
+                return Done(False, _why(r))
+            seq = r.data.get("seq")
+
+            async def undo(who2: Actor) -> Done:
+                back = "power_on" if before else "power_off"
+                r2 = await self.ctx.devices.run(d, back, who2, source="chat:undo", expect_seq=seq)
+                return Done(True, "ok") if r2.ok else Done(False, _why(r2))
+
+            return Done(True, "ok", undo if before is not None and before is not power else None)
+
+        item = Prepared(d, line, run, self._version(d))
+        if before is power:
+            item.line = f"{word} -> {word} (send anyway)"
+            item.ask, item.do_label = f"{d}: already {word}.", "Send anyway"
+            raise AlreadyError(f"{d} is already {word} (as last sent by the bot, {last.actor}). Nothing was sent; "
+                               "if someone used the remote, they can tap Send anyway",
+                               short=f"{d}: already {word}.", force=item)
+        return item
 
     async def prepare_ac(self, actor: Actor, args: dict[str, Any]) -> Prepared:
         d = args["device"]
@@ -196,12 +302,8 @@ class HomeTools:
             after = base.with_changes(**changes)
         except AcStateError as e:
             raise ArgError(str(e)) from None
-        if before == after:
-            raise AlreadyError(f"{d} is already {after.describe()} (as last sent by the bot). Nothing was sent; "
-                               "if someone used the remote, tell them to use /keyboard",
-                               short=f"{d} is already {after.describe()} as last sent (use /keyboard if "
-                                     "the remote changed it)")
         line = f"{before.describe() if before else 'unknown'} -> {after.describe()}"
+        same = before == after
 
         async def run(who: Actor) -> Done:
             # The card's own check, repeated under the AC lock (a schedule may fire meanwhile)
@@ -216,9 +318,16 @@ class HomeTools:
                 r2 = await self.ctx.devices.send_ac_state(d, before, who2, source="chat:undo", expect_seq=seq)
                 return Done(True, "ok") if r2.ok else Done(False, _why(r2))
 
-            return Done(True, "ok", undo)
+            return Done(True, "ok", None if same else undo)        # Send anyway: Undo would re-send the same
 
         item = Prepared(d, line, run, self._version(d))
+        if same:
+            item.line = f"{after.describe()} (send anyway)"
+            said = after.describe() if after.power else "OFF"
+            item.ask, item.do_label = f"{d}: already {said}.", "Send anyway"
+            raise AlreadyError(f"{d} is already {after.describe()} (as last sent by the bot). Nothing was sent; "
+                               "if someone used the remote, they can tap Send anyway",
+                               short=f"{d}: already {said}.", force=item)
         return item
 
     # ---- schedules ---------------------------------------------------------------------
@@ -256,8 +365,19 @@ class HomeTools:
             raise ArgError("a date needs at")
         return None
 
-    def _action(self, device: str, args: dict[str, Any], cur: Schedule | None = None) -> dict[str, Any] | None:
+    def _action(self, device: str, args: dict[str, Any], cur: Schedule | None = None,
+                actor: Actor | None = None) -> dict[str, Any] | None:
         settings = {k: _setting(k, v) for k, v in args.items() if k in SETTINGS}
+        if device in self.tvs():
+            if settings:
+                raise ArgError(f"{device} can only be switched on or off; it has no {', '.join(sorted(settings))}")
+            kind = args.get("action")
+            if kind == "set":
+                raise ArgError(f"{device} has no settings: use action on or off")
+            if kind is not None and actor is not None and not self._tv_named(actor, message_text.get()):
+                raise ArgError(f"the message does not name the TV, so no {device} timer is made; if it means "
+                               "the room's aircon, use that, else ask which device they mean")
+            return None if kind is None else {"kind": "off"} if kind == "off" else {"kind": "capture", "key": "power_on"}
         kind = args.get("action")
         cur_kind = cur.action.kind if cur else None
         if kind is None:
@@ -291,7 +411,7 @@ class HomeTools:
         when = self._when(args)
         if when is None:
             raise ArgError("say when: in_minutes, or at (+ date or days)")
-        spec = {"device": args["device"], "action": self._action(args["device"], args), "when": when}
+        spec = {"device": args["device"], "action": self._action(args["device"], args, actor=actor), "when": when}
         if "label" in args:
             spec["label"] = args["label"]
         return self._plan_item(actor, spec, None, "new")
@@ -313,7 +433,7 @@ class HomeTools:
                 w.setdefault("days", list(cur.when.days))
                 w.setdefault("at", cur.when.time)
             spec["when"] = self._when(w)
-        action = self._action(cur.device, args, cur)
+        action = self._action(cur.device, args, cur, actor)
         if action is not None:
             spec["action"] = action
         if "label" in args:
@@ -339,7 +459,7 @@ class HomeTools:
             raise ArgError("call list_schedules first and take the id from that list; ids from earlier "
                            "messages or guesses are not accepted")
         s = self.ctx.schedules.get(sid)
-        if s is None or s.device not in self.acs():
+        if s is None or s.device not in self.chat_devices():
             raise ArgError(f"no schedule {sid}; call list_schedules for the ids")
         if listed is not None and (wrong := self._other_time(s, message_text.get(), args or {})):
             raise ArgError(wrong)

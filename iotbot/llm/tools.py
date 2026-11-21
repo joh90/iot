@@ -21,6 +21,9 @@ SUPPORTED = ("object", "array", "string", "integer", "boolean")
 
 # The person's message this turn, for checks a tool makes against what they actually said
 message_text: ContextVar[str] = ContextVar("message_text", default="")
+# Kind of each device chat may change ({"bedroom-tv": "tv", "office-aircon": "ac"}), from the registry:
+# the loop counts ordered devices by room and kind without guessing from the id
+device_kinds: ContextVar[dict[str, str]] = ContextVar("device_kinds", default={})
 
 
 class ArgError(ValueError):
@@ -29,11 +32,14 @@ class ArgError(ValueError):
 
 class AlreadyError(ArgError):
     """Nothing to change: it is already like that (the card says so; a recipe skips the step).
-    `short`: the words for the card's "Left out:" line; the full text goes to the model."""
+    `short`: the words for the card's "Left out:" line; the full text goes to the model.
+    `force`: the same line sent anyway, for a [Send anyway] button (the bot's record may be out of
+    date: someone used the remote)."""
 
-    def __init__(self, message: str, short: str | None = None):
+    def __init__(self, message: str, short: str | None = None, force: Any = None):
         super().__init__(message)
         self.short = short or message
+        self.force = force
 
 
 @dataclass(frozen=True, slots=True)

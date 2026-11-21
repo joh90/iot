@@ -33,7 +33,7 @@ TURN_KEYS = ("surface", "total_ms", "outcome", "allowed", "user_id", "lag_s",
 # Why chat turns failed, in household words
 CHAT_FAILS = {"down": "PC off or unreachable", "busy": "PC busy", "timeout": "too slow", "llm_off": "switched off",
               "fake_card": "made-up action", "promise": "made-up promise"}
-EVENT_KEYS = ("device", "ms", "ok", "surface", "user_id", "error", "maybe_delivered")
+EVENT_KEYS = ("device", "ms", "ok", "surface", "user_id", "error", "maybe_delivered", "ir")
 NOT_WORK = ("denied", "dropped_offline")   # never reached a handler: no speed to measure
 
 
@@ -113,6 +113,20 @@ def summary(turns: Iterable[dict[str, Any]], events: Iterable[dict[str, Any]], r
                      + (f", {maybe} may have arrived" if maybe else "") + (f"; last: {h(last)}" if last else ""))
     if not failed:
         lines.append("- none")
+
+    # Generated-IR devices (TVs): how they were switched, and what failed
+    gen = [e for e in events if e.get("ir") and isinstance(e.get("device"), str)]
+    if gen:
+        lines += ["", b("TV sends")]
+        by_dev: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for e in gen:
+            by_dev[e["device"]].append(e)
+        for dev, es in sorted(by_dev.items()):
+            how = Counter({"button": "buttons", "slash": "buttons", "llm": "chat", "scheduler": "timers"}.get(
+                str(e.get("surface")), "other") for e in es)
+            bad = sum(e.get("ok") is False for e in es)
+            lines.append(f"- {h(dev)}: {len(es)} ({', '.join(f'{n} {w}' for w, n in how.most_common())})"
+                         + (f", {bad} failed" if bad else ""))
 
     lines += ["", b("Chat assistant")] + chat_lines(turns)
 

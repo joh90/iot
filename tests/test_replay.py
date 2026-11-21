@@ -67,7 +67,7 @@ async def test_chat_turn_fields_replay_and_card_tap_join(tmp_path):
     from iotbot.ac.state import AcState
     from iotbot.result import Actor
     await ctx.devices.send_ac_state("bed_ac", AcState(power=True, temp=24), Actor(ME, "Alice", "button"))
-    ctx.assistant.llm = FakeServer([completion(calls=[call("set_ac", {"device": "bed_ac", "power": False})])]).client()
+    ctx.assistant.llm = FakeServer([completion(calls=[call("set_device", {"device": "bed_ac", "power": False})])]).client()
     context = tg_context(ctx)
     tracker = Tracker(JsonlLog(tmp_path / "t", "turns"))
     u = say("off the bedroom ac")
@@ -75,7 +75,7 @@ async def test_chat_turn_fields_replay_and_card_tap_join(tmp_path):
     async with tracker.turn(surface="text", request_id="tg:1") as t:
         await hd.on_text(u, context)
     assert (t.intent, t.outcome, t.card, t.model, t.tool_calls, t.llm_rounds) == (
-        "llm:actions", "ok", "shown", "qwen-test", ["set_ac"], 1)
+        "llm:actions", "ok", "shown", "qwen-test", ["set_device"], 1)
     async with tracker.turn(surface="button") as tap:
         await hd.on_button(make_update(ME, data=f"lc:do:{t.card_id}"), context)
     assert (tap.card, tap.card_id, tap.outcome) == ("do", t.card_id, "ok")

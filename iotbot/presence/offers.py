@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 from iotbot.ac.service import AcService
 from iotbot.ac.state import AcState
 from iotbot.bot.callbacks import encode
-from iotbot.devices.model import Registry
+from iotbot.devices.model import Registry, chat_tv
 from iotbot.presence.tracker import Presence
 from iotbot.result import Actor, Result
 from iotbot.services.devices import DeviceService
@@ -91,15 +91,29 @@ class Offers:
     def aircons(self) -> list[str]:
         return [d for d in self.ac.presets if d in self.registry.devices]
 
+    def tvs(self) -> list[str]:
+        """TVs with discrete power codes: the everyone-out offer lists one the bot last sent on."""
+        return [d.id for d in self.registry.devices.values() if chat_tv(d)]
+
     def is_on(self, device: str) -> bool:
+        if device in self.tvs():
+            last = self.devices.last_power.get(device)
+            return bool(last and last.ok and last.feature == "power_on")
         last = self.ac.last(device)
         return bool(last and last.state.power)
 
     def label(self, device: str) -> str:
-        """'Bedroom' (its room), or the device id when two aircons share a room."""
+        """'Bedroom' (its room), or the device id when two aircons share a room; 'Bedroom TV'."""
         room = self.registry.devices[device].room
+        title = room.replace("_", " ").replace("-", " ").title()
+        if device in self.tvs():
+            return f"{title} TV"
         same = [d for d in self.aircons() if self.registry.devices[d].room == room]
-        return room.replace("_", " ").replace("-", " ").title() if len(same) == 1 else device
+        return title if len(same) == 1 else device
+
+    def _pool(self, kind: str) -> list[str]:
+        """What an offer can switch: arrival turns aircons on; departure turns aircons and TVs off."""
+        return self.aircons() if kind == "arrival" else self.aircons() + self.tvs()
 
     def _hhmm(self, t: float) -> str:
         return f"{datetime.fromtimestamp(t, self.tz):%H:%M}"
@@ -119,7 +133,7 @@ class Offers:
         await self._deliver(o, [uid], silent=False)
 
     async def all_away(self, since: float) -> None:
-        if not any(self.is_on(d) for d in self.aircons()):
+        if not any(self.is_on(d) for d in self._pool("departure")):
             return
         who = [u for u in self.presence.phones() if self.presence.wants(u, "departure")]
         if not who:
@@ -193,7 +207,7 @@ class Offers:
             targets = [d for d in self.aircons() if not self.is_on(d)]
         else:
             lines = [f"Everyone is out (since {self._hhmm(o.at)})."]
-            targets = [d for d in self.aircons() if self.is_on(d)]
+            targets = [d for d in self._pool("departure") if self.is_on(d)]
         lines += [text.replace("{who}", "you" if who == uid else h(name)) for who, name, text in o.done]
         rows: Rows = []
         if o.status == "open":
@@ -225,6 +239,9 @@ class Offers:
         return " and ".join(h(self.label(d)) for d in off) + (" aircon is off." if len(off) == 1 else " aircons are off.")
 
     def _since(self, device: str) -> str:
+        if device in self.tvs():
+            last = self.devices.last_power.get(device)
+            return h(self.label(device)) + (f" (sent on {self._hhmm(last.at)})" if last else "")
         last = self.ac.last(device)
         since = last.on_since if last else None
         return h(self.label(device)) + (f" (since {self._hhmm(since)})" if since else "")
@@ -256,12 +273,21 @@ class Offers:
 
     async def _switch(self, o: Offer, actor: Actor, target: str) -> Result:
         turn_on = o.kind == "arrival"
-        pool = [d for d in self.aircons() if self.is_on(d) != turn_on]
+        pool = [d for d in self._pool(o.kind) if self.is_on(d) != turn_on]
         devices = pool if target == "all" else [d for d in pool if d == target]
         if not devices:
             return Result.fail("already", "Already " + ("on" if turn_on else "off") + "; nothing sent.")
         done, failed = [], []
+        tvs = self.tvs()
         for d in devices:
+            if d in tvs:                              # departure only: power off, Undo sends power on
+                r = await self.devices.run(d, "power_off", actor, source=f"presence:{o.id}")
+                if r.ok:
+                    o.undo[d] = (r.data.get("seq"), "tv")
+                    done.append(d)
+                else:
+                    failed.append(f"{self.label(d)}: {r.message}")
+                continue
             last = self.ac.last(d)
             if turn_on:
                 state = (last.state.with_changes(power=True, powerful=False) if last
@@ -287,7 +313,7 @@ class Offers:
                     " and ".join(h(self.label(d)) for d in done) + " off"
                 self._did(o, actor, f"{what} (by {{who}}, {when}).")
             o.undo_until = self._clock() + UNDO_S
-            left = [d for d in self.aircons() if self.is_on(d) != turn_on]
+            left = [d for d in self._pool(o.kind) if self.is_on(d) != turn_on]
             if not left:
                 o.status = "closed"
         if failed:
@@ -304,9 +330,12 @@ class Offers:
             return Result.fail("expired", "Undo is only possible for 10 minutes.")
         problems = []
         for d, (seq, before) in list(o.undo.items()):
-            state = before if before is not None else self.ac.state_for(d, "power_off")
-            r = await self.devices.send_ac_state(d, state, actor, source=f"presence-undo:{o.id}",
-                                                 expect_seq=seq)
+            if before == "tv":
+                r = await self.devices.run(d, "power_on", actor, source=f"presence-undo:{o.id}", expect_seq=seq)
+            else:
+                state = before if before is not None else self.ac.state_for(d, "power_off")
+                r = await self.devices.send_ac_state(d, state, actor, source=f"presence-undo:{o.id}",
+                                                     expect_seq=seq)
             if r.ok:
                 del o.undo[d]
             else:
