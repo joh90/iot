@@ -32,7 +32,7 @@ from iotbot.bot.callbacks import encode
 from iotbot.devices.model import Registry, chat_tv
 from iotbot.presence.tracker import Presence
 from iotbot.result import Actor, Result
-from iotbot.services.devices import DeviceService
+from iotbot.services.devices import GUARD_HOURS, DeviceService
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,9 @@ DEPARTURE_TTL_S = 2 * 3600
 UNDO_S = 10 * 60
 NIGHT = (23, 7)              # departure offers are silent from 23:00 to 07:00
 MAX_OFFERS = 50
-# A TV is mostly switched off with its own remote: an old "on" from the bot is not evidence it is on
-TV_ON_HOURS = 12
+# A TV is mostly switched off with its own remote: an old "on" from the bot is not evidence it is on.
+# The same window as the guarded toggle's guard, so the offer and the send agree
+TV_ON_HOURS = GUARD_HOURS
 
 Rows = list[list[tuple[str, str]]]
 Send = Callable[[int, str, Rows, bool], Awaitable[int | None]]     # -> message id

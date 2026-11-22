@@ -137,7 +137,7 @@ def build_context(settings: Settings, transport: Transport | None = None) -> App
     else:
         logger.info("AC_ENCODER=off: aircons send their captured codes")
 
-    devices = DeviceService(registry, hub, events, ac)
+    devices = DeviceService(registry, hub, events, ac, ZoneInfo(settings.timezone))
     devices.seed(datetime.now(ZoneInfo(settings.timezone)))
     users = UserService(users_store, audit, settings.admin_ids)
     if settings.admin_ids and not any(users.is_allowed(a) for a in settings.admin_ids):

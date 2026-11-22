@@ -293,23 +293,25 @@ async def test_toggle_bit_flips_on_every_press_across_keys_and_is_logged(tmp_pat
     hub = FakeHub()
     svc = tv_service(tmp_path, hub)
     a = Actor(1, "Alice", "button")
-    for key in ("power_on", "power_on", "power_off", "power_on"):
+    for key in ("power_on", "power_off", "power_on", "power_off"):
         assert (await svc.run("bed_tv", key, a)).ok
     assert _sent_toggles(hub) == [0, 1, 0, 1]
-    assert all(idem for *_, idem in hub.sent)                     # discrete codes may be resent
+    assert not any(idem for *_, idem in hub.sent)                 # a guarded toggle is never resent
     ev = events(tmp_path)
     assert [e["ir"][-2:] for e in ev] == ["t0", "t1", "t0", "t1"] and ev[0]["actor"] == "Alice"
-    assert ev[2]["ir"].startswith("rc6:0:") and ev[2]["feature"] == "power_off"
+    assert ev[1]["ir"].startswith("rc6:0:") and ev[1]["feature"] == "power_off"
 
 
-async def test_concurrent_presses_still_alternate(tmp_path):
+async def test_concurrent_presses_send_once_the_rest_are_refused(tmp_path):
     import asyncio
 
     hub = FakeHub()
     svc = tv_service(tmp_path, hub)
     a = Actor(1, "Alice", "button")
-    await asyncio.gather(*(svc.run("bed_tv", "power_off", a) for _ in range(4)))
-    assert sorted(_sent_toggles(hub)) == [0, 0, 1, 1]
+    rs = await asyncio.gather(*(svc.run("bed_tv", "power_off", a) for _ in range(4)))
+    assert len(hub.sent) == 1 and sum(r.ok for r in rs) == 1
+    assert sorted(r.error for r in rs if not r.ok) == ["already_state"] * 3
+    assert all("already" in r.message for r in rs if not r.ok)
 
 
 async def test_a_failed_press_still_flips_the_next_one(tmp_path):
@@ -319,7 +321,10 @@ async def test_a_failed_press_still_flips_the_next_one(tmp_path):
     r = await svc.run("bed_tv", "power_off", a)
     assert not r.ok and r.data["maybe_delivered"]
     hub.fail = None
-    assert (await svc.run("bed_tv", "power_off", a)).ok
+    again = await svc.run("bed_tv", "power_off", a)                # it may have worked: guarded
+    assert again.error == "already_state" and "may already be OFF" in again.message
+    assert "may have gone through" in again.message
+    assert (await svc.run("bed_tv", "power_off", a, force=True)).ok   # Send anyway
     assert _sent_toggles(hub) == [1]                               # the failed one was t0
     assert events(tmp_path)[0]["ir"].endswith(":t0") and events(tmp_path)[0]["ok"] is False
 
@@ -366,6 +371,7 @@ async def test_a_definite_failure_does_not_use_up_the_toggle(tmp_path):
     assert (await svc.run("bed_tv", "power_off", a)).ok                       # t0
     hub.fail = HubError("RM offline", maybe_delivered=False)
     assert not (await svc.run("bed_tv", "power_on", a)).ok                    # would be t1, nothing went out
+    assert svc.known_power("bed_tv").feature == "power_off"                  # still as before the failure
     hub.fail = None
     assert (await svc.run("bed_tv", "power_on", a)).ok
     assert _sent_toggles(hub) == [0, 1]                                        # the retry is the new press
@@ -381,3 +387,75 @@ async def test_expect_seq_is_honoured_for_a_managed_aircon_too(tmp_path):
     await ctx.devices.run("bed_ac", "power_off", a)
     stale = await ctx.devices.run("bed_ac", "power_on", a, expect_seq=r.data["seq"])
     assert stale.error == "changed_since"
+
+
+# ---- guarded power toggle (the bedroom TV only has RC6 12) ----------------------------------------
+
+async def test_guard_refuses_a_repeat_and_send_anyway_skips_it(tmp_path):
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "llm")
+    assert (await svc.run("bed_tv", "power_off", a)).ok
+    r = await svc.run("bed_tv", "power_off", Actor(2, "Bob", "button"))
+    assert not r.ok and r.error == "already_state" and len(hub.sent) == 1
+    assert r.message.startswith("bed_tv is already OFF: the bot sent off at ") and "(Alice)" in r.message
+    assert "would turn it on" in r.message and r.data["sure"] is True
+    assert (await svc.run("bed_tv", "power_on", a)).ok                       # the other way: sends
+    assert (await svc.run("bed_tv", "power_on", a, force=True)).ok           # forced repeat: sends
+    assert len(hub.sent) == 3
+
+
+async def test_guard_forgets_after_guard_hours_and_without_a_record(tmp_path, monkeypatch):
+    import time as _time
+
+    from iotbot.services import devices as dv
+
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "llm")
+    assert svc.known_power("bed_tv") is None
+    assert (await svc.run("bed_tv", "power_off", a)).ok                      # no record: sends
+    later = _time.time() + dv.GUARD_HOURS * 3600 + 5
+    monkeypatch.setattr(dv.time, "time", lambda: later)
+    assert svc.known_power("bed_tv") is None
+    assert (await svc.run("bed_tv", "power_off", a)).ok                      # too old: unknown, sends
+    assert len(hub.sent) == 2
+
+
+async def test_guard_only_applies_to_guarded_features(tmp_path, monkeypatch):
+    from iotbot.ir.codesets import CODESETS, Button, Codeset
+
+    monkeypatch.setitem(CODESETS, "philips-rc6", Codeset("philips-rc6", "rc6", 0, {
+        "power_on": Button(63, True), "power_off": Button(61, True)}, verified=True))
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "llm")
+    assert (await svc.run("bed_tv", "power_off", a)).ok
+    assert (await svc.run("bed_tv", "power_off", a)).ok                      # discrete: a repeat is harmless
+    assert len(hub.sent) == 2
+
+
+async def test_seed_keeps_maybe_sent_and_skips_definite_failures(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    hub = FakeHub()
+    svc = tv_service(tmp_path, hub)
+    a = Actor(1, "Alice", "llm")
+    assert (await svc.run("bed_tv", "power_on", a)).ok
+    hub.fail = HubError("RM offline", maybe_delivered=False)
+    assert not (await svc.run("bed_tv", "power_off", a)).ok                  # nothing went out
+    again = tv_service(tmp_path, hub)
+    again.seed(datetime.now(ZoneInfo("Asia/Singapore")))
+    lp = again.known_power("bed_tv")
+    assert (lp.feature, lp.ok, lp.maybe) == ("power_on", True, False)        # the failure changed nothing
+
+    hub.fail = HubError("timeout", maybe_delivered=True)
+    assert not (await svc.run("bed_tv", "power_off", a)).ok
+    third = tv_service(tmp_path, hub)
+    third.seed(datetime.now(ZoneInfo("Asia/Singapore")))
+    lp = third.known_power("bed_tv")
+    assert (lp.feature, lp.ok, lp.maybe) == ("power_off", False, True)
+    hub.fail = None
+    r = await third.run("bed_tv", "power_off", a)
+    assert r.error == "already_state" and "may already be OFF" in r.message

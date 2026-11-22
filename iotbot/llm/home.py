@@ -181,7 +181,8 @@ class HomeTools:
                 row.update(bot_last_sent="on" if last.feature == "power_on" else "off",
                            sent_at=f"{at:%a %H:%M} ({_ago(now - last.at)})", sent_via_bot_by=last.actor)
                 if last.ok is not True:
-                    row["send_result"] = "failed" if last.ok is False else "still sending"
+                    row["send_result"] = ("still sending" if last.ok is None
+                                          else "failed, may have been sent" if last.maybe else "failed")
             tvs.append(row)
         if tvs:
             result["tvs"] = tvs
@@ -265,16 +266,27 @@ class HomeTools:
             raise ArgError(f"the message does not say which TV; {d} is not changed: ask which TV they mean")
         power = bool(args["power"])
         key = "power_on" if power else "power_off"
-        last = self.ctx.devices.last_power.get(d)
-        before = None
-        if last is not None and last.ok:
-            before = last.feature == "power_on"
+        guarded = self.ctx.registry.devices[d].features[key].guarded
+        if guarded:
+            # A toggle: the same rule DeviceService's guard uses (sent or maybe sent, last GUARD_HOURS);
+            # a "maybe" counts, so a send that may have worked is not undone by a resend
+            last = self.ctx.devices.known_power(d)
+            sure = last is not None and last.ok is True
+        else:
+            last = self.ctx.devices.last_power.get(d)
+            last, sure = (last, True) if last is not None and last.ok else (None, False)
+        before = None if last is None else last.feature == "power_on"
         word = "ON" if power else "OFF"
-        line = f"{'unknown' if before is None else ('ON' if before else 'OFF')} -> {word}"
+        line = f"{'unknown' if before is None else ('' if sure else 'maybe ') + ('ON' if before else 'OFF')} -> {word}"
+        # Send anyway: skip the guard, but only until a send may have gone out (Retry then must
+        # not toggle it back)
+        st = {"force": False}
 
         async def run(who: Actor) -> Done:
-            r = await self.ctx.devices.run(d, key, who, source="chat", expect_seq=item.seen)
+            r = await self.ctx.devices.run(d, key, who, source="chat", expect_seq=item.seen, force=st["force"])
             if not r.ok:
+                if r.data and r.data.get("maybe_delivered"):
+                    st["force"] = False
                 return Done(False, _why(r))
             seq = r.data.get("seq")
 
@@ -283,15 +295,21 @@ class HomeTools:
                 r2 = await self.ctx.devices.run(d, back, who2, source="chat:undo", expect_seq=seq)
                 return Done(True, "ok") if r2.ok else Done(False, _why(r2))
 
-            return Done(True, "ok", undo if before is not None and before is not power else None)
+            return Done(True, "ok", undo if sure and before is not power else None)
 
         item = Prepared(d, line, run, self._version(d))
         if before is power:
-            item.line = f"{word} -> {word} (send anyway)"
-            item.ask, item.do_label = f"{d}: already {word}.", "Send anyway"
-            raise AlreadyError(f"{d} is already {word} (as last sent by the bot, {last.actor}). Nothing was sent; "
-                               "if someone used the remote, they can tap Send anyway",
-                               short=f"{d}: already {word}.", force=item)
+            st["force"] = True
+            how = "already" if sure else "may already be"
+            item.line = f"{'' if sure else 'maybe '}{word} -> {word} (send anyway)"
+            item.ask, item.do_label = f"{d}: {how} {word}.", "Send anyway"
+            toggle = (f". Its power key is a toggle: if it really is {word}, Send anyway turns it "
+                      f"{'OFF' if power else 'ON'}" if guarded else "")
+            maybe = "" if sure else " (that send may or may not have gone through)"
+            raise AlreadyError(f"{d} {'is already' if sure else 'may already be'} {word} (as last sent by the "
+                               f"bot, {last.actor}){maybe}. Nothing was sent; if someone used the remote, "
+                               f"they can tap Send anyway{toggle}",
+                               short=f"{d}: {how} {word}.", force=item)
         return item
 
     async def prepare_ac(self, actor: Actor, args: dict[str, Any]) -> Prepared:

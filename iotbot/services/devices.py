@@ -8,7 +8,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from functools import wraps
 from typing import TYPE_CHECKING
 
@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 # Pseudo-feature for sending an arbitrary AC state (scheduler, later the LLM)
 SET_STATE = Feature("set_state", "set", idempotent=True)
+
+# A guarded power toggle (codesets.py) trusts the bot's own last power send this long. Past it, or
+# with no send yet, the state counts as unknown and the toggle is sent. Also how long presence
+# treats a TV the bot turned on as still on.
+GUARD_HOURS = 12
 
 
 def _tracked(method: Callable[..., Awaitable[Result]]) -> Callable[..., Awaitable[Result]]:
@@ -49,6 +54,7 @@ class LastAction:
     actor: str
     ok: bool | None          # None while in flight
     prev_feature: str | None
+    maybe: bool = False      # failed, but may have been sent (the blaster may have got it)
 
 
 ANY_SEQ = object()          # send_ac_state: no "still the latest?" check
@@ -56,8 +62,9 @@ ANY_SEQ = object()          # send_ac_state: no "still the latest?" check
 
 class DeviceService:
     def __init__(self, registry: Registry, hub: BroadlinkHub, events: JsonlLog,
-                 ac: AcService | None = None):
+                 ac: AcService | None = None, tz: tzinfo | None = None):
         self.registry = registry
+        self.tz = tz                 # for the times in guard messages (None: the system zone)
         self.hub = hub
         self.events = events
         # None when AC_ENCODER=off: every AC sends its captured codes
@@ -68,8 +75,12 @@ class DeviceService:
         # counter per device, like a real remote), chosen before the first await so presses that
         # overlap still alternate; the hub's own resend repeats the same bytes
         self._toggle: dict[str, int] = {}
-        # Last power on / off sent to a generated-IR device (a mute press must not hide it)
+        # Last power on / off sent to a generated-IR device (a mute press must not hide it). Only
+        # sends that went out or may have: a definite failure changed nothing, so it is not recorded
         self.last_power: dict[str, LastAction] = {}
+        # Guarded power toggles: one press at a time per device, so the guard always checks the
+        # settled outcome of the press before it (review 2026-11-22: overlapping presses)
+        self._power_locks: dict[str, asyncio.Lock] = {}
 
     def seed(self, now: datetime, days: int = 62) -> int:
         """After a restart: the last send to each codeset device (for "last sent", Undo checks)
@@ -83,8 +94,9 @@ class DeviceService:
             for rec in read_since(self.events, now - timedelta(days=days), now, contains=('"ir"',)):
                 if rec.get("device") in want and rec.get("ir"):
                     latest[rec["device"]] = rec
-                    if rec.get("feature") in ("power_on", "power_off"):
-                        power[rec["device"]] = rec
+                    if rec.get("feature") in ("power_on", "power_off") and (
+                            rec.get("ok") or rec.get("maybe_delivered")):
+                        power[rec["device"]] = rec     # a send that definitely failed changed nothing
         except OSError as e:
             logger.warning("Could not read device events to seed last sends: %s", e)
             return 0
@@ -105,9 +117,37 @@ class DeviceService:
                 continue
             last = self.last.get(dev_id)
             seq = last.seq if last and last.feature == rec["feature"] and last.at == at else next(self._seq)
+            ok = rec.get("ok")
             self.last_power[dev_id] = LastAction(seq, rec["feature"], at, rec.get("actor") or "someone",
-                                                 rec.get("ok"), None)
+                                                 ok, None, maybe=not ok and bool(rec.get("maybe_delivered")))
         return len(latest)
+
+    def known_power(self, device_id: str) -> LastAction | None:
+        """The bot's own last power send to a generated-IR device while it still counts for the
+        guard: sent or maybe sent, less than GUARD_HOURS ago. None = unknown (no send, too old)."""
+        lp = self.last_power.get(device_id)
+        if lp is None or time.time() - lp.at > GUARD_HOURS * 3600:
+            return None
+        if lp.ok is False and not lp.maybe:
+            return None
+        return lp
+
+    def _guard(self, device: Device, feature: str) -> Result | None:
+        """A guarded toggle: refuse a power on / off the bot's own record already says (the toggle
+        would do the opposite). `already_state` carries the record for the caller's Send anyway."""
+        lp = self.known_power(device.id)
+        if lp is None or lp.feature != feature:
+            return None
+        word, other = ("ON", "off") if feature == "power_on" else ("OFF", "on")
+        sure = lp.ok is True
+        at = datetime.fromtimestamp(lp.at, self.tz).strftime("%H:%M")
+        how = "is already" if sure else "may already be"
+        why = "" if sure else " (that send may have gone through)"
+        return Result.fail("already_state",
+                           f"{device.id} {how} {word}: the bot sent {word.lower()} at {at} ({lp.actor}){why}. "
+                           f"Nothing was sent: its power key is a toggle, so it would turn it {other}.",
+                           data={"device": device.id, "feature": feature, "sure": sure, "at": lp.at,
+                                 "actor": lp.actor})
 
 
     def get(self, device_id: str) -> Device | None:
@@ -129,12 +169,14 @@ class DeviceService:
     @_tracked
     async def run(self, device_id: str, feature: str, actor: Actor,
                   request_id: str | None = None, source: str | None = None,
-                  expect_seq: int | None | object = ANY_SEQ) -> Result:
+                  expect_seq: int | None | object = ANY_SEQ, force: bool = False) -> Result:
         """Run one feature. `request_id` correlates surfaces (e.g. a Telegram update);
         `source` links to what triggered it (e.g. a schedule event id). Both are logged.
         `expect_seq`: send only if the device's latest action is still that one (None: none yet);
         else `changed_since`, nothing sent. The check and _run's claim of the next seq have no await
-        between them, so no lock is needed (the aircon path checks under its AC lock)."""
+        between them, so no lock is needed (the aircon path checks under its AC lock).
+        A guarded power toggle fails `already_state` (nothing sent) when the bot's own record says
+        the device is already in that state; `force` (a person's Send anyway) skips that check."""
         device = self.get(device_id)
         if device is None:
             return Result.fail("device_not_found", f"Device '{device_id}' not found.")
@@ -150,6 +192,14 @@ class DeviceService:
                 state = self.ac.state_for(device.id, feature)
                 r = await self._run(device, f, actor, request_id, source, state)
                 return _with_prev(r, prev)
+        if f.guarded:
+            # Waits for a press still going out; the stale check and the guard then see its outcome
+            async with self._power_locks.setdefault(device.id, asyncio.Lock()):
+                if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
+                    return stale
+                if not force and (refused := self._guard(device, feature)):
+                    return refused
+                return await self._run(device, f, actor, request_id, source)
         if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
             return stale
         return await self._run(device, f, actor, request_id, source)
@@ -262,9 +312,11 @@ class DeviceService:
             if cur and cur.seq == seq:
                 self.last[device.id] = LastAction(seq, feature, cur.at, actor.name, ok, cur.prev_feature)
             lp = self.last_power.get(device.id)
-            if ir and feature in ("power_on", "power_off") and (lp is None or lp.seq <= seq):
+            # A definite failure sent nothing: the device is still as the earlier record says
+            if ir and feature in ("power_on", "power_off") and (lp is None or lp.seq < seq) and (ok or maybe):
                 done_at = cur.at if cur and cur.seq == seq else time.time()
-                self.last_power[device.id] = LastAction(seq, feature, done_at, actor.name, ok, None)
+                self.last_power[device.id] = LastAction(seq, feature, done_at, actor.name, ok, None,
+                                                        maybe=not ok and bool(maybe))
             record = {
                 "device": device.id, "room": device.room, "feature": feature, "seq": seq,
                 "user_id": actor.user_id, "surface": actor.surface,

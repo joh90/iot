@@ -185,16 +185,25 @@ the family of codes its remote sends, and gets that codeset's buttons.
   Only RC6 is built so far (`iotbot/ir/rc6.py`, Philips TVs); `iotbot/ir/packet.py` turns any pulse
   timings into the Broadlink packet. A new codeset is a code change and an image rebuild.
 - A button is discrete (power on, power off: same meaning whatever the TV is doing) or a toggle (one
-  power key). Only discrete buttons may be resent after an unclear reply, run on timers and schedules,
-  or be used by the chat assistant. A toggle is always called `power`, never `power_on` / `power_off`,
-  and a TV with only a toggle stays on the Telegram buttons.
+  power key). A plain toggle is always called `power`, stays on the Telegram buttons, and never runs on
+  a timer or from chat.
+- Guarded power, for a TV whose only power key is the toggle (the bedroom Philips): `power_on` and
+  `power_off` both send the toggle, and the bot sends one only if its own record of its last power send
+  to that TV (last 12 hours) does not already say that state. A send that may have gone through counts.
+  So "tv off" twice sends once; the second answers "already OFF" with a [Send anyway] button (chat,
+  keyboard and `/d`), and a timer is skipped with the reason. The bot cannot see the remote: if someone
+  turned the TV off with it after the bot turned it on, the bot's next "off" turns it back on.
+  Guarded presses are never resent after an unclear reply, and go out one at a time per TV.
+- Timers and schedules for a guarded TV: a timer that the bot's record says is already done (sent in
+  the last 12 hours) warns that it will be skipped. A repeating schedule is allowed but warns that each
+  run sends the toggle without knowing the state, so on a day the TV is already off, "off" turns it on.
 - The RC6 toggle bit flips on every press (per TV, kept across restarts from the device log), so the
   TV sees each press as new.
 - The bot cannot see the TV: what it reports is what it last sent. A sticker or a bad angle in front of
   the TV's sensor blocks everything; the RM mini sends at about 38 kHz while RC6 is 36 kHz, which works
   at room distances.
-- The Philips power numbers in the codeset are checked on the real TV before the TV is added to the
-  live `devices.json`.
+- Checked on the bedroom Philips: mute (13) works, the discrete off (61) does nothing, the power toggle
+  (12) turns it off. So `philips-rc6` uses guarded power (12) for both on and off.
 
 ## Aircon state (Mitsubishi)
 
@@ -266,15 +275,15 @@ Rules worth knowing:
 - The bot token is scrubbed from the logs.
 - A failed send rediscovers the device by MAC and retries once, but only when a repeat is harmless:
   aircon frames (full state) and discrete TV codes (power on, power off) are safe to resend, while
-  toggles like a single TV power key are never resent after an unclear reply, so the TV is not
-  switched on and off again.
+  toggles like a single TV power key (guarded or not) are never resent after an unclear reply, so the
+  TV is not switched on and off again.
 
 ## Chat assistant
 
 Approved users can type to the bot in a private chat. A local model on the PC (whatever llama-server
 has loaded, thinking off) reads the message and picks tools; code does everything else.
 
-- It handles the managed aircons, TVs with discrete power codes, and their schedules: change settings
+- It handles the managed aircons, TVs with discrete or guarded power, and their schedules: change settings
   ("a bit cooler" = 1C below what the bot last sent), TV on / off, timers, repeating schedules, edit /
   pause / resume / delete, and questions such as "is the bedroom aircon on?" or "what's scheduled
   tonight?". Anything else gets a polite no.
@@ -283,7 +292,8 @@ has loaded, thinking off) reads the message and picks tools; code does everythin
   "Turn off in the bedroom: which one?" with a button per answer; after your tap the bot offers once to
   save that answer as your note, so it stops asking. "Both" with more than two devices asks the same way.
 - If the bot's record says a device is already like that, nothing is sent and you get a [Send anyway]
-  button (for when someone used the remote).
+  button (for when someone used the remote). For a guarded TV the record counts for 12 hours, and
+  Send anyway sends the toggle, which turns the TV on if it really was off.
 - Nothing changes until you tap. Every action shows a card drawn by code, "Do this?" with each line as
   before -> after, and [Do it] [Cancel] for 5 minutes. A newer request replaces your older card. If the
   device or schedule changed since the card was drawn, Do it refuses and you ask again.
@@ -363,7 +373,7 @@ itself stops answering, rounds are skipped, so a network outage never looks like
   you get a button per aircon that is off, Both, and No thanks. On uses the last state the bot sent to
   that aircon (the room preset if none). Undo for 10 minutes; the offer expires after 30 minutes.
 - **Everyone is out**: once every phone set up is away and an aircon is on (or a TV the bot sent on in
-  the last 12 hours, discrete power codes only), everyone set up gets Turn off all, one button per
+  the last 12 hours), everyone set up gets Turn off all, one button per
   device, and Leave on. The first tap wins and every copy is redrawn; someone coming back closes it.
   Between 23:00 and 07:00 it arrives silently. Welcome home stays aircon-only.
 - Nothing is sent to an aircon or TV without a tap. Presence shows counts only ("Home: 1 of 2 phones" in

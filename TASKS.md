@@ -164,8 +164,9 @@ the real-TV test.
 | 10.9  | [x]    | Tests (fake hub, scripted LLM)                                                                            |
 | 10.10 | [x]    | Eval: baseline 4069dcd vs new without/with TV: aircon 72/93 -> 81/93, no harm, TV all pass                |
 | 10.11 | [x]    | Docs, two reviews + full 3-area review, all fixed; secret scan                                            |
-| 10.12 | [ ]    | Real-TV test (each send on the user's go): power codes, 1 frame from standby; fill the codeset            |
+| 10.12 | [x]    | Real-TV test: 61 does nothing, mute 13 works, toggle 12 turns it off (12 for on: owner's call, untried)   |
 | 10.13 | [ ]    | Ship on OK: rollback tag, devices.json backup, add bedroom-tv, check, restart                             |
+| 10.14 | [x]    | Guarded power: on/off both send toggle 12; refused if the bot's own last send (12h) says so; Send anyway  |
 
 ## Later phases (coarse; split into numbered subtasks when started)
 

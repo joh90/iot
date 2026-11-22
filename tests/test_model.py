@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 
 from iotbot.devices.model import (
-    DeviceType, build_ir_features, load_registry, normalize_mac, resolve_feature,
+    DeviceType, build_ir_features, chat_tv, load_registry, normalize_mac, resolve_feature, schedulable_key,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -198,8 +198,12 @@ def test_codeset_tv_builds_without_commands_json_and_without_warnings():
     cmd = codesets.CODESETS["philips-rc6"].buttons["power_on"].command
     assert rc6.decode(packet.to_pulses(on.codes[0])) == [(0, cmd, 0)]
     assert rc6.decode(packet.to_pulses(on.alt_codes[0])) == [(0, cmd, 1)]
-    assert on.discrete and on.idempotent and on.frame_ids == (f"rc6:0:{cmd}:t0", f"rc6:0:{cmd}:t1")
+    # The bedroom TV only has the toggle: guarded, never resent, both power keys send it
+    assert on.guarded and not on.discrete and not on.idempotent and on.label == "power on"
+    assert on.frame_ids == (f"rc6:0:{cmd}:t0", f"rc6:0:{cmd}:t1")
+    assert tv.features["power_off"].codes == on.codes
     assert resolve_feature(tv, ["off"]) == "power_off"
+    assert chat_tv(tv) and schedulable_key(tv, "power_off") and schedulable_key(tv, "power_on")
 
 
 def test_codeset_entries_that_are_skipped_with_a_warning():
@@ -235,6 +239,12 @@ def test_a_toggle_is_never_power_on_or_off_and_is_not_discrete():
     f = build_codeset_features(toggle_only)["power"]
     assert not f.discrete and not f.idempotent and f.label == "power (toggle)"
     assert problems(Codeset("bad", "rc6", 0, {"power_off": Button(12, False)})) == [
-        "bad: power_off must be a discrete code (a toggle is called 'power')"]
+        "bad: power_off must be a discrete or guarded code (a plain toggle is called 'power')"]
+    assert problems(Codeset("g", "rc6", 0, {"power": Button(12, guarded=True)})) == [
+        "g: power: only power_on / power_off can be guarded",
+        "g: guarded power needs both power_on and power_off guarded"]
+    assert problems(Codeset("h", "rc6", 0, {"power_on": Button(12, guarded=True),
+                                            "power_off": Button(61, True, guarded=True)})) == [
+        "h: power_off is either discrete or guarded, not both"]
     assert problems(Codeset("x", "nec", 300, {"a": Button(999, True)})) == [
         "x: unknown protocol 'nec'", "x: address 300 out of range", "x: a command 999 out of range"]

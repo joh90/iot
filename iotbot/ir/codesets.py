@@ -7,6 +7,11 @@ builds its frames. Everything above this (buttons, timers, chat) only sees butto
 A button is `discrete` when it always means the same thing whatever the device is doing (power on,
 power off). A toggle (one power key) is not: sending it twice undoes itself, so it is never resent,
 never scheduled, never used by chat, and it is never called power_on / power_off.
+
+A `guarded` button is the middle way, for a TV that only has the toggle: power_on and power_off both
+send the toggle, and DeviceService sends one only when the bot's own record of its last power send
+(last GUARD_HOURS) does not already say that state. Chat, timers and buttons see power on / off as
+usual; the guard is what keeps a second "off" from turning the TV back on.
 """
 
 from __future__ import annotations
@@ -22,7 +27,8 @@ PROTOCOLS = ("rc6",)
 @dataclass(frozen=True, slots=True)
 class Button:
     command: int
-    discrete: bool
+    discrete: bool = False
+    guarded: bool = False        # a toggle used as power_on / power_off, behind the state guard
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +38,8 @@ class Codeset:
     address: int
     buttons: dict[str, Button] = field(default_factory=dict)
     frames: int = 1
-    # Checked on a real device: until then the registry warns at every start (the codes are treated
-    # as discrete, so a wrong guess could be resent, scheduled or used by chat)
+    # Checked on a real device: until then the registry warns at every start (a wrong guess could be
+    # scheduled or used by chat)
     verified: bool = False
 
     def packets(self, key: str) -> tuple[bytes, bytes]:
@@ -50,15 +56,15 @@ class Codeset:
         return f"{self.protocol}:{self.address}:{self.buttons[key].command}:t{toggle}"
 
 
-# Philips TVs (TP Vision / TPV, RC6 mode 0, address 0). Mute = 13 is verified on the bedroom TV
-# (2026-11-21). The power numbers are NOT verified yet: 63 / 61 are the discrete on / off codes some
-# Philips sets accept (forum reports); 12 is the standard power toggle. Phase 10.12 tests them on the
-# real TV and this table keeps only what works (a toggle-only TV gets just "power": Button(12, False)).
+# Philips TVs (TP Vision / TPV, RC6 mode 0, address 0). Checked on the bedroom TV: mute 13 works
+# (2026-11-21); the discrete off 61 does nothing and the power toggle 12 turns it off (2026-11-22).
+# So power on / off are both the toggle behind the guard (owner's call: 12 for both, for good; 12
+# from standby turning it on is the standard Philips power key and was not separately tried).
 CODESETS: dict[str, Codeset] = {
     "philips-rc6": Codeset("philips-rc6", "rc6", 0, {
-        "power_on": Button(63, True),
-        "power_off": Button(61, True),
-    }),
+        "power_on": Button(12, guarded=True),
+        "power_off": Button(12, guarded=True),
+    }, verified=True),
 }
 
 
@@ -76,8 +82,15 @@ def problems(cs: Codeset) -> list[str]:
     for key, b in cs.buttons.items():
         if not re.fullmatch(r"[a-z0-9_]{1,24}", key):
             out.append(f"{cs.name}: bad button name {key!r}")
-        if key in ("power_on", "power_off") and not b.discrete:
-            out.append(f"{cs.name}: {key} must be a discrete code (a toggle is called 'power')")
+        if key in ("power_on", "power_off") and not (b.discrete or b.guarded):
+            out.append(f"{cs.name}: {key} must be a discrete or guarded code (a plain toggle is called 'power')")
+        if b.guarded and key not in ("power_on", "power_off"):
+            out.append(f"{cs.name}: {key}: only power_on / power_off can be guarded")
+        if b.guarded and b.discrete:
+            out.append(f"{cs.name}: {key} is either discrete or guarded, not both")
         if not 0 <= b.command <= 0xFF:
             out.append(f"{cs.name}: {key} command {b.command} out of range")
+    if any(b.guarded for b in cs.buttons.values()) and not all(
+            k in cs.buttons and cs.buttons[k].guarded for k in ("power_on", "power_off")):
+        out.append(f"{cs.name}: guarded power needs both power_on and power_off guarded")
     return out

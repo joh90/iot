@@ -60,10 +60,13 @@ class Feature:
     # Generated IR (devices.json "codeset"): `alt_codes` is the same press with the other toggle
     # bit, chosen per press by DeviceService; `frame_ids` name both for the device log. `discrete`:
     # the code means the same thing whatever the device is doing (power on/off), so it may be
-    # resent, scheduled and used by chat; a toggle may not
+    # resent, scheduled and used by chat; a toggle may not. `guarded`: a toggle used as power on /
+    # off; DeviceService.run sends it only when the bot's own last power send does not already say
+    # that state, so it may be scheduled and used by chat but is never resent
     alt_codes: tuple[bytes, ...] = ()
     frame_ids: tuple[str, ...] = ()
     discrete: bool = False
+    guarded: bool = False
 
 
 @dataclass(slots=True)
@@ -112,17 +115,19 @@ def normalize_mac(mac: str) -> str:
 
 
 def schedulable_key(device: Device, key: str) -> bool:
-    """May `key` run unattended (timers, schedules, later chat)? A generated toggle may not: sent
-    twice it undoes itself. Learned captures keep their old behaviour."""
+    """May `key` run unattended (timers, schedules, later chat)? A plain generated toggle may not:
+    sent twice it undoes itself. A guarded one may (the guard refuses a repeat). Learned captures
+    keep their old behaviour."""
     f = device.features.get(key)
-    return f is not None and (f.discrete or not device.codeset)
+    return f is not None and (f.discrete or f.guarded or not device.codeset)
 
 
 def chat_tv(device: Device) -> bool:
-    """A generated-IR device chat may switch: power on AND off are discrete codes (a toggle stays
-    button-only)."""
+    """A generated-IR device chat may switch: power on AND off are discrete or guarded codes (a
+    plain toggle stays button-only)."""
     return bool(device.codeset) and device.device_type is DeviceType.TV and all(
-        k in device.features and device.features[k].discrete for k in ("power_on", "power_off"))
+        k in device.features and (device.features[k].discrete or device.features[k].guarded)
+        for k in ("power_on", "power_off"))
 
 
 def feature_label(key: str) -> str:
@@ -208,9 +213,10 @@ def build_codeset_features(cs: Codeset) -> dict[str, Feature]:
     features = {}
     for key, b in cs.buttons.items():
         p0, p1 = cs.packets(key)
-        label = feature_label(key) + ("" if b.discrete else " (toggle)")
+        label = feature_label(key) + ("" if b.discrete or b.guarded else " (toggle)")
         features[key] = Feature(key, label, (p0,), idempotent=b.discrete, alt_codes=(p1,),
-                                frame_ids=(cs.frame_id(key, 0), cs.frame_id(key, 1)), discrete=b.discrete)
+                                frame_ids=(cs.frame_id(key, 0), cs.frame_id(key, 1)), discrete=b.discrete,
+                                guarded=b.guarded)
     ordered = {k: features[k] for k in FEATURE_ORDER if k in features}
     ordered.update((k, f) for k, f in features.items() if k not in ordered)
     return ordered

@@ -399,6 +399,9 @@ class Scheduler:
             return FireOutcome(s, at, key, "skipped", "the AC is off", r, attempts, _prev(r))
         if r.error == "ac_state_unknown":
             return FireOutcome(s, at, key, "skipped", "the bot does not know the AC's state yet", r, attempts)
+        if r.error == "already_state":
+            # A guarded TV toggle the bot's own record says is already there (sending would flip it)
+            return FireOutcome(s, at, key, "skipped", r.message, r, attempts)
         return FireOutcome(s, at, key, "failed", r.message, r, attempts, prev)
 
     # ---- bookkeeping ---------------------------------------------------------------------

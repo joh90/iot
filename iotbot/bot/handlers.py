@@ -294,7 +294,36 @@ async def _run_device(update: Update, context: ContextTypes.DEFAULT_TYPE, device
         return
     r = await ctx.devices.run(r.data["device"], r.data["feature"], actor_of(update, ctx, "slash"),
                               request_id=request_id(update))
+    if r.error == "already_state":
+        telemetry.note_result(r.ok, r.error)
+        await reply(update, h(r.message), _anyway_markup(ctx, r.data["device"], r.data["feature"]))
+        return
     await reply_result(update, r)
+
+
+def _anyway_markup(ctx: AppContext, device_id: str, feature: str) -> InlineKeyboardMarkup:
+    """[Send anyway] for a guarded TV toggle the guard refused. It carries when the device's latest
+    action happened (ms; a seq restarts at 1 after a restart, a time does not), so a tap after
+    anything else was sent to it is refused instead of flipping the TV."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(
+        "Send anyway", callback_data=encode(kb.KB, "F", device_id, feature, _last_mark(ctx, device_id)))]])
+
+
+def _last_mark(ctx: AppContext, device_id: str) -> str:
+    """The latest action as '<seq>.<ms>' in base 36: the seq tells actions in one process apart, the
+    time tells processes apart (fits the 64-byte callback with a 32-character id)."""
+    latest = ctx.devices.last.get(device_id)
+    return f"{_b36(latest.seq)}.{_b36(round(latest.at * 1000))}" if latest else "n"
+
+
+def _b36(n: int) -> str:
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while True:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+        if not n:
+            return out
 
 
 def _power(word: str) -> Handler:
@@ -404,10 +433,39 @@ async def _remote_button(update: Update, context: ContextTypes.DEFAULT_TYPE, que
     elif action == "f" and len(args) == 2:
         r = await ctx.devices.run(args[0], args[1], actor_of(update, ctx, "button"),
                                   request_id=request_id(update))
+        if r.error == "already_state":
+            # A guarded TV toggle: say why, and offer to send it anyway (a separate message, as a
+            # popup cannot hold a button). The refusal can come after waiting for an earlier slow
+            # press, when the answer window has closed: the message still goes out
+            try:
+                await query.answer()
+            except BadRequest as e:
+                logger.info("Callback answer failed (%s); sending the refusal as a message", e)
+            await dm(query, h(r.message), _anyway_markup(ctx, args[0], args[1]))
+            return
         text = "\n".join([r.message, *("Note: " + w for w in r.warnings)])
         await answer_or_message(query, text, alert=not r.ok or bool(r.warnings))
         if r.ok and _managed_ac(ctx, args[0]):
             await _show_device(context, query, args[0], refresh=True)     # the screen shows the AC's new state
+    elif action == "F" and len(args) == 3 and args[0] in reg.devices:
+        dev = reg.devices[args[0]]
+        f = dev.features.get(args[1])
+        if f is None or not f.guarded:
+            await query.answer("This button is no longer active.", show_alert=True)
+            return
+        latest = ctx.devices.last.get(args[0])
+        if args[2] != _last_mark(ctx, args[0]):
+            who = f" by {latest.actor}" if latest else ""
+            r = Result.fail("changed_since", f"{args[0]} was changed since{who}; use the buttons again if needed.")
+        else:
+            # expect_seq: still that action when the send starts (checked under the device's lock)
+            r = await ctx.devices.run(args[0], args[1], actor_of(update, ctx, "button"),
+                                      request_id=request_id(update), force=True,
+                                      expect_seq=latest.seq if latest else None)
+        maybe = not r.ok and isinstance(r.data, dict) and r.data.get("maybe_delivered")
+        await answer_or_message(query, r.message, alert=not r.ok)
+        await safe_edit(query, h(r.message if r.ok else f"{r.message}; it may still have worked" if maybe
+                                 else f"Not sent: {r.message}"))
     else:
         await query.answer("That room or device no longer exists. /keyboard to refresh.", show_alert=True)
 

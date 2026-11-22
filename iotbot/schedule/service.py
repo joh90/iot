@@ -25,7 +25,7 @@ from iotbot.schedule import timing as tm
 from iotbot.schedule.model import (DAYS, Adjust, Capture, Off, On, Once, Schedule, ScheduleError,
                                    clean_label, new_id, parse_action, parse_schedule, parse_when)
 from iotbot.schedule.store import ScheduleStore
-from iotbot.services.devices import DeviceService
+from iotbot.services.devices import GUARD_HOURS, DeviceService
 from iotbot.store import JsonlLog, StoreError
 from iotbot.devices.model import schedulable_key
 
@@ -175,7 +175,31 @@ class ScheduleService:
             warnings.append(f"{cand.device} {'will be off' if on is False else 'may be off'} at "
                             f"{tx.fmt_at(mine[0], now, self.tz)}, so this change does nothing then. To turn it "
                             f"on with this setting, ask for on with it.")
+        warnings += self._toggle_warnings(cand, mine, now)
         return conflicts, warnings
+
+    def _toggle_warnings(self, cand: Schedule, mine: list[datetime], now: datetime) -> list[str]:
+        """A guarded TV power toggle (codesets.py) only knows what the bot itself sent in the last
+        GUARD_HOURS. A repeat runs blind (owner's call: allowed, with this warning); a timer the
+        bot's record says is already done will be skipped."""
+        key = "power_off" if isinstance(cand.action, Off) else cand.action.key if isinstance(cand.action, Capture) else None
+        get = getattr(self.devices, "get", None)
+        dev = get(cand.device) if get else None
+        if key not in ("power_on", "power_off") or dev is None or key not in dev.features \
+                or not dev.features[key].guarded:
+            return []
+        word, other = ("on", "off") if key == "power_on" else ("off", "on")
+        if not cand.is_timer:
+            return [(f"{cand.device}'s power key is a toggle, and the bot only trusts what it sent itself in the "
+                     f"last {GUARD_HOURS} hours, so each run sends it without knowing the state: on a day it is "
+                     f"already {word}, a run turns it {other}.")]
+        lp = self.devices.known_power(cand.device)
+        if mine and lp is not None and lp.feature == key and mine[0].timestamp() - lp.at <= GUARD_HOURS * 3600:
+            sent = tx.fmt_at(datetime.fromtimestamp(lp.at, self.tz), now, self.tz)
+            return [(f"The bot's record says {cand.device} is already {word.upper()} (it sent {word} {sent}, "
+                     f"{lp.actor}), so this timer will be skipped unless the bot turns it {other} first. If it "
+                     "was switched with its own remote, the bot cannot tell.")]
+        return []
 
     def _power_at(self, device: str, at: datetime, others: list[Schedule], now: datetime) -> bool | None:
         """Will the device be on at `at`? From what the bot last sent and the on/off schedules due

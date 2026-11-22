@@ -74,7 +74,7 @@ def resolve_device(w: Wizard, word: str, action: str) -> str:
     known = {d.lower(): d for d in reg.devices}
     if word.lower() in known:
         dev = reg.devices[known[word.lower()]]
-        if dev.features and all(not f.discrete for f in dev.features.values()) and dev.codeset:
+        if dev.features and all(not (f.discrete or f.guarded) for f in dev.features.values()) and dev.codeset:
             raise LineError(f"{dev.id} has only toggle buttons: they cannot run on a timer "
                             "(sent when the device is already off, a toggle would turn it on).")
         raise LineError(f"{dev.id} has no buttons that can run on a timer.")
