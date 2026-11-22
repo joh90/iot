@@ -1,0 +1,369 @@
+"""Device actions. Every surface goes through DeviceService.run()."""
+
+from __future__ import annotations
+
+import asyncio
+import itertools
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, tzinfo
+from functools import wraps
+from typing import TYPE_CHECKING
+
+from iotbot import telemetry
+from iotbot.ac.state import AcState
+from iotbot.devices.hub import BroadlinkHub, HubError
+from iotbot.devices.model import Device, Feature, Registry, resolve_feature
+from iotbot.result import Actor, Result
+from iotbot.store import JsonlLog, read_since
+
+if TYPE_CHECKING:
+    from iotbot.ac.service import AcService
+
+logger = logging.getLogger(__name__)
+
+# Pseudo-feature for sending an arbitrary AC state (scheduler, later the LLM)
+SET_STATE = Feature("set_state", "set", idempotent=True)
+
+# A guarded power toggle (codesets.py) trusts the bot's own last power send this long. Past it, or
+# with no send yet, the state counts as unknown and the toggle is sent. Also how long presence
+# treats a TV the bot turned on as still on.
+GUARD_HOURS = 12
+
+
+def _tracked(method: Callable[..., Awaitable[Result]]) -> Callable[..., Awaitable[Result]]:
+    """Report the call's outcome (ok / error code) to the current turn, if any."""
+    @wraps(method)
+    async def wrapper(*args, **kwargs) -> Result:
+        r = await method(*args, **kwargs)
+        telemetry.note_result(r.ok, r.error)
+        return r
+
+    return wrapper
+
+
+@dataclass(frozen=True, slots=True)
+class LastAction:
+    """Latest action per device. `seq` is assigned when the action STARTS, so a later
+    Undo can check "is this still the latest thing sent to the device?"."""
+    seq: int
+    feature: str
+    at: float
+    actor: str
+    ok: bool | None          # None while in flight
+    prev_feature: str | None
+    maybe: bool = False      # failed, but may have been sent (the blaster may have got it)
+
+
+ANY_SEQ = object()          # send_ac_state: no "still the latest?" check
+
+
+class DeviceService:
+    def __init__(self, registry: Registry, hub: BroadlinkHub, events: JsonlLog,
+                 ac: AcService | None = None, tz: tzinfo | None = None):
+        self.registry = registry
+        self.tz = tz                 # for the times in guard messages (None: the system zone)
+        self.hub = hub
+        self.events = events
+        # None when AC_ENCODER=off: every AC sends its captured codes
+        self.ac = ac
+        self.last: dict[str, LastAction] = {}
+        self._seq = itertools.count(1)
+        # Generated IR: the RC6 toggle bit last sent per device. It flips on every press (one
+        # counter per device, like a real remote), chosen before the first await so presses that
+        # overlap still alternate; the hub's own resend repeats the same bytes
+        self._toggle: dict[str, int] = {}
+        # Last power on / off sent to a generated-IR device (a mute press must not hide it). Only
+        # sends that went out or may have: a definite failure changed nothing, so it is not recorded
+        self.last_power: dict[str, LastAction] = {}
+        # Guarded power toggles: one press at a time per device, so the guard always checks the
+        # settled outcome of the press before it (review 2026-11-22: overlapping presses)
+        self._power_locks: dict[str, asyncio.Lock] = {}
+
+    def seed(self, now: datetime, days: int = 62) -> int:
+        """After a restart: the last send to each codeset device (for "last sent", Undo checks)
+        and its toggle bit, from device_events. Returns how many devices were seeded."""
+        want = {d.id for d in self.registry.devices.values() if d.codeset}
+        if not want:
+            return 0
+        latest: dict[str, dict] = {}
+        power: dict[str, dict] = {}
+        try:
+            for rec in read_since(self.events, now - timedelta(days=days), now, contains=('"ir"',)):
+                if rec.get("device") in want and rec.get("ir"):
+                    latest[rec["device"]] = rec
+                    if rec.get("feature") in ("power_on", "power_off") and (
+                            rec.get("ok") or rec.get("maybe_delivered")):
+                        power[rec["device"]] = rec     # a send that definitely failed changed nothing
+        except OSError as e:
+            logger.warning("Could not read device events to seed last sends: %s", e)
+            return 0
+        for dev_id, rec in latest.items():
+            t = rec.get("toggle")
+            self._toggle[dev_id] = t if t in (0, 1) else (1 if str(rec["ir"]).endswith(":t1") else 0)
+            try:
+                at = datetime.fromisoformat(rec["ts"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if rec.get("feature") in self.registry.devices[dev_id].features:
+                self.last[dev_id] = LastAction(next(self._seq), rec["feature"], at,
+                                               rec.get("actor") or "someone", rec.get("ok"), None)
+        for dev_id, rec in power.items():
+            try:
+                at = datetime.fromisoformat(rec["ts"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                continue
+            last = self.last.get(dev_id)
+            seq = last.seq if last and last.feature == rec["feature"] and last.at == at else next(self._seq)
+            ok = rec.get("ok")
+            self.last_power[dev_id] = LastAction(seq, rec["feature"], at, rec.get("actor") or "someone",
+                                                 ok, None, maybe=not ok and bool(rec.get("maybe_delivered")))
+        return len(latest)
+
+    def known_power(self, device_id: str) -> LastAction | None:
+        """The bot's own last power send to a generated-IR device while it still counts for the
+        guard: sent or maybe sent, less than GUARD_HOURS ago. None = unknown (no send, too old)."""
+        lp = self.last_power.get(device_id)
+        if lp is None or time.time() - lp.at > GUARD_HOURS * 3600:
+            return None
+        if lp.ok is False and not lp.maybe:
+            return None
+        return lp
+
+    def _guard(self, device: Device, feature: str) -> Result | None:
+        """A guarded toggle: refuse a power on / off the bot's own record already says (the toggle
+        would do the opposite). `already_state` carries the record for the caller's Send anyway."""
+        lp = self.known_power(device.id)
+        if lp is None or lp.feature != feature:
+            return None
+        word, other = ("ON", "off") if feature == "power_on" else ("OFF", "on")
+        sure = lp.ok is True
+        at = datetime.fromtimestamp(lp.at, self.tz).strftime("%H:%M")
+        how = "is already" if sure else "may already be"
+        why = "" if sure else " (that send may have gone through)"
+        return Result.fail("already_state",
+                           f"{device.id} {how} {word}: the bot sent {word.lower()} at {at} ({lp.actor}){why}. "
+                           f"Nothing was sent: its power key is a toggle, so it would turn it {other}.",
+                           data={"device": device.id, "feature": feature, "sure": sure, "at": lp.at,
+                                 "actor": lp.actor})
+
+
+    def get(self, device_id: str) -> Device | None:
+        return self.registry.devices.get(device_id)
+
+    def resolve(self, device_id: str, words: list[str]) -> Result:
+        """Turn `/d <device> <words...>` into (device, feature) or a helpful failure."""
+        device = self.get(device_id)
+        if device is None:
+            return Result.fail("device_not_found", f"Device '{device_id}' not found. /list shows device ids.")
+        if not words:
+            return Result.fail("feature_missing", f"What should {device.id} do? Try: {_features_hint(device)}")
+        feature = resolve_feature(device, words)
+        if feature is None:
+            return Result.fail("feature_not_found",
+                               f"{device.id} has no '{' '.join(words)}'. Try: {_features_hint(device)}")
+        return Result.success(data={"device": device.id, "feature": feature})
+
+    @_tracked
+    async def run(self, device_id: str, feature: str, actor: Actor,
+                  request_id: str | None = None, source: str | None = None,
+                  expect_seq: int | None | object = ANY_SEQ, force: bool = False) -> Result:
+        """Run one feature. `request_id` correlates surfaces (e.g. a Telegram update);
+        `source` links to what triggered it (e.g. a schedule event id). Both are logged.
+        `expect_seq`: send only if the device's latest action is still that one (None: none yet);
+        else `changed_since`, nothing sent. The check and _run's claim of the next seq have no await
+        between them, so no lock is needed (the aircon path checks under its AC lock).
+        A guarded power toggle fails `already_state` (nothing sent) when the bot's own record says
+        the device is already in that state; `force` (a person's Send anyway) skips that check."""
+        device = self.get(device_id)
+        if device is None:
+            return Result.fail("device_not_found", f"Device '{device_id}' not found.")
+        f = device.features.get(feature)
+        if f is None:
+            # Allowlist (B2): only features built from captured codes / known plug ops
+            return Result.fail("feature_not_found", f"{device.id} has no '{feature}'.")
+        if device.kind == "ir" and self.ac and self.ac.manages(device.id, feature):
+            async with self.ac.lock(device.id):
+                if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
+                    return stale
+                prev = self.ac.last(device.id)
+                state = self.ac.state_for(device.id, feature)
+                r = await self._run(device, f, actor, request_id, source, state)
+                return _with_prev(r, prev)
+        if f.guarded:
+            # Waits for a press still going out; the stale check and the guard then see its outcome
+            async with self._power_locks.setdefault(device.id, asyncio.Lock()):
+                if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
+                    return stale
+                if not force and (refused := self._guard(device, feature)):
+                    return refused
+                return await self._run(device, f, actor, request_id, source)
+        if expect_seq is not ANY_SEQ and (stale := self._stale(device.id, expect_seq)):
+            return stale
+        return await self._run(device, f, actor, request_id, source)
+
+    def _stale(self, device_id: str, expect_seq: int | None | object) -> Result | None:
+        latest = self.last.get(device_id)
+        if (latest.seq if latest else None) != expect_seq:
+            who = f" by {latest.actor}" if latest else ""
+            return Result.fail("changed_since", f"{device_id} was changed since{who}.")
+        return None
+
+    @_tracked
+    async def send_ac_state(self, device_id: str, state: AcState, actor: Actor,
+                            request_id: str | None = None, source: str | None = None,
+                            expect_seq: int | None | object = ANY_SEQ) -> Result:
+        """Send a full AC state to a managed AC (built by the encoder, never a capture).
+        `expect_seq`: send only if the device's latest action is still that one (None: no
+        action yet), checked under the AC lock so a schedule firing just before is never
+        overwritten by a chat card or its Undo. Fails `changed_since`, nothing sent."""
+        device = self.get(device_id)
+        if device is None:
+            return Result.fail("device_not_found", f"Device '{device_id}' not found.")
+        if not (self.ac and self.ac.manages(device.id)):
+            return Result.fail("not_supported", f"{device.id} cannot be set to an AC state.")
+        async with self.ac.lock(device.id):
+            if expect_seq is not ANY_SEQ:
+                latest = self.last.get(device.id)
+                if (latest.seq if latest else None) != expect_seq:
+                    who = f" by {latest.actor}" if latest else ""
+                    return Result.fail("changed_since", f"{device.id} was changed since{who}.")
+            prev = self.ac.last(device.id)
+            r = await self._run(device, SET_STATE, actor, request_id, source, state)
+            return _with_prev(r, prev)
+
+    @_tracked
+    async def adjust_ac_state(self, device_id: str, changes: dict | Callable[[AcState], dict], actor: Actor,
+                              request_id: str | None = None, source: str | None = None,
+                              skip_same: bool = False) -> Result:
+        """Change some settings of the last state sent to a managed AC. Fails with
+        `ac_off` / `ac_state_unknown` (nothing sent) if that state is off or unknown.
+        Read and send happen under the AC lock, so an Off pressed just before can
+        never be undone by this (adversarial review #3). `changes` may be a function
+        of the current state (quick buttons: +1C on two fast taps gives +2C).
+        `skip_same`: send nothing and fail with `no_change` if nothing would change."""
+        device = self.get(device_id)
+        if device is None:
+            return Result.fail("device_not_found", f"Device '{device_id}' not found.")
+        if not (self.ac and self.ac.manages(device.id)):
+            return Result.fail("not_supported", f"{device.id} cannot be set to an AC state.")
+        async with self.ac.lock(device.id):
+            prev = self.ac.last(device.id)
+            if prev is None:
+                return Result.fail("ac_state_unknown", f"The bot does not know {device.id}'s state yet.")
+            if not prev.state.power:
+                return Result.fail("ac_off", f"{device.id} is off.", data={"prev_state": prev.state})
+            state = prev.state.with_changes(**(changes(prev.state) if callable(changes) else changes))
+            if skip_same and state == prev.state:
+                return Result.fail("no_change", f"{device.id} is already {state.describe()}.",
+                                   data={"prev_state": prev.state})
+            r = await self._run(device, SET_STATE, actor, request_id, source, state)
+            return _with_prev(r, prev)
+
+    async def _run(self, device: Device, f: Feature, actor: Actor, request_id: str | None,
+                   source: str | None, ac_state: AcState | None = None) -> Result:
+        feature = f.key
+        prev = self.last.get(device.id)
+        seq = next(self._seq)
+        self.last[device.id] = LastAction(seq, feature, time.time(), actor.name, None,
+                                          prev.feature if prev else None)
+        started = time.perf_counter()
+        state = None
+        maybe = False
+        ir = None
+        toggle = 0
+        codes = f.codes
+        if f.alt_codes:
+            # Flip now, before any await: a new press must differ from the last one even if that
+            # one failed (the TV may have seen it)
+            toggle = self._toggle[device.id] = 1 - self._toggle.get(device.id, 1)
+            codes = f.alt_codes if toggle else f.codes
+            ir = f.frame_ids[toggle] if f.frame_ids else None
+        ok, error = False, "cancelled"
+        try:
+            if device.kind == "plug":
+                state = await self.hub.plug(device.mac, f.plug_op or feature)
+            else:
+                room = self.registry.rooms.get(device.room)
+                if room is None or not room.rm_mac:
+                    raise HubError(f"room '{device.room}' has no RM remote configured")
+                if ac_state is not None:
+                    try:
+                        codes = (self.ac.packet(ac_state),)
+                    except Exception as e:  # noqa: BLE001 -- nothing was sent
+                        raise HubError(f"could not build the AC frame: {e}") from e
+                await self.hub.send_ir(room.rm_mac, codes, f.gap_s, f.idempotent)
+            ok, error = True, ""
+        except HubError as e:
+            ok, error, maybe = False, str(e), e.maybe_delivered
+            if ir and not maybe and self._toggle.get(device.id) == toggle:
+                self._toggle[device.id] = 1 - toggle      # nothing went out: the next press reuses this bit
+        except asyncio.CancelledError:
+            ok, error, maybe = False, "cancelled", True
+            raise
+        except Exception as e:  # noqa: BLE001 -- report, never crash a handler
+            logger.exception("Unexpected error running %s %s", device.id, feature)
+            ok, error, maybe = False, f"unexpected error: {e.__class__.__name__}", True
+        finally:
+            ms = round((time.perf_counter() - started) * 1000)
+            cur = self.last.get(device.id)
+            if cur and cur.seq == seq:
+                self.last[device.id] = LastAction(seq, feature, cur.at, actor.name, ok, cur.prev_feature)
+            lp = self.last_power.get(device.id)
+            # A definite failure sent nothing: the device is still as the earlier record says
+            if ir and feature in ("power_on", "power_off") and (lp is None or lp.seq < seq) and (ok or maybe):
+                done_at = cur.at if cur and cur.seq == seq else time.time()
+                self.last_power[device.id] = LastAction(seq, feature, done_at, actor.name, ok, None,
+                                                        maybe=not ok and bool(maybe))
+            record = {
+                "device": device.id, "room": device.room, "feature": feature, "seq": seq,
+                "user_id": actor.user_id, "surface": actor.surface,
+                "request_id": request_id, "source": source,
+                "ok": ok, "error": error or None, "maybe_delivered": maybe if not ok else None,
+                "state": state, "ms": ms,
+            }
+            if ir:
+                record["ir"], record["toggle"], record["actor"] = ir, toggle, actor.name
+            if ac_state is not None:
+                record["ac_state"] = ac_state.to_dict()
+
+            async def finish() -> str | None:
+                # A sent AC state is saved first, so the next Off and /status use it
+                warning = None
+                if ok and ac_state is not None:
+                    warning = await self.ac.remember(device.id, ac_state, actor.name)
+                await self.events.append_async(record)
+                return warning
+
+            telemetry.note_send(device.id, ms, ok, bool(maybe))
+            # Shielded so a cancelled caller still leaves a trace of a maybe-sent command
+            save_warning = await asyncio.shield(finish())
+
+        if not ok:
+            return Result.fail("send_failed", f"{device.id} {f.label} failed: {error}",
+                               data={"device": device.id, "feature": feature, "seq": seq,
+                                     "request_id": request_id, "maybe_delivered": maybe, "ms": ms})
+        warnings = [save_warning] if save_warning else []
+        if device.kind == "plug":
+            what = "nightlight" if "nightlight" in (f.plug_op or "") else "power"
+            msg = f"{device.id} {what} is " + ("unknown" if state is None else "ON" if state else "OFF")
+        else:
+            msg = f"Sent {device.id} {f.label}" + (f": {ac_state.describe()}" if ac_state is not None else "")
+        return Result.success(msg, data={"device": device.id, "feature": feature, "seq": seq,
+                                         "request_id": request_id, "state": state, "ms": ms},
+                              warnings=warnings)
+
+
+def _with_prev(r: Result, prev) -> Result:
+    """Add the bot-known AC state from before this send (for Undo)."""
+    if isinstance(r.data, dict):
+        r.data["prev_state"] = prev.state if prev else None
+    return r
+
+
+def _features_hint(device: Device, limit: int = 8) -> str:
+    keys = list(device.features)
+    hint = ", ".join(k.replace("_", " ") for k in keys[:limit])
+    return hint + (", ..." if len(keys) > limit else "") if keys else "(no captured codes)"
