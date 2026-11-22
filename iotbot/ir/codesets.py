@@ -57,9 +57,9 @@ class Codeset:
 
 
 # Philips TVs (TP Vision / TPV, RC6 mode 0, address 0). Checked on the bedroom TV: mute 13 works
-# (2026-11-21); the discrete off 61 does nothing and the power toggle 12 turns it off (2026-11-22).
-# So power on / off are both the toggle behind the guard (owner's call: 12 for both, for good; 12
-# from standby turning it on is the standard Philips power key and was not separately tried).
+# (2026-11-21); the discrete off 61 does nothing and the power toggle 12 turns it off and back on
+# from standby (2026-11-22). So power on / off are both the toggle behind the guard (owner's call:
+# 12 for both, for good).
 CODESETS: dict[str, Codeset] = {
     "philips-rc6": Codeset("philips-rc6", "rc6", 0, {
         "power_on": Button(12, guarded=True),
